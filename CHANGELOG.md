@@ -3,82 +3,86 @@
 Các mốc theo ngày. Mục **Đã sửa** liệt kê lỗi của bản gốc v12; mục **Lỗi tìm khi kiểm
 thử** liệt kê lỗi do chính bản viết lại này tạo ra.
 
-## Chưa đánh số — gom dữ liệu về thư mục dự án, sửa tiến độ và kéo thả
+## Chưa đánh số — tham số nén theo loại, xử lý tuần tự, hiện mức của job
 
 ### Đã sửa
 
-- **Tiến độ từng tệp chạy thật.** Cả bốn pipeline truyền `-loglevel error`, mà dòng
-  `frame=… time=…` của ffmpeg nằm ở mức `info` trên **stderr** — nên nó không bao giờ được
-  in, `ParseTime` không bao giờ khớp, và thanh tiến độ đứng yên ở 0% suốt tới khi tệp xong
-  rồi nhảy thẳng lên 100%. Nay dùng `-progress pipe:1` (`out_time_us` trên **stdout**),
-  hoạt động ở mọi mức log.
-- **Âm thanh trong video không còn ghim cứng 128k.** `VideoPipeline` từng viết thẳng
-  `-b:a 128k` thay vì lấy `profile.AudioBitrateKbps`, nên chọn "Nhẹ" (320k) hay "Mạnh"
-  (128k) cũng ra 128k — trong khi bảng hướng dẫn hiện 320k/192k/128k. Nay không nâng
-  bitrate của tệp nguồn vốn đã nhỏ hơn mức đích.
-- **`MediaHost` hỗ trợ `Range`.** Trước đây bỏ qua hẳn header này và luôn trả `200` với
-  `Content-Length` bằng cả tệp, dù đã quảng bá `Accept-Ranges`. Chromium lúc tua phải
-  đọc lại từ byte 0, nên màn hình so sánh giật so với VLC. Nay trả `206 Partial Content`
-  với `Content-Range` đúng, và `416` khi range vô lệ.
-- **Cửa sổ không còn tràn ra ngoài màn hình.** `FitToWorkArea` lấy nguyên vùng làm việc
-  làm `ClientSize` rồi nới ra mà không canh lại vị trí: cửa sổ được canh giữa khi còn
-  1280px (mép trái = 320) nên nới lên 1918px thì mép phải = 2238, tràn ~318px ra ngoài
-  màn hình 1920. Hậu quả thấy được: cột thao tác, khối "Tốc độ / Còn lại / Luồng nén" và
-  status bar đều bị cắt. Nay đặt `Size` (kích thước ngoài) cho vừa vùng làm việc rồi canh
-  lại vị trị.
+- **Bề rộng tối đa tách riêng cho ảnh và video.** Cả hai dùng chung một trường
+  `MaxWidth`, nên chọn "Mạnh" thì **cả ảnh lẫn video** đều bị bóp về 1080px, còn
+  "Nhẹ" thì ảnh được phép to tới 3840px — thừa rõ cho một bức ảnh chụp. Ảnh và
+  video bị ràng buộc bởi hai thứ khác nhau: ảnh nhìn toàn màn hình và có thể
+  phóng to, video đã bị giới hạn bởi khung hình mà mắt theo kịp.
+
+  | | Bề rộng video | Bề rộng ảnh | `-q:v` | CRF |
+  |---|---|---|---|---|
+  | Nhẹ | 3840 | 2560 | 3 | 20 |
+  | Cân bằng | 1920 | 1920 | 5 | 23 |
+  | Mạnh | 1920 | 1600 | 10 | 28 |
+
+  Video ở "Cân bằng" và "Mạnh" đều giữ 1920px: CRF 28 đã đủ để nhỏ tệp, hạ thêm
+  bề rộng nữa là cắt hai lần vào cùng một tệp.
+- **PDF ở mức "Nhẹ" đổi từ `/prepress` sang `/default`.** `/prepress` là thiết
+  lập cho quy trình in offset — giữ ảnh ở 300dpi và sinh tệp rất lớn. Người dùng
+  chọn "Nhẹ" là muốn giữ chất lượng, không phải muốn chuẩn bị in.
+- **Kéo thả: hai lỗi chồng nhau, trước đó chưa bao giờ hoạt động.**
+  1. `DragAcceptFiles` nằm ở **shell32.dll**, không phải user32.dll. Khai báo sai
+     DLL → `EntryPointNotFoundException` ngay lúc P/Invoke, mà lời gọi nằm trong
+     try/catch nên ứng dụng vẫn chạy bình thường — chỉ có cờ `WS_EX_ACCEPTFILES`
+     không bao giờ được bật, và kéo thả im lặng không hoạt động.
+  2. Hằng `WS_EX_ACCEPTFILES` là **0x00000010**, không phải 0x00080000 (cái sau là
+     `WS_EX_LAYERED`). Sai hằng khiến chính phần chẩn đoán báo "không nhận thả"
+     trong khi cờ đã bật đúng, rồi đi tìm một lỗi không tồn tại.
+- **Cửa sổ không còn tràn ra ngoài màn hình.** `FitToWorkArea` lấy nguyên vùng
+  làm việc làm `ClientSize` (đó là kích thước *ngoài*, cộng thêm thanh tiêu đề và
+  viền thì vượt) rồi nới ra mà không canh lại vị trí — cửa sổ được canh giữa khi
+  còn 1280px nên nới lên 1918px thì mép phải = 2238, tràn ~318px ra ngoài màn hình
+  1920. Hậu quả thấy được: cột thao tác, khối "Tốc độ / Còn lại / Luồng nén" và
+  status bar đều bị cắt.
 - **Bảng không còn tràn ngang.** `max-width` trên `<td>` không có tác dụng với
-  `table-layout: auto`, nên một tên tệp dài đẩy cột thao tác ra ngoài khung. Nay dùng
-  `table-layout: fixed` với tỉ lệ cột cố định.
-- **Bộ lọc trên bảng chi tiết không bị ghi đè.** Mỗi lần đẩy trạng thái (250 ms) gửi toàn
-  bộ tệp của job, nên mỗi phím tìm kiếm chỉ sống được tới lần đẩy kế tiếp.
-- **Thứ tự tệp ổn định.** Bảng chi tiết sắp xếp theo `SavedBytes` giảm dần, tức đảo lại mỗi
-  khi một tệp xong — không theo dõi được tệp nào đang chạy bao nhiêu phần trăm. Nay giữ thứ
-  tự lúc quét.
-- **Bớt I/O ở tầng giao diện.** `File.Exists` cho `.bak` từng chạy 4 lần/giây cho mọi
-  tệp đã nén (hàng nghìn lệnh I/O mỗi giây với job lớn); nay có bộ nhớ đệm 3 giây và bị
-  xoá khi Duyệt / Hoàn tác. Bảng chi tiết cũng không còn dựng lại toàn bộ DOM 4 lần/giây.
+  `table-layout: auto`, nên một tên tệp dài đẩy cột thao tác ra ngoài khung.
+- **Bộ lọc trên bảng chi tiết không bị ghi đè.** Mỗi lần đẩy trạng thái (250 ms)
+  gửi toàn bộ tệp của job, nên mỗi phím tìm kiếm chỉ sống được tới lần đẩy kế tiếp.
+- **Thứ tự tệp ổn định.** Bảng chi tiết sắp theo `SavedBytes` giảm dần, tức đảo
+  lại mỗi khi một tệp xong — không theo dõi được tệp nào đang chạy bao nhiêu %.
+- **Bớt I/O ở tầng giao diện.** `File.Exists` cho `.bak` chạy 4 lần/giây cho mọi
+  tệp đã nén; nay có bộ nhớ đệm 3 giây, bị xoá khi Duyệt / Hoàn tác.
 - **`setup.ps1` chạy được trên Windows PowerShell 5.1.** `[string]::IsNullOrWhiteSpace`
   chỉ có từ .NET Core 2.0, nên script văng lỗi ngay dòng đầu khi chạy bằng
   `powershell.exe`.
-- Sửa 2 comment hỏng UTF-8 trong `CompressionProfile.cs` (byte `0xE9` lỗi, hiện thành
-  mojibake vĩnh viễn).
-
-### Thêm
-
-- **Hỗ trợ tệp lẻ.** Trước đây chỉ nhận thư mục và `AddFolder` báo lỗi nếu gặp tệp. Nay
-  có `ScanFile` / `AddFile` / `AddPaths` (tự phân biệt thư mục với tệp), nút **Thêm tệp**
-  mở hộp chọn đa chọn với bộ lọc dựng từ chính `MediaClassifier`, và phím `Ctrl+Shift+O`.
-- **Kéo thả thư mục / tệp vào cửa sổ**, có lớp phủ "Thả vào đây" báo hiệu khi đang kéo.
-- **Cột `%` cố định trong bảng chi tiết**, luôn hiện cho mọi dòng: đang chạy thì hiện
-  phần trăm tăng dần, xong rồi thì giữ lại 100% thay vì mất thanh ngay như trước.
-- **Badge loại media** ở cột đầu bảng hàng đợi, và nhãn **TỆP** cho job một tệp lẻ (trước
-  cả ba tệp cùng thư mục đều hiện tên thư mục cha nên trông như một).
-- **Nút thao tác hiện sẵn** thay vì chỉ hiện khi rê chuột — trước đó bảng trông như không
-  có nút nào.
-- **Nút chọn thư mục đích** khi xuất kết quả, thay vì phải gõ tay đường dẫn.
-- **Có "Thư mục dự án"** ở thanh trạng thái và trong Cài đặt, cùng đường dẫn dữ liệu.
-- Ảnh xem trước trong màn hình so sánh được **nhớ trên đĩa** và cache có giới hạn 64 mục
-  (trước cache vô hạn, mở nhiều tệp sẽ nuôi bộ nhớ và hiện dữ liệu cũ).
-- GIF trong màn hình so sánh hiện bằng **ảnh tĩnh** thay vì nhúng `<img>` động — một GIF
-  động vẽ lại liên tục trong đúng tiến trình đang render cả giao diện.
 
 ### Đổi
 
-- **Mọi thứ nằm trong thư mục dự án.** Bản cài ở `app\`, dữ liệu ở `data\` (cấu hình,
-  phiên, nhật ký, tệp nén tạm, profile WebView2). Trước đó `setup.ps1` cài vào
-  `%LOCALAPPDATA%\UltraCompressor` — **trùng đúng** `AppPaths.DataDirectory`, nên một lần
-  cài là ổ C: phình lên **130 MB** (ffmpeg.exe 95 MB + profile WebView2 32 MB) mà không ai
-  biết. Ghi đè nơi lưu bằng `UC_DATA_DIR` / `UC_ROOT`.
-- `setup.ps1` mặc định cài vào `<dự án>\app` và có `-RemoveLegacy` để dọn thư mục cũ ở
-  ổ C:.
+- **Job được xử lý tuần tự theo đúng thứ tự thêm vào.** Trước đây `Task.WhenAll` —
+  tất cả job cùng chạy. Với danh sách nhiều thư mục thì bản đồ hóa 20 tập phim
+  cùng lúc, mỗi job một tiến trình ffmpeg, tốc độ tổng tụt và máy nghẽn. Bên
+  trong một job vẫn chạy song song tới giới hạn luồng — đó là chỗ tốn thời gian
+  thật sự.
+- `CompressionProfile.ScaleFilter` → `VideoFilter` và `ImageFilter`.
+- `setup.ps1` mặc định cài vào `<dự án>\app`, có `-RemoveLegacy` để dọn ổ C:.
+
+### Thêm
+
+- **Mức nén hiện trên từng dòng job.** Mức được chụp lúc thêm thư mục, nên đổi
+  dropdown *sau khi* đã thêm thì job cũ vẫn nén bằng mức cũ — và bằng thị giác
+  không có cách nào biết. Nay lệch mức thì badge đổi sang màu cảnh báo và dòng đó
+  có nút **⟳** để áp dụng mức đang chọn ngay. Lệnh `applyLevel` chỉ đổi mức, không
+  nén lại tệp đã xử lý, và từ chối khi job đang chạy.
+- **Hỗ trợ tệp lẻ.** `ScanFile` / `AddFile` / `AddPaths` (tự phân biệt thư mục với
+  tệp), nút **Thêm tệp** (`Ctrl+Shift+O`), hộp chọn đa chọn với bộ lọc dựng từ
+  chính `MediaClassifier`.
+- **Kéo thả thư mục / tệp vào cửa sổ**, có lớp phủ báo hiệu khi đang kéo.
+- **Cột `%` luôn hiện cho mọi tệp** trong bảng chi tiết, tăng dần khi đang nén và
+  giữ lại 100% khi xong.
+- **Nút chọn thư mục đích** khi xuất kết quả, thay vì phải gõ tay.
+- **Có "Thư mục dự án"** ở thanh trạng thái và trong Cài đặt.
 
 ### Ghi chú kỹ thuật
 
 - Kéo thả **không** dùng được API `CoreWebView2.DragOver` / `DragDrop`: SDK
-  `Microsoft.Web.WebView2` 1.0.4191.47 đã bỏ hẳn (đã kiểm tra bằng reflection — 497 kiểu xuất
-  ra, không có `CoreWebView2DragDropEventArgs`, không thành viên nào chứa "Drop" ngoài
-  `AllowExternalDrop`). Ba cách đã thử trước đây và đều hỏng lý do khác nhau, xem
-  `docs/TESTING.md`.
+  `Microsoft.Web.WebView2` 1.0.4191.47 đã bỏ hẳn (đã kiểm tra bằng reflection — 497
+  kiểu xuất ra, không có `CoreWebView2DragDropEventArgs`, không thành viên nào
+  chứa "Drop" ngoài `AllowExternalDrop`). Dùng `WM_DROPFILES` trên HWND của Form.
+
 
 ## 2.0.0 — bản viết lại
 

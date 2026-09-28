@@ -49,10 +49,13 @@ chính máy này, `gifsicle.exe` in cảnh báo “Can't load DLL” rồi vẫn
 ## Cách dùng
 
 1. **Thêm thư mục** (`Ctrl+O`), **Thêm tệp** (`Ctrl+Shift+O`) cho tệp lẻ, hoặc **kéo thả** thư mục/tệp vào cửa sổ. Thư mục con được quét tự động.
-2. Chọn **mức nén** và **cách ghi**.
-3. **Bắt đầu**. Xem mức tiết kiệm ở cột tương ứng.
-4. Mở **Chi tiết** để xem từng tệp, tiến độ từng tệp, tệp nào bị giữ nguyên và vì sao.
-5. Bấm **◫** trên một tệp để **so sánh song song** bản gốc với bản đã nén.
+2. Chọn **mức nén** và **cách ghi**. Mức nén được chụp lúc thêm, nên nếu đổi sau đó thì
+   dòng job cũ hiện badge màu cảnh báo kèm nút **⟳** để áp dụng mức hiện tại.
+3. **Bắt đầu**. Các hàng đợi chạy **tuần tự theo đúng thứ tự bạn thêm**; bên trong mỗi
+   thư mục thì nén song song tới giới hạn luồng.
+4. Xem mức tiết kiệm ở cột tương ứng.
+5. Mở **Chi tiết** để xem từng tệp, tiến độ từng tệp, tệp nào bị giữ nguyên và vì say.
+6. Bấm **◫** trên một tệp để **so sánh song song** bản gốc với bản đã nén.
 6. **Duyệt** để áp dụng, hoặc **Hoàn tác** để trả bản gốc về.
 
 ### Tiến độ từng tệp

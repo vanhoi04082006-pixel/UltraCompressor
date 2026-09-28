@@ -3,8 +3,7 @@
 Nguồn: `ilspycmd -p` trên `MassCompressorTool.exe` (namespace `UltraCompressor_Pro_v12`).
 File tham chiếu: [`reference/original-csharp/`](../reference/original-csharp).
 
-## 1. Bảng tham số nén (giữ nguyên từ bản gốc)
-
+## 1. Bảng tham số nén (lấy từ bản gốc, đã sửa ba dòng)
 Nguồn: `FFmpegHelper.ProcessFileAsync` — các nhánh `if (AppSettings.Level != CompressionLevel.Light) ... else ...`.
 
 | Tham số | Light | Balanced | Strong |
@@ -18,6 +17,10 @@ Nguồn: `FFmpegHelper.ProcessFileAsync` — các nhánh `if (AppSettings.Level 
 | **Video** `-vf scale` | `min(3840,iw)` | `min(1920,iw)` | `min(1080,iw)` |
 | **GIF** `gifsicle --lossy` | 20 | 40 | 80 |
 | **PDF** `-dPDFSETTINGS` | /prepress | /ebook | /screen |
+
+> **Hai dòng trên đã cố ý sửa lại — xem [Sự lệch so với bản gốc](#sự-lệch-so-với-bản-gốc).**
+> Bảng này ghi tham số **của bản gốc v12**, để đối chiếu. Bảng **đang dùng** nằm ở
+> `CompressionProfile.cs` và trong mục *Tham số nén* của hướng dẫn trong ứng dụng.
 
 ### Lệnh đầy đủ
 
@@ -61,6 +64,20 @@ với
 -window_title "GỐC"  -autoexit "<original>
 -window_title "NÉN"  -autoexit "<compressed>
 ```
+
+## 1a. Sự lệch so với bản gốc
+
+Ba chỗ cố ý khác. Lý do đã ghi ở `CompressionProfile.cs`; ở đây chỉ liệt kê để khi đối
+chiếu với bản gốc không tưởng là sơ suất.
+
+| Tham số | Bản gốc | Đang dùng | Vì sao |
+|---|---|---|---|
+| **Ảnh** `-vf scale` (Mạnh) | `min(1080,iw)` | `min(1600,iw)` | Ảnh nhìn toàn màn hình và có thể phóng to; 1080px thấp cả màn hình 1440px phổ biến nhất. Bản gốc cũng dùng **chung** trần này với video, nên ảnh bị bóp cùng video. |
+| **Ảnh** `-vf scale` (Nhẹ) | `min(3840,iw)` | `min(2560,iw)` | 3840px là trần cho **video** 4K. Áp vào ảnh thì thừa rõ — không ai in ảnh 4K từ màn hình. |
+| **PDF** (Nhẹ) | `/prepress` | `/default` | `/prepress` là thiết lập cho quy trình in offset: giữ ảnh ở 300dpi và sinh tệp rất lớn. Người dùng chọn mức "Nhẹ" là muốn giữ chất lượng, không phải muốn chuẩn bị in. |
+
+Còn lại giữ nguyên. Riêng bề rộng video ở mức Mạnh nay là 1920 thay vì 1080: CRF 28 đã
+đủ để nhỏ tệp, hạ thêm bề rộng là cắt hai lần vào cùng một tệp.
 
 ## 2. Ngưỡng chấp nhận — bản gốc có bug
 

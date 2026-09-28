@@ -43,7 +43,7 @@ chỗ để ghi nhật ký. Thêm lệnh mới là thêm một dòng vào `switc
 
 ```
 start(dryRun, outputFolder)
-  └─ RunJobAsync(job)
+  └─ RunJobAsync(job)          ← TUẦN TỰ, theo thứ tự thêm vào
        └─ vòng lặp: mục nào chưa IsComplete
             ├─ await gate.WaitAsync(token)        ← tạm dừng
             ├─ await _limiter.WaitAsync(token)    ← giới hạn song song
@@ -62,6 +62,26 @@ start(dryRun, outputFolder)
 ```
 
 ## Ba quyết định đáng ghi
+
+**Một mức nén, nhưng thông số thì tách theo loại media.** Vẫn chỉ có ba mức
+(Light / Balanced / Strong) và một dropdown, nhưng `CompressionProfile` mang tham số
+riêng cho từng loại: video CRF + preset, ảnh `-q:v`, audio bitrate, PDF preset, GIF
+lossy + fps + tỉ lệ co. Chọn "Cân bằng" là đồng thời video CRF 23 **và** ảnh `-q:v 5`
+**và** audio 192k **và** PDF `/ebook` **và** GIF lossy 40/20 fps.
+
+Riêng **bề rộng tối đa phải tách ảnh với video** (`ImageMaxWidth` / `VideoMaxWidth`).
+Trước đó cả hai dùng chung một `MaxWidth`, nên chọn "Mạnh" là cả ảnh lẫn video đều bị
+bóp về 1080px. Sai về bản chất: ảnh nhìn toàn màn hình và có thể phóng to, còn video đã bị
+giới hạn bởi khung hình mà mắt theo kịp.
+
+**Job chạy tuần tự theo thứ tự thêm, song song bên trong một job.** `Task.WhenAll` khiến
+mọi job cùng lúc — bản đồ hóa 20 tập phim thì 20 tiến trình ffmpeg, tốc độ tổng tụt và máy
+nghẽn. Thứ tự là thứ tự chèn vào `_jobs` (danh sách chỉ có thêm vào, không sắp xếp lại).
+
+**Mức nén được chụp lúc thêm thư mục, nên phải cho người dùng thấy.** Đổi dropdown *sau
+khi* đã thêm thì job cũ vẫn nén bằng mức cũ. Đây là lý do người người dùng thấy kết quả
+không như mong đợi mà không biết vì sao. Vì thế `JobDto` mang cả mức của job và cờ
+`LevelDiffersFromCurrent`, giao diện tô cảnh báo và cho nút áp dụng mức hiện tại.
 
 **Tệp tạm luôn nằm trong `data\tmp` của thư mục dự án, không nằm cạnh tệp gốc.**
 Cùng một ổ đĩa thì việc ghi thêm không làm đầy ổ khác, và dọn `tmp` không đụng tới thư

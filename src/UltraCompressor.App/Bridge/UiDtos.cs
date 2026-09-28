@@ -1,0 +1,302 @@
+using System.IO;
+using UltraCompressor.Core;
+using UltraCompressor.Core.Models;
+using UltraCompressor.Core.Scheduling;
+using UltraCompressor.Core.Storage;
+using UltraCompressor.Core.Toolchain;
+
+namespace UltraCompressor.App.Bridge;
+
+/// <summary>
+/// DTO gửi sang giao diện web. Cố tình tách khỏi <see cref="Job"/>: job chứa cả danh sách
+/// tệp, gửi cả lúc cập nhật tiến độ sẽ nghẽn giao diện với job vài nghìn tệp.
+/// </summary>
+public sealed record JobDto
+{
+    public required string Id { get; init; }
+
+    public required string FolderName { get; init; }
+
+    public required string FolderPath { get; init; }
+
+    public required string Status { get; init; }
+
+    public string StatusText { get; init; } = string.Empty;
+
+    public required string Level { get; init; }
+
+    public bool DryRun { get; init; }
+
+    public string? OutputFolder { get; init; }
+
+    public long TotalFiles { get; init; }
+
+    public long ProcessedCount { get; init; }
+
+    public int Progress { get; init; }
+
+    public long BytesOriginal { get; init; }
+
+    public long BytesSaved { get; init; }
+
+    public string SavedText { get; init; } = string.Empty;
+
+    public string SavedPercentText { get; init; } = string.Empty;
+
+    public double EtaSeconds { get; init; } = -1;
+
+    public string EtaText { get; init; } = string.Empty;
+
+    public string? ErrorMessage { get; init; }
+
+    public bool Committed { get; init; }
+
+    public bool CanPause { get; init; }
+
+    public bool CanCancel { get; init; }
+
+    public bool CanReview { get; init; }
+
+    public long PendingBackups { get; init; }
+
+    public static JobDto From(Job job) => new()
+    {
+        Id = job.Id,
+        FolderName = job.FolderName,
+        FolderPath = job.FolderPath,
+        Status = job.Status.ToString(),
+        StatusText = JobStatusLabel(job.Status),
+        Level = CompressionProfileText(job.Level),
+        DryRun = job.DryRun,
+        OutputFolder = job.OutputFolder,
+        TotalFiles = job.TotalFiles,
+        ProcessedCount = job.ProcessedCount,
+        Progress = job.Progress,
+        BytesOriginal = job.BytesOriginal,
+        BytesSaved = job.BytesSaved,
+        SavedText = Format.Size(job.BytesSaved),
+        SavedPercentText = job.BytesOriginal > 0
+            ? Format.Percent((double)job.BytesSaved * 100.0 / job.BytesOriginal)
+            : Format.Percent(0),
+        EtaSeconds = job.EtaSeconds,
+        EtaText = job.EtaSeconds < 0 ? string.Empty : Format.Time(job.EtaSeconds),
+        ErrorMessage = job.ErrorMessage,
+        Committed = job.Committed,
+        CanPause = job.Status is JobStatus.Running,
+        CanCancel = job.Status is JobStatus.Running or JobStatus.Paused,
+        CanReview = job.Status is JobStatus.PendingReview or JobStatus.Committed or JobStatus.Cancelled,
+        PendingBackups = UndoService.PendingBackups(job).Count,
+    };
+
+    private static string JobStatusLabel(JobStatus status) => status switch
+    {
+        JobStatus.Waiting => "Hàng chờ",
+        JobStatus.Running => "Đang chạy",
+        JobStatus.Paused => "Tạm dừng",
+        JobStatus.PendingReview => "Chờ duyệt",
+        JobStatus.Committed => "Đã duyệt",
+        JobStatus.Failed => "Lỗi",
+        JobStatus.Cancelled => "Đã hủy",
+        _ => status.ToString(),
+    };
+
+    private static string CompressionProfileText(CompressionLevel level) => level switch
+    {
+        CompressionLevel.Light => "Nhẹ",
+        CompressionLevel.Balanced => "Cân bằng",
+        CompressionLevel.Strong => "Mạnh",
+        _ => level.ToString(),
+    };
+}
+
+public sealed record ItemDto
+{
+    public required string FileName { get; init; }
+
+    public required string FilePath { get; init; }
+
+    public required string Kind { get; init; }
+
+    public long OldSize { get; init; }
+
+    public long NewSize { get; init; }
+
+    public string OldSizeText { get; init; } = string.Empty;
+
+    public string NewSizeText { get; init; } = string.Empty;
+
+    public long SavedBytes { get; init; }
+
+    public string SavedText { get; init; } = string.Empty;
+
+    public string SavedPercentText { get; init; } = string.Empty;
+
+    public required string State { get; init; }
+
+    public string StateText { get; init; } = string.Empty;
+
+    public string Detail { get; init; } = string.Empty;
+
+    public string? SkipReasonText { get; init; }
+
+    public string? Message { get; init; }
+
+    public int Percent { get; init; }
+
+    public bool IsProcessing { get; init; }
+
+    public bool IsApplied { get; init; }
+
+    /// <summary>Chỉ là kết quả dự đoán của chế độ thử, chưa ghi vào tệp gốc.</summary>
+    public bool IsPredicted { get; init; }
+
+    public bool HasBackup { get; init; }
+
+    public bool CanPreview { get; init; }
+
+    public double? QualityScore { get; init; }
+
+    public double DurationSeconds { get; init; }
+
+    public string DurationText { get; init; } = string.Empty;
+
+    public static ItemDto From(JobItem item) => new()
+    {
+        FileName = item.FileName,
+        FilePath = item.FilePath,
+        Kind = KindText(item.Kind),
+        OldSize = item.OldSize,
+        NewSize = item.NewSize,
+        OldSizeText = Format.Size(item.OldSize),
+        NewSizeText = Format.Size(item.NewSize),
+        SavedBytes = item.SavedBytes,
+        SavedText = Format.SizeSigned(item.SavedBytes),
+        SavedPercentText = item.SavedBytes > 0 ? "-" + Format.Percent(item.SavedPercent) : string.Empty,
+        State = StateOf(item),
+        StateText = ItemStateLabel(item),
+        Detail = DetailText(item),
+        SkipReasonText = item.Skip == SkipReason.None ? null : item.Skip.ToString(),
+        Message = item.Message,
+        Percent = item.Percent,
+        IsProcessing = item.IsProcessing,
+        IsApplied = item.IsApplied,
+        IsPredicted = item.IsPredicted,
+        HasBackup = File.Exists(FileTransaction.BackupPathFor(item.FilePath)),
+        CanPreview = item.Kind is MediaKind.Video or MediaKind.Audio,
+        QualityScore = item.QualityScore,
+        DurationSeconds = item.DurationSeconds ?? 0,
+        DurationText = item.DurationSeconds is { } d ? Format.Time(d) : string.Empty,
+    };
+
+    private static string KindText(MediaKind kind) => kind switch
+    {
+        MediaKind.Image => "Ảnh",
+        MediaKind.Video => "Video",
+        MediaKind.Audio => "Âm thanh",
+        MediaKind.Gif => "GIF",
+        MediaKind.Pdf => "PDF",
+        _ => "Khác",
+    };
+
+    private static string StateOf(JobItem item) => item switch
+    {
+        { IsComplete: false, IsProcessing: true } => "processing",
+        { IsComplete: false } => "queued",
+        { Skip: not SkipReason.None } => "skipped",
+        _ => "done",
+    };
+
+    private static string ItemStateLabel(JobItem item) => item switch
+    {
+        { IsComplete: false, IsProcessing: true } => "Đang xử lý",
+        { IsComplete: false } => "Chờ",
+        { IsPredicted: true } => "Dự kiến",
+        { Succeeded: true } => "Thành công",
+        { Skip: SkipReason.NoSizeGain } => "Giữ nguyên",
+        { Skip: SkipReason.BelowMinSaving } => "Tiết kiệm ít",
+        { Skip: SkipReason.ExcludedByFilter } => "Bị lọc",
+        { Skip: SkipReason.UnsupportedFormat } => "Không hỗ trợ",
+        { Skip: SkipReason.FileMissing } => "Thiếu tệp",
+        { Skip: SkipReason.MissingTool } => "Thiếu công cụ",
+        { Skip: SkipReason.ProcessFailed } => "Lỗi nén",
+        { Skip: SkipReason.Cancelled } => "Đã hủy",
+        { Skip: SkipReason.Error } => "Lỗi",
+        _ => "Giữ nguyên",
+    };
+
+    private static string DetailText(JobItem item) => item switch
+    {
+        { IsComplete: false } => string.Empty,
+        { Succeeded: true } => $"-{Format.Size(item.SavedBytes)} ({Format.Percent(item.SavedPercent)})",
+        _ => string.IsNullOrEmpty(item.Message) ? "Không giảm" : item.Message,
+    };
+}
+
+public sealed record ToolDto
+{
+    public required string Kind { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public bool Required { get; init; }
+
+    public string? Path { get; init; }
+
+    public required string Health { get; init; }
+
+    public string? Version { get; init; }
+
+    public string? Message { get; init; }
+
+    public static ToolDto From(ToolReport r) => new()
+    {
+        Kind = r.Kind.ToString(),
+        DisplayName = r.DisplayName,
+        Required = r.Required,
+        Path = r.Path,
+        Health = r.Health.ToString(),
+        Version = r.Version,
+        Message = r.Message,
+    };
+}
+
+public sealed record KindTotal(string Kind, long SavedBytes, long OriginalBytes, long Count);
+
+public sealed record UiState
+{
+    public required IReadOnlyList<JobDto> Jobs { get; init; }
+
+    public long TotalBytesSaved { get; init; }
+
+    public string TotalSavedText { get; init; } = string.Empty;
+
+    public string TotalSavedPercentText { get; init; } = string.Empty;
+
+    public long TotalBytesOriginal { get; init; }
+
+    public long TotalFiles { get; init; }
+
+    public long ProcessedFiles { get; init; }
+
+    public IReadOnlyList<KindTotal> ByKind { get; init; } = [];
+
+    public IReadOnlyList<ToolDto> Tools { get; init; } = [];
+
+    public required AppConfig Config { get; init; }
+
+    public bool IsRunning { get; init; }
+
+    public bool IsPaused { get; init; }
+
+    public long SpeedBytesPerSecond { get; init; }
+
+    public string SpeedText { get; init; } = string.Empty;
+
+    public int Concurrency { get; init; }
+
+    public string AppDirectory { get; init; } = string.Empty;
+
+    public string DataDirectory { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> SupportedExtensions { get; init; } = [];
+}

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UltraCompressor.App/UltraCompressor.App.csproj" />
+    <Project Path="src/UltraCompressor.Core/UltraCompressor.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UltraCompressor.Core.Tests/UltraCompressor.Core.Tests.csproj" />
+  </Folder>
+</Solution>

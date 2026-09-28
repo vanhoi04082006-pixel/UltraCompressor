@@ -1,0 +1,24 @@
+bin/
+obj/
+.vs/
+*.user
+
+# External binaries are bundled at setup time, never committed
+tools/*.exe
+tools/*.dll
+
+# Staging folder that setup.ps1 publishes into before copying to the install dir
+publish/
+
+# Screenshots, sample media and throwaway probe projects used while developing.
+# Useful on the machine, noise in version control.
+artifacts/
+
+# Decompiled source of the original app. Kept locally to cross-check parameters and
+# known bugs, but it is someone else's code and does not belong in this repository.
+reference/original-csharp/
+
+# Runtime output
+logs/
+*.session.json
+*.log

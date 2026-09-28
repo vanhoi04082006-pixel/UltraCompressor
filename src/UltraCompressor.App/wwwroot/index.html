@@ -1,0 +1,334 @@
+﻿<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UltraCompressor</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Bẫy lỗi JavaScript ngay từ đầu trang. WebView2 không báo lỗi script ra ngoài,
+    // nên không có bẫy này thì một lỗi cú pháp đơn lẻ cũng khiến cửa sổ trắng trơn
+    // mà không ai biết vì sao.
+    window.__ucErrors = [];
+    function __ucReport(kind, detail) {
+      window.__ucErrors.push(Object.assign({ kind: kind }, detail));
+      try {
+        chrome.webview.postMessage({ event: 'jsError', data: detail });
+      } catch (ignored) { /* chưa sẵn sàng thì bỏ qua */ }
+    }
+    window.addEventListener('error', function (e) {
+      __ucReport('error', {
+        message: e.message || String(e.error),
+        source: e.filename || '',
+        line: e.lineno || 0,
+        col: e.colno || 0,
+        stack: (e.error && e.error.stack) || ''
+      });
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      __ucReport('rejection', {
+        message: String(e.reason && e.reason.message ? e.reason.message : e.reason),
+        stack: String(e.reason && e.reason.stack ? e.reason.stack : '')
+      });
+    });
+  </script>
+</head>
+<body>
+
+<!-- Lớp phủ hiện lên khi kéo tệp/thư mục từ Explorer vào cửa sổ. -->
+<div id="dropZone" class="drop-zone" aria-hidden="true">
+  <div class="drop-card">
+    <span class="drop-icon" aria-hidden="true">⤓</span>
+    <strong>Thả vào đây</strong>
+    <span>Thả thư mục hoặc tệp media để thêm vào danh sách nén</span>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>UltraCompressor</h1>
+      <p class="brand-sub">Nén ảnh, video, âm thanh, GIF và PDF hàng loạt</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-ghost" id="btnGuide" title="Hướng dẫn (?)"><span class="ico">?</span> Hướng dẫn</button>
+    <button class="btn btn-ghost" id="btnLog" title="Nhật ký (L)"><span class="ico">≡</span> Nhật ký</button>
+    <button class="btn btn-ghost" id="btnTheme" title="Đổi giao diện sáng/tối (T)" aria-label="Đổi giao diện"><span class="ico" id="themeIcon">◐</span></button>
+    <button class="btn btn-ghost" id="btnSettings" title="Cài đặt"><span class="ico">⚙</span> Cài đặt</button>
+  </div>
+</header>
+
+<div class="toolbar">
+  <button class="btn btn-primary" id="btnAdd" title="Thêm thư mục (Ctrl+O) — hoặc kéo thả thư mục/tệp vào cửa sổ"><span class="ico">＋</span> Thêm thư mục</button>
+  <button class="btn btn-go" id="btnStart" title="Bắt đầu (Ctrl+Enter)" disabled><span class="ico">▶</span> Bắt đầu</button>
+  <button class="btn btn-warn" id="btnPause" title="Tạm dừng / Tiếp tục (Space)" disabled><span class="ico">❙❙</span> Tạm dừng</button>
+  <button class="btn btn-danger-ghost" id="btnStop" title="Dừng tất cả" disabled><span class="ico">■</span> Dừng</button>
+
+  <div class="toolbar-sep" role="separator"></div>
+
+  <label class="field">
+    <span>Mức nén</span>
+    <select id="selLevel">
+      <option value="Light">Nhẹ — chất lượng cao</option>
+      <option value="Balanced" selected>Cân bằng — khuyến nghị</option>
+      <option value="Strong">Mạnh — nhỏ nhất</option>
+    </select>
+  </label>
+
+  <label class="field" title="Thử: nén ra thư mục tạm, xem kết quả rồi mới ghi đè tệp gốc.">
+    <span>Cách ghi</span>
+    <select id="selMode">
+      <option value="dry" selected>Thử trước — chỉ xem kết quả</option>
+      <option value="overwrite">Nén thật, thay thế tệp gốc</option>
+      <option value="export">Xuất kết quả ra thư mục khác</option>
+    </select>
+  </label>
+
+  <label class="field" id="exportField" hidden>
+    <span>Thư mục đích</span>
+    <input type="text" id="txtExport" placeholder="D:\Ket qua sau khi nen" spellcheck="false">
+  </label>
+
+  <div class="toolbar-spacer"></div>
+
+  <button class="btn btn-ghost" id="btnClear" title="Xoá toàn bộ danh sách" disabled><span class="ico">🗑</span> Xoá list</button>
+</div>
+
+<section class="summary">
+  <div class="summary-main">
+    <div class="summary-label">Tổng tiết kiệm</div>
+    <div class="summary-value" id="sumSaved">0 bytes</div>
+    <div class="summary-meta">
+      <span id="sumPercent">0%</span>
+      <span class="dot" aria-hidden="true">·</span>
+      <span id="sumFiles">0 / 0 tệp</span>
+    </div>
+  </div>
+
+  <div class="summary-chips" id="kindChips"></div>
+
+  <div class="summary-live">
+    <div class="live-row"><span class="live-label">Tốc độ</span><span class="live-value" id="sumSpeed">—</span></div>
+    <div class="live-row"><span class="live-label">Còn lại</span><span class="live-value" id="sumEta">—</span></div>
+    <div class="live-row"><span class="live-label">Luồng nén</span><span class="live-value" id="sumThreads">—</span></div>
+  </div>
+</section>
+
+<section class="alerts" id="alerts" hidden></section>
+
+<main class="workspace">
+  <section class="panel panel-jobs">
+    <div class="panel-head">
+      <h2>Danh sách thư mục</h2>
+      <div class="panel-head-actions">
+        <input type="search" id="searchJobs" placeholder="Lọc theo tên…" spellcheck="false">
+        <button class="btn btn-ghost btn-sm" id="btnUndoAll" title="Hoàn tác mọi job đã nén" disabled><span class="ico">↩</span> Hoàn tác tất cả</button>
+      </div>
+    </div>
+
+    <div class="table-scroll">
+      <table class="grid" id="jobTable">
+        <thead>
+          <tr>
+            <th>Thư mục</th>
+            <th>Trạng thái</th>
+            <th class="num">Tiết kiệm</th>
+            <th class="num">ETA</th>
+            <th>Tiến độ</th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody id="jobBody"></tbody>
+      </table>
+      <div class="empty" id="jobEmpty">
+        <div class="empty-art" aria-hidden="true">⬓</div>
+        <h3>Chưa có thư mục nào</h3>
+        <p>Bấm <b>Thêm thư mục</b> hoặc kéo thả một thư mục vào cửa sổ này.<br>Thư mục con cũng được quét tự động.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel panel-detail" id="detailPanel" hidden>
+    <div class="panel-head">
+      <h2 id="detailTitle">Chi tiết</h2>
+      <button class="btn btn-ghost btn-sm" id="btnCloseDetail" title="Đóng">✕</button>
+    </div>
+
+    <div class="detail-toolbar">
+      <input type="search" id="searchItems" placeholder="Tìm tên tệp…" spellcheck="false">
+      <select id="filterState">
+        <option value="all">Tất cả</option>
+        <option value="done">Đã nén thành công</option>
+        <option value="skipped">Bị giữ nguyên</option>
+        <option value="pending">Chưa xử lý</option>
+      </select>
+      <select id="filterKind">
+        <option value="all">Mọi loại</option>
+        <option value="Image">Ảnh</option>
+        <option value="Video">Video</option>
+        <option value="Audio">Âm thanh</option>
+        <option value="Gif">GIF</option>
+        <option value="Pdf">PDF</option>
+      </select>
+    </div>
+
+    <div class="table-scroll">
+      <table class="grid grid-items">
+        <thead>
+          <tr>
+            <th>Tệp</th>
+            <th class="num">Cũ</th>
+            <th class="num">Mới</th>
+            <th class="num">Kết quả</th>
+            <th>Trạng thái</th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody id="itemBody"></tbody>
+      </table>
+      <p class="table-foot" id="itemFoot"></p>
+    </div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <div class="status-left"><span class="tool-chip" id="toolChips"></span></div>
+  <div class="status-right">
+    <button class="linkbtn" id="btnOpenData" title="Mở thư mục dữ liệu">Thư mục dữ liệu</button>
+    <span class="dot" aria-hidden="true">·</span>
+    <button class="linkbtn" id="btnCheckTools" title="Kiểm tra lại công cụ">Kiểm tra công cụ</button>
+  </div>
+</footer>
+
+<div class="modal-root" id="modalSettings" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <h2 id="settingsTitle">Cài đặt</h2>
+      <button class="btn btn-ghost btn-sm" data-close aria-label="Đóng">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <section class="fieldset">
+        <h3>Nén</h3>
+        <label class="row">
+          <span>Tiết kiệm tối thiểu để chấp nhận</span>
+          <input type="number" id="cfgMinSaving" min="0" max="90" step="0.5" class="input-num">
+          <em class="unit">%</em>
+        </label>
+        <p class="hint">Bản cũ dùng ngưỡng tăng dần theo mức nén, khiến mức “Mạnh” lại khó đạt nhất. Ở đây ngưỡng là con số cố định, áp dụng như nhau cho mọi mức.</p>
+
+        <label class="row">
+          <span>Bỏ qua tệp nhỏ hơn</span>
+          <input type="number" id="cfgMinSize" min="0" step="1" class="input-num">
+          <em class="unit">MB</em>
+        </label>
+
+        <label class="row checkbox"><input type="checkbox" id="cfgSubfolders"><span>Quét cả thư mục con</span></label>
+        <label class="row checkbox"><input type="checkbox" id="cfgFreeSpace"><span>Cảnh báo khi ổ đĩa không đủ chỗ</span></label>
+        <label class="row checkbox"><input type="checkbox" id="cfgMeasureQuality"><span>Đo chất lượng bằng VMAF (chậm hơn một chút)</span></label>
+      </section>
+
+      <section class="fieldset">
+        <h3>Hiệu năng</h3>
+        <label class="row">
+          <span>Số luồng nén song song</span>
+          <input type="number" id="cfgConcurrency" min="0" max="32" class="input-num">
+          <em class="unit">0 = tự động</em>
+        </label>
+        <p class="hint" id="cpuHint"></p>
+      </section>
+
+      <section class="fieldset">
+        <h3>Bộ lọc và bản sao lưu</h3>
+        <label class="row">
+          <span>Giữ tệp <code>.bak</code> sau khi duyệt</span>
+          <input type="number" id="cfgKeepDays" min="0" max="3650" class="input-num">
+          <em class="unit">ngày · 0 = vĩnh viễn</em>
+        </label>
+        <label class="row">
+          <span>Không nén các tệp khớp</span>
+          <input type="text" id="cfgExclude" spellcheck="false" placeholder="*.bak, *.tmp, Thumbs.db">
+        </label>
+        <p class="hint">Bản cũ không lọc gì, nên chạy lần hai sẽ nén tiếp chính tệp <code>.bak</code> mà nó vừa tạo ra.</p>
+        <button class="btn btn-ghost btn-sm" id="btnPurge">Dọn bản sao lưu quá hạn ngay</button>
+      </section>
+
+      <section class="fieldset">
+        <h3>Công cụ ngoài</h3>
+        <div id="toolList" class="tool-list"></div>
+      </section>
+
+      <section class="fieldset">
+        <h3>Nhật ký</h3>
+        <label class="row">
+          <span>Mức chi tiết</span>
+          <select id="cfgLogLevel">
+            <option value="Debug">Debug — ghi cả từng lệnh</option>
+            <option value="Info">Info</option>
+            <option value="Warning">Warning</option>
+            <option value="Error">Error</option>
+          </select>
+        </label>
+      </section>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>Huỷ</button>
+      <button class="btn btn-primary" id="btnSaveConfig">Lưu cài đặt</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-root" id="modalGuide" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+    <div class="modal-head">
+      <h2 id="guideTitle">Hướng dẫn</h2>
+      <button class="btn btn-ghost btn-sm" data-close aria-label="Đóng">✕</button>
+    </div>
+    <div class="modal-body" id="guideBody"></div>
+    <div class="modal-foot"><button class="btn btn-primary" data-close>Đã hiểu</button></div>
+  </div>
+</div>
+
+<div class="modal-root" id="modalLog" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="logTitle">
+    <div class="modal-head">
+      <h2 id="logTitle">Nhật ký hoạt động</h2>
+      <div class="modal-head-actions">
+        <button class="btn btn-ghost btn-sm" id="btnRefreshLog">Làm mới</button>
+        <button class="btn btn-ghost btn-sm" data-close aria-label="Đóng">✕</button>
+      </div>
+    </div>
+    <div class="modal-body log-body"><pre class="logview" id="logView"></pre></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="btnOpenLogs">Mở thư mục nhật ký</button>
+      <button class="btn btn-primary" data-close>Đóng</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-root" id="modalConfirm" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-head"><h2 id="confirmTitle">Xác nhận</h2></div>
+    <div class="modal-body">
+      <p id="confirmText" class="confirm-text"></p>
+      <ul class="confirm-list" id="confirmList" hidden></ul>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close>Huỷ</button>
+      <button class="btn btn-danger" id="btnConfirmOk">Tiếp tục</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

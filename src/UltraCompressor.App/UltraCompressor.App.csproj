@@ -1,0 +1,56 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+
+    <!--
+      Tên tệp thực thi là UltraCompressor.exe, không phải UltraCompressor.App.exe.
+      Tên mặc định lấy từ tên project, mà lối tắt desktop và tài liệu đều dùng
+      "UltraCompressor.exe" — lệch nhau thì lối tắt báo Missing Shortcut.
+    -->
+    <AssemblyName>UltraCompressor</AssemblyName>
+
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Dùng WinForms chứ không phải WPF để đặt WebView2.
+
+      Cửa sổ WPF là một HwndHost và trên máy này nó bị lệch kích thước so với bề mặt
+      WebView2 đúng tỉ lệ phóng 125%: bề mặt rộng hơn khung cửa sổ, nên mép phải giao diện
+      bị cắt mất. WinForms + WebView2 là tổ hợp được kiểm thử kỹ nhất và dùng
+      ApplicationHighDpiMode để hệ toạ độ luôn khớp.
+
+      Toàn bộ giao diện vẫn nằm ở wwwroot — WinForms chỉ đóng vai trò khung chủ.
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>vi</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UltraCompressor.Core\UltraCompressor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!--
+      Gói WebView2 đưa cả ba bản (Core, Wpf, WinForms) vào đồ thị tham chiếu. Ta chỉ dùng
+      bản WinForms, nên bản Wpf không được giải quyết xung đột với WindowsBase của
+      .NET 10 và MSB3277 cảnh báo mỗi lần build. Xung đột này vô hại vì tệp đó không bao
+      giờ được nạp — chỉ dùng tới nó khi viết code WPF.
+    -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Giao diện web đi kèm tệp thực thi, cả khi chạy thử lẫn khi publish. -->
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

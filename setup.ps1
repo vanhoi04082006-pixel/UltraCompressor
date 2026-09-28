@@ -185,16 +185,49 @@ if (-not $NoShortcut) {
     Write-Warning 'Khong tim thay tep thuc thi de tao loi tat.'
   }
   else {
+    $icon = Join-Path $InstallTo 'app.ico'
+    $hasIcon = Test-Path $icon
+
+    # Hàm tạo lối tắt dùng chung cho cả Desktop và Start Menu, để hai chỗ không lệch nhau
+    # về icon hoặc thư mục làm việc.
+    function New-UcShortcut([string]$path) {
+      $sh = New-Object -ComObject WScript.Shell
+      $sc = $sh.CreateShortcut($path)
+      $sc.TargetPath = $exe.FullName
+      $sc.WorkingDirectory = $InstallTo
+      $sc.Description = 'Nen media hang loat theo muc tieu chinh'
+
+      # Chỉ gán IconLocation khi file thật sự tồn tại. Gán một đường dẫn không có thì
+      # Windows hiện biểu tượng trắng trống — tệ hơn là bỏ trống để nó lấy từ chính tệp
+      # thực thi, vốn đã nhúng sẵn icon.
+      if ($hasIcon) {
+        $sc.IconLocation = "$icon,0"
+      }
+
+      $sc.Save()
+    }
+
     $desktop = [Environment]::GetFolderPath('Desktop')
 
     if (Test-Path $desktop) {
       $lnk = Join-Path $desktop 'UltraCompressor.lnk'
-      $shell = New-Object -ComObject WScript.Shell
-      $shortcut = $shell.CreateShortcut($lnk)
-      $shortcut.TargetPath = $exe.FullName
-      $shortcut.WorkingDirectory = $InstallTo
-      $shortcut.Save()
+      New-UcShortcut $lnk
       Write-Host ('  Da tao loi tat: {0}' -f $exe.Name) -ForegroundColor Green
+    }
+
+    # Start Menu: tạo trong thư mục Programs của người dùng, không cần quyền admin và
+    # không đụng tới shortcut dùng chung cho mọi máy trong hệ thống.
+    $programs = [Environment]::GetFolderPath('Programs')
+
+    if (Test-Path $programs) {
+      $menuDir = Join-Path $programs 'UltraCompressor'
+
+      if (-not (Test-Path $menuDir)) {
+        New-Item -ItemType Directory -Path $menuDir -Force | Out-Null
+      }
+
+      New-UcShortcut (Join-Path $menuDir 'UltraCompressor.lnk')
+      Write-Host '  Da tao loi tat trong Start Menu.' -ForegroundColor Green
     }
   }
 }

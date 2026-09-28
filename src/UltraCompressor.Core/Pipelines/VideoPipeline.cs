@@ -1,18 +1,22 @@
 using System.Globalization;
+using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
+using UltraCompressor.Core.Planning;
 
 namespace UltraCompressor.Core.Pipelines;
 
 /// <summary>
-/// Nén video bằng libx264 (H.264). Tham số CRF/preset/scale lấy từ mức nén đang chọn.
+/// Nén video bằng libx264 (H.264).
+///
+/// Pipeline này **không tự chọn tham số**. Nó nhận kế hoạch do
+/// <c>CompressionEngine</c> tính riêng cho đúng tệp này: cùng một mức mục tiêu nhưng CRF,
+/// bề rộng và số khung hình khác nhau, tuỳ nguồn còn dư chi tiết hay không, nguồn dùng
+/// codec nào, và đã bị nén tới đâu.
 ///
 /// Khác bản gốc:
 ///  - thêm <c>-nostdin</c> (bản gốc có thể treo vô hạn vì để stdin mở),
 ///  - dùng <c>-map 0:v:0?</c> / <c>-map 0:a:0?</c> nên video không có tiếng vẫn nén được,
-///  - giữ metadata nguồn,
-///  - <b>bitrate âm thanh lấy từ mức nén</b> thay vì ghim cứng 128k. Trước đây dòng này
-///    là <c>-b:a 128k</c> nên chọn "Nhẹ" (320k) hay "Mạnh" (128k) thì âm thanh trong video
-///    vẫn luôn ra 128k, còn mục Âm thanh trong bảng hướng dẫn lại hiện 320k/192k/128k.
+///  - giữ metadata nguồn.
 /// </summary>
 public sealed class VideoPipeline : FFmpegPipelineBase
 {
@@ -21,16 +25,16 @@ public sealed class VideoPipeline : FFmpegPipelineBase
     public override async Task<PipelineResult> RunAsync(
         PipelineContext context, Action<int> onProgress, CancellationToken token)
     {
-        var profile = CompressionProfile.For(context.Level);
         var temp = context.TempPath;
 
-        var args = new List<string>
-        {
-            "-hide_banner",
-            "-loglevel", "error",
-            "-nostdin",
-        };
+        var plan = CompressionPlanner.PlanVideo(
+            context.Level.ToGoal(),
+            context.Probe,
+            context.Item.SourceWidth,
+            context.Item.SourceBitrateKbps,
+            context.Item.HasAudio ?? true);
 
+        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
         args.AddRange(ProgressArgs);
         args.AddRange(
         [
@@ -39,25 +43,29 @@ public sealed class VideoPipeline : FFmpegPipelineBase
             "-map", "0:a:0?",
             "-map_metadata", "0",
             "-c:v", "libx264",
-            "-crf", profile.VideoCrf.ToString(CultureInfo.InvariantCulture),
-            "-preset", profile.VideoPreset,
-            "-vf", profile.VideoFilter,
+            "-crf", plan.Crf.ToString(CultureInfo.InvariantCulture),
+            "-preset", plan.Preset,
         ]);
 
-        // Không ép codec âm thanh nếu nguồn không có tiếng. Thông tin đã lấy sẵn ở bước probe
-        // nên không cần chạy ffmpeg thêm một lần ở đây.
-        if (context.Item.HasAudio == false)
+        // Rỗng = giữ nguyên cả bề rộng lẫn số khung hình, không dựng `-vf` cho nên không tốn công gì.
+        var filter = VideoFilter.Build(plan.TargetWidth, plan.TargetFps);
+        if (filter.Length > 0)
+        {
+            args.AddRange(["-vf", filter]);
+        }
+
+        if (plan.DropAudio)
         {
             args.Add("-an");
         }
         else
         {
-            // Không nâng bitrate của tệp nguồn vốn đã nhỏ hơn — chỉ làm file to thêm mà
+            // Không nâng bitrate của tệp nguồn vốn đã nhỏ hơn — chỉ làm tệp to thêm mà
             // không thu được gì. Cùng logic với AudioPipeline.
-            var target = profile.AudioBitrateKbps;
-            if (context.Item.SourceBitrateKbps is { } source && source > 0 && source < target)
+            var target = plan.AudioBitrateKbps;
+            if (context.Item.SourceBitrateKbps is { } audioSource && audioSource > 0 && audioSource < target)
             {
-                target = (int)Math.Round(source);
+                target = (int)Math.Round(audioSource);
             }
 
             args.AddRange(["-c:a", "aac", "-b:a", $"{target.ToString(CultureInfo.InvariantCulture)}k"]);
@@ -69,5 +77,32 @@ public sealed class VideoPipeline : FFmpegPipelineBase
         var outcome = Interpret(result, duration, context.Item, temp);
         if (outcome.Success) onProgress(100);
         return outcome;
+    }
+}
+
+/// <summary>Dựng chuỗi <c>-vf</c> cho video.</summary>
+internal static class VideoFilter
+{
+    /// <summary>
+    /// Hạ số khung hình phải đứng <b>trước</b> bước thu nhỏ: `fps` trước `scale` nghĩa là
+    /// những khung bị bỏ đi không phải thu nhỏ, làm nhanh hơn. Ngược lại sẽ thu nhỏ cả rồi
+    /// mới bỏ, tốn công vô ích trên video dài.
+    /// </summary>
+    public static string Build(int? maxWidth, double? fps)
+    {
+        var parts = new List<string>(2);
+
+        if (fps is { } f && f > 0)
+        {
+            parts.Add($"fps={f.ToString("0.###", CultureInfo.InvariantCulture)}");
+        }
+
+        if (maxWidth is { } w && w > 0)
+        {
+            // `min()` nên không cần biết bề rộng thật của nguồn, và không bao giờ phóng to.
+            parts.Add($"scale='min({w},iw)':-2");
+        }
+
+        return string.Join(",", parts);
     }
 }

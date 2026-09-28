@@ -1,3 +1,4 @@
+using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 
 namespace UltraCompressor.Core.Pipelines;
@@ -5,7 +6,14 @@ namespace UltraCompressor.Core.Pipelines;
 /// <summary>Đường dẫn công cụ đã được xác định cho lần chạy này.</summary>
 public sealed record ToolResolution(string? FFmpeg, string? FFplay, string? Gifsicle, string? Ghostscript);
 
-/// <summary>Mọi thứ một pipeline cần để nén một tệp.</summary>
+/// <summary>
+/// Mọi thứ một pipeline cần để nén một tệp.
+///
+/// <b>Pipeline không tự quyết định tham số.</b> Tham số đã được
+/// <c>CompressionEngine</c> tính sẵn cho đúng tệp này từ mức mục tiêu của job, rồi đưa
+/// vào đây. Nhờ vậy cùng một tệp luôn cho cùng một kết quả, quy tắc lập kế hoạch nằm gọn
+/// trong một chỗ kiểm thử được, và pipeline chỉ còn lo dựng lệnh.
+/// </summary>
 public sealed record PipelineContext
 {
     public required JobItem Item { get; init; }
@@ -13,7 +21,11 @@ public sealed record PipelineContext
     /// <summary>Nơi ghi kết quả tạm. Pipeline <b>không</b> được tự chọn đường dẫn này.</summary>
     public required string TempPath { get; init; }
 
+    /// <summary>Mức mục tiêu của job, để pipeline dựng thông điệp và bộ lọc.</summary>
     public required CompressionLevel Level { get; init; }
+
+    /// <summary>Tham số đã tính riêng cho tệp này. Không có thì pipeline tự suy từ probe.</summary>
+    public MediaInfo? Probe { get; init; }
 
     public required AppConfig Config { get; init; }
 

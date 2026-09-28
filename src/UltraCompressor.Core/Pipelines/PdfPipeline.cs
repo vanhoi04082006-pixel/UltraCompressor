@@ -1,4 +1,5 @@
 using UltraCompressor.Core.Models;
+using UltraCompressor.Core.Planning;
 
 namespace UltraCompressor.Core.Pipelines;
 
@@ -23,7 +24,7 @@ public sealed class PdfPipeline : FFmpegPipelineBase
                 SkipReason.MissingTool,
                 "Chưa có Ghostscript. Cài tại https://ghostscript.com/releases/ rồi khai báo đường dẫn trong Cài đặt.");
 
-        var profile = CompressionProfile.For(context.Level);
+        var plan = CompressionPlanner.PlanPdf(context.Level.ToGoal());
         onProgress(0);
 
         // Ghostscript không có cơ chế tiến độ dạng máy đọc được mà vẫn giữ được chế độ im
@@ -39,7 +40,7 @@ public sealed class PdfPipeline : FFmpegPipelineBase
                 "-dSAFER",
                 "-sDEVICE=pdfwrite",
                 "-dCompatibilityLevel=1.4",
-                $"-dPDFSETTINGS={profile.PdfPreset}",
+                $"-dPDFSETTINGS={plan.Preset}",
                 $"-sOutputFile={context.TempPath}",
                 context.SourcePath,
             ],

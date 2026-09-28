@@ -2,6 +2,7 @@ using UltraCompressor.Core.Diagnostics;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Pipelines;
+using UltraCompressor.Core.Planning;
 using UltraCompressor.Core.Storage;
 using UltraCompressor.Core.Toolchain;
 
@@ -409,6 +410,99 @@ public sealed class CompressionEngine : IAsyncDisposable
 
     // ---------------------------------------------------------------- xử lý một tệp
 
+    /// <summary>
+    /// Tóm tắt tham số đã chọn cho tệp này, để hiện trong bảng chi tiết và ghi vào nhật ký.
+    ///
+    /// Người dùng chỉ chọn "mức mục tiêu", không chọn tham số. Nếu không in ra tham số thật
+    /// đã dùng thì ứng dụng không còn minh bạch: người dùng thấy tệp nhỏ đi 40% mà không
+    /// biết vì sao, và không tin được. Dòng này là câu trả lời.
+    /// </summary>
+    private static string DescribePlan(PipelineContext context)
+    {
+        var goal = context.Level.ToGoal();
+        var item = context.Item;
+
+        return item.Kind switch
+        {
+            MediaKind.Video => DescribeVideoPlan(goal, context),
+            MediaKind.Image => DescribeImagePlan(goal, context),
+            MediaKind.Gif => DescribeGifPlan(goal, context),
+            MediaKind.Audio => DescribeAudioPlan(goal, context),
+            MediaKind.Pdf => $"PDF {CompressionPlanner.PlanPdf(goal).Preset}",
+            _ => string.Empty,
+        };
+    }
+
+    private static string DescribeVideoPlan(CompressionGoal goal, PipelineContext context)
+    {
+        var plan = CompressionPlanner.PlanVideo(
+            goal, context.Probe, context.Item.SourceWidth, context.Item.SourceBitrateKbps,
+            context.Item.HasAudio ?? true);
+
+        var parts = new List<string> { $"CRF {plan.Crf} ({plan.Preset})" };
+
+        if (plan.TargetWidth > 0 && context.Item.SourceWidth is { } w && w > 0)
+        {
+            parts.Add(w > plan.TargetWidth
+                ? $"{w}px → {plan.TargetWidth}px"
+                : $"giữ {w}px");
+        }
+
+        if (plan.TargetFps is { } fps) parts.Add($"{fps:0.#} fps");
+        if (plan.DropAudio) parts.Add("bỏ tiếng");
+        else parts.Add($"tiếng {plan.AudioBitrateKbps}k");
+
+        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string DescribeImagePlan(CompressionGoal goal, PipelineContext context)
+    {
+        var plan = CompressionPlanner.PlanImage(
+            goal, context.Probe, context.Item.SourceWidth, context.Item.OldSize);
+
+        var parts = new List<string> { $"-q:v {plan.QScale}" };
+
+        if (plan.TargetWidth > 0 && context.Item.SourceWidth is { } w && w > 0)
+        {
+            parts.Add(w > plan.TargetWidth ? $"{w}px → {plan.TargetWidth}px" : $"giữ {w}px");
+        }
+
+        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string DescribeGifPlan(CompressionGoal goal, PipelineContext context)
+    {
+        var plan = CompressionPlanner.PlanGif(
+            goal, context.Probe, context.Item.SourceWidth, context.Item.OldSize);
+
+        var parts = new List<string>
+        {
+            $"{plan.Fps} fps",
+            $"lossy {plan.Lossy}",
+        };
+
+        if (plan.TargetWidth > 0 && context.Item.SourceWidth is { } w && w > 0)
+        {
+            parts.Add(w > plan.TargetWidth ? $"{w}px → {plan.TargetWidth}px" : $"giữ {w}px");
+        }
+
+        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string DescribeAudioPlan(CompressionGoal goal, PipelineContext context)
+    {
+        var plan = CompressionPlanner.PlanAudio(goal, context.Probe);
+        return plan.Reason.Length > 0
+            ? $"{plan.BitrateKbps}k — {plan.Reason}"
+            : $"{plan.BitrateKbps}k";
+    }
+
     private async Task ProcessItemAsync(Job job, JobItem item, CancellationToken token)
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -430,21 +524,25 @@ public sealed class CompressionEngine : IAsyncDisposable
         {
             item.OldSize = new FileInfo(item.FilePath).Length;
 
-            // Bước probe: lấy thời lượng / có tiếng hay không / bitrate gốc.
-            if (_probe is not null && item.Kind != MediaKind.Image)
+            // Bước probe: lấy thời lượng, fps, codec, bề rộng, có tiếng, bitrate gốc.
+            // Đây là đầu vào của bước lập kế hoạch — cùng một mức mục tiêu nhưng mỗi tệp ra
+            // tham số khác nhau, tuỳ đặc tính của chính nó.
+            MediaInfo? probe = null;
+            if (_probe is not null)
             {
                 try
                 {
-                    var info = await _probe.ProbeAsync(item.FilePath, token);
-                    item.DurationSeconds = info.Duration?.TotalSeconds;
-                    item.HasAudio = info.HasAudio;
-                    item.SourceBitrateKbps = info.BitrateKbps;
-                    item.SourceWidth = info.Width;
-                    item.SourceHeight = info.Height;
+                    probe = await _probe.ProbeAsync(item.FilePath, token);
+                    item.DurationSeconds = probe.Duration?.TotalSeconds;
+                    item.HasAudio = probe.HasAudio;
+                    item.SourceBitrateKbps = probe.BitrateKbps;
+                    item.SourceWidth = probe.Width;
+                    item.SourceHeight = probe.Height;
                 }
                 catch (Exception ex)
                 {
-                    // Mất thông tin probe không nên chặn nén.
+                    // Mất thông tin probe không nên chặn nén — kế hoạch sẽ rơi về tham số
+                    // nền theo mức mục tiêu.
                     _log.LogDebug("probe", $"Không probe được '{item.FileName}': {ex.Message}");
                 }
             }
@@ -464,10 +562,13 @@ public sealed class CompressionEngine : IAsyncDisposable
                 Item = item,
                 TempPath = temp,
                 Level = job.Level,
+                Probe = probe,
                 Config = _config,
                 Tools = BuildToolResolution(),
                 OutputPath = BuildOutputPath(job, item),
             };
+
+            item.Plan = DescribePlan(context);
 
             var percent = 0;
             var result = await pipeline.RunAsync(context, p =>

@@ -1,5 +1,6 @@
 using System.Globalization;
 using UltraCompressor.Core.Models;
+using UltraCompressor.Core.Planning;
 using UltraCompressor.Core.Processes;
 
 namespace UltraCompressor.Core.Pipelines;
@@ -19,9 +20,14 @@ public sealed class GifPipeline : FFmpegPipelineBase
     public override async Task<PipelineResult> RunAsync(
         PipelineContext context, Action<int> onProgress, CancellationToken token)
     {
-        var profile = CompressionProfile.For(context.Level);
         var temp = context.TempPath;
         var gifsicle = context.Tools.Gifsicle;
+
+        var plan = CompressionPlanner.PlanGif(
+            context.Level.ToGoal(),
+            context.Probe,
+            context.Item.SourceWidth,
+            context.Item.OldSize);
 
         // Không có gifsicle thì ghi thẳng ra tệp cuối.
         var intermediate = gifsicle is null
@@ -30,7 +36,13 @@ public sealed class GifPipeline : FFmpegPipelineBase
 
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
         args.AddRange(ProgressArgs);
-        args.AddRange(["-i", context.SourcePath, "-vf", profile.GifFilter, "-loop", "0", "-y", intermediate]);
+        args.AddRange(
+        [
+            "-i", context.SourcePath,
+            "-vf", GifFilter.Build(plan),
+            "-loop", "0",
+            "-y", intermediate,
+        ]);
 
         var (result, duration) = await ExecuteAsync(
             context,
@@ -54,12 +66,12 @@ public sealed class GifPipeline : FFmpegPipelineBase
         }
 
         // gifsicle không in tiến độ: nó làm việc nhanh và không nhận đầu vào có tỉ lệ.
-        // 80% rồi nhảy thẳng 100%, thay vì báo đều đặn 85% như trước — con số 85 đó chỉ
-        // là số bịa, gifsicle chẳng báo gì cả.
+        // 80% rồi nhảy thẳng 100%, thay vì báo đều đặn 85% như trước — số 85 đó chỉ là
+        // số bịa, gifsicle chẳng báo gì cả.
         var (gifsicleResult, _) = await ExecuteToolAsync(
             gifsicle,
             [
-                $"--lossy={profile.GifLossy.ToString(CultureInfo.InvariantCulture)}",
+                $"--lossy={plan.Lossy.ToString(CultureInfo.InvariantCulture)}",
                 "-O3",
                 "--colors", "256",
                 intermediate,
@@ -102,5 +114,24 @@ public sealed class GifPipeline : FFmpegPipelineBase
         {
             // Tệp tạm bị khoá — sẽ dọn ở lần quét sau.
         }
+    }
+}
+
+internal static class GifFilter
+{
+    /// <summary>
+    /// Bộ lọc GIF: giảm fps → thu nhỏ → tách palette.
+    ///
+    /// Thứ tự có ý nghĩa: hạ fps trước rồi mới thu nhỏ, vì khung bị bỏ đi không nên phải
+    /// thu nhỏ. `palettegen` rồi tới `paletteuse` dùng chung một bảng màu để màu không bị
+    /// dịch chuyển giữa các khung — thiếu bước này thì GIF nhấp nháy màu.
+    /// </summary>
+    public static string Build(GifPlan plan)
+    {
+        var scale = plan.TargetWidth > 0
+            ? $"scale='min({plan.TargetWidth},iw)':-1:flags=lanczos"
+            : "scale=iw:-1:flags=lanczos";
+
+        return $"fps={plan.Fps},{scale},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse";
     }
 }

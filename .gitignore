@@ -10,6 +10,12 @@ tools/*.dll
 # Staging folder that setup.ps1 publishes into before copying to the install dir
 publish/
 
+# Bản cài nằm trong thư mục dự án (setup.ps1 mặc định đặt ở đây)
+app/
+
+# Dữ liệu người dùng: cấu hình, phiên, nhật ký, tệp nén tạm, profile trình duyệt
+data/
+
 # Screenshots, sample media and throwaway probe projects used while developing.
 # Useful on the machine, noise in version control.
 artifacts/

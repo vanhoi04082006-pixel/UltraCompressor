@@ -30,11 +30,18 @@ internal static class Program
             // cần dispatcher mà dispatcher lại đang bị chính lệnh chặn đó giữ.)
             var config = new ConfigStore(AppPaths.ConfigFile).LoadAsync().GetAwaiter().GetResult();
             logger.MinimumLevel = ParseLogLevel(config.LogLevel);
-            logger.LogInfo("startup", $"Khởi động. Dữ liệu tại {AppPaths.DataDirectory}");
+            logger.LogInfo("startup", $"Khởi động. Dự án tại {AppPaths.RootDirectory}");
+            logger.LogInfo("startup", $"Dữ liệu tại {AppPaths.DataDirectory}");
+
+            // Bản cài cũ ở %LOCALAPPDATA%. Chỉ cảnh báo, không tự xoá: thư mục đó có thể
+            // còn cấu hình và danh sách job của phiên trước. setup.ps1 lo việc dọn dẹp.
+            ReportLegacyData(logger);
 
             using (var workspace = new TempWorkspace(AppPaths.TempRoot))
             {
-                var removed = workspace.RemoveStale(TimeSpan.FromHours(6));
+                // Zero = dọn hết. Lúc khởi động chưa có công việc nào chạy, nên bất kỳ thứ
+                // gì còn trong thư mục tạm đều là của lần chạy trước bị gián đoạn.
+                var removed = workspace.RemoveStale(TimeSpan.Zero);
                 if (removed > 0) logger.LogInfo("startup", $"Đã dọn {removed} tệp tạm cũ.");
             }
 
@@ -127,6 +134,26 @@ internal static class Program
         }
 
         return found;
+    }
+
+    private static void ReportLegacyData(FileLogger logger)
+    {
+        try
+        {
+            var legacy = Core.AppPaths.LegacyDataDirectory;
+            if (!Directory.Exists(legacy)) return;
+
+            // Không đo kích thước: quét cả thư mục cài ~130 MB tốn thời gian vô ích lúc
+            // khởi động, mà người dùng chỉ cần biết nó vẫn còn.
+            logger.LogInfo(
+                "startup",
+                $"Còn thư mục của bản cài cũ tại {legacy} — không dùng nữa. " +
+                "Chạy `setup.ps1 -RemoveLegacy` để xoá và giải phóng dung lượng.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug("startup", $"Không kiểm tra được thư mục cũ: {ex.Message}");
+        }
     }
 
     private static LogLevel ParseLogLevel(string? value) => value?.ToLowerInvariant() switch

@@ -224,21 +224,43 @@ public sealed class MediaHost
         return new ByteRange(start, end - start + 1);
     }
 
-    private static string MimeTypeOf(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    /// <summary>
+    /// Đoán kiểu MIME từ phần mở rộng.
+    ///
+    /// <para>Phải bỏ dấu <c>.bak</c> ở cuối trước khi đoán. Tệp backup của ứng dụng có
+    /// tên như <c>phim.mp4.bak</c>: nếu đoán trực tiếp thì ra
+    /// <c>application/octet-stream</c>, và thẻ <c>&lt;video&gt;</c> của Chromium sẽ từ
+    /// chối tệp — hộp so sánh hiện một khung đen, 0:00, không báo lỗi nào. Người dùng
+    /// thấy đúng triệu chứng "bản gốc hỏng" trong khi bản gốc hoàn toàn ổn.</para>
+    /// </summary>
+    private static string MimeTypeOf(string path)
     {
-        ".mp4" or ".m4v" => "video/mp4",
-        ".webm" => "video/webm",
-        ".mkv" or ".avi" or ".mov" => "video/x-matroska",
-        ".gif" => "image/gif",
-        ".jpg" or ".jpeg" => "image/jpeg",
-        ".png" => "image/png",
-        ".webp" => "image/webp",
-        ".bmp" => "image/bmp",
-        ".mp3" => "audio/mpeg",
-        ".m4a" or ".aac" => "audio/mp4",
-        ".wav" => "audio/wav",
-        ".ogg" or ".oga" => "audio/ogg",
-        ".pdf" => "application/pdf",
-        _ => "application/octet-stream",
-    };
+        var extension = Path.GetExtension(path);
+
+        // Bỏ một lớp .bak. Dùng vòng lặp thay vì kiểm tra một lần: sao lưu của sao lưu
+        // cũng phải phát được, và tệp tên kết thúc bằng .bak.bak là do chính ứng dụng tạo ra.
+        while (extension.Equals(".bak", StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[..^extension.Length];
+            extension = Path.GetExtension(path);
+        }
+
+        return extension.ToLowerInvariant() switch
+        {
+            ".mp4" or ".m4v" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mkv" or ".avi" or ".mov" => "video/x-matroska",
+            ".gif" => "image/gif",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".mp3" => "audio/mpeg",
+            ".m4a" or ".aac" => "audio/mp4",
+            ".wav" => "audio/wav",
+            ".ogg" or ".oga" => "audio/ogg",
+            ".pdf" => "application/pdf",
+            _ => "application/octet-stream",
+        };
+    }
 }

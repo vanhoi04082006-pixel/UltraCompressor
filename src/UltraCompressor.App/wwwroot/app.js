@@ -508,6 +508,13 @@ function renderCompareSide(prefix, side) {
 
   $(`name${prefix}`).textContent = side.fileName;
 
+  // Dòng báo lỗi phát media, mặc định ẩn. Dùng cho trường hợp thẻ <video>/<img> bị
+  // Chromium từ chối: trình duyệt không đưa lý do lên giao diện, nên nếu không có dòng
+  // này thì người dùng chỉ thấy khung đen và tưởng tệp hỏng.
+  const note = el('p', 'compare-note', '');
+  note.hidden = true;
+  facts.appendChild(note);
+
   // GIF hiển thị bằng ảnh xem trước tĩnh, KHÔNG nhúng thẳng tệp .gif.
   //
   // Một GIF động nhúng bằng <img> sẽ vẽ lại liên tục trong đúng tiến trình
@@ -523,6 +530,15 @@ function renderCompareSide(prefix, side) {
     video.setAttribute('playsinline', '');
     shot.appendChild(video);
     comparePlayers[key] = video;
+    // Khung đen, 0:00, không báo gì là kiểu lỗi tệ nhất: người dùng không phân biệt
+    // được "tệp hỏng" với "ứng dụng hỏng". Chromium không đưa lý do lên giao diện, nên
+    // phải tự bắt sự kiện error và nói rõ.
+    video.addEventListener('error', () => {
+      const err = video.error;
+      const why = err?.message ? `: ${err.message}` : '';
+      note.textContent = `Không phát được (mã ${err?.code ?? '?'})${why}. Bấm "Mở bản gốc ra ngoài" để xem bằng trình phát khác.`;
+      note.hidden = false;
+    });
   } else if (side.url && side.kind === 'Image') {
     const img = document.createElement('img');
     img.src = side.url;

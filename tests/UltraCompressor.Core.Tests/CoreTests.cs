@@ -371,6 +371,58 @@ public class UndoServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_dir, "a.bin.bak")));
     }
 
+    /// <summary>
+    /// Bug thật: bấm "Duyệt" xong, bản gốc đã bị thay thế và báo "Đã duyệt", nhưng job
+    /// vẫn hiện "Chờ duyệt" và đếm 0 tệp — người dùng tưởng thao tác chưa xong.
+    ///
+    /// <para>Nguyên nhân: điều kiện chuyển trạng thái là <c>keepDays == 0</c>, trong khi
+    /// mặc định giữ backup là 30 ngày. Nhánh đó không bao giờ chạy với cấu hình mặc
+    /// định.</para>
+    ///
+    /// <para>Giữ backup lâu và "đã duyệt" là hai việc khác nhau: keepDays quyết định lúc
+    /// nào xoá tệp .bak, không quyết định duyệt có thành công hay không.</para>
+    /// </summary>
+    [Fact]
+    public void Duyet_thanh_cong_thi_job_sang_da_ghi_du_giu_luu_backup()
+    {
+        var item = AppliedItem("a.bin", "goc", "nen");
+        var job = new Job
+        {
+            FolderPath = _dir,
+            Status = JobStatus.PendingReview,
+            Items = [item],
+        };
+
+        UndoService.DiscardBackups(job, keepDays: 30);
+
+        Assert.Equal(JobStatus.Committed, job.Status);
+        Assert.True(job.Committed);
+        Assert.True(File.Exists(Path.Combine(_dir, "a.bin.bak")));
+    }
+
+    [Fact]
+    public void Khong_con_backup_thi_van_duoc_bao_da_ghi()
+    {
+        // Không có tệp .bak nghĩa là không có gì để dọn — KHÔNG phải lỗi. Tệp gốc vốn đã
+        // được thay thế rồi (đó là việc của bước nén, không phải của bước dọn), nên job
+        // vẫn phải là "đã ghi". Nếu coi đây là lỗi thì người dùng không bao giờ thoát được
+        // trạng thái "Chờ duyệt" cho những tệp đã bị dọn backup từ trước.
+        var item = new JobItem
+        {
+            FilePath = Path.Combine(_dir, "khong-con-backup.bin"),
+            Kind = MediaKind.Video,
+            IsApplied = true,
+        };
+
+        var job = new Job { FolderPath = _dir, Status = JobStatus.PendingReview, Items = [item] };
+
+        var result = UndoService.DiscardBackups(job, keepDays: 0);
+
+        Assert.Equal(0, result.Failed);
+        Assert.Empty(result.Errors);
+        Assert.Equal(JobStatus.Committed, job.Status);
+    }
+
     [Fact]
     public void Don_bao_luu_qua_han()
     {

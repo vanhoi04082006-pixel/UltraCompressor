@@ -116,6 +116,7 @@ public sealed partial class MediaProbe(string ffmpegPath)
         // đó là thứ quyết định nén lại còn thu được không.
         var totalBitrate = FFmpegOutputParser.FindInputBitrateKbps(lines);
         var videoBitrate = FFmpegOutputParser.FindVideoStreamBitrateKbps(lines);
+        var dimensions = FFmpegOutputParser.ParseDimensions(videoLine);
 
         var info = new MediaInfo
         {
@@ -123,8 +124,8 @@ public sealed partial class MediaProbe(string ffmpegPath)
             BitrateKbps = totalBitrate ?? videoBitrate,
             HasVideo = videoLine is not null,
             HasAudio = audioLine is not null,
-            Width = ParseDimension(videoLine),
-            Height = ParseDimension(videoLine),
+            Width = dimensions.Width,
+            Height = dimensions.Height,
             Fps = ParseFps(videoLine),
             VideoCodec = ParseCodec(videoLine),
             AudioCodec = ParseCodec(audioLine),
@@ -172,13 +173,6 @@ public sealed partial class MediaProbe(string ffmpegPath)
             if (d is not null) return d;
         }
         return null;
-    }
-
-    private static int? ParseDimension(string? line)
-    {
-        if (line is null) return null;
-        var m = DimensionRegex().Match(line);
-        return m.Success && int.TryParse(m.Groups["w"].Value, out var w) ? w : null;
     }
 
     private static double? ParseFps(string? line)

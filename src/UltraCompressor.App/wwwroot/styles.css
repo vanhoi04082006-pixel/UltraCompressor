@@ -1051,6 +1051,19 @@ audio.compare-audio { width: 100%; }
   max-width: 30ch;
 }
 
+/* Báo lỗi phát media (Chromium từ chối tệp). Dùng màu cảnh báo sẵn có để nhất quán với
+   các cảnh báo khác, và chiếm cả chiều rộng để câu giải thích không bị cắt. */
+.compare-note {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .compare-facts {
   display: grid;
   grid-template-columns: auto 1fr;

@@ -5,6 +5,58 @@ namespace UltraCompressor.Core.Tests;
 
 public class FFmpegOutputParserTests
 {
+    /// <summary>
+    /// Bug thật: chiều cao bị báo bằng chiều rộng.
+    ///
+    /// <para>Hàm cũ chỉ trả về chiều rộng, rồi cả <c>Width</c> lẫn <c>Height</c> cùng
+    /// nhận giá trị đó. Người dùng thấy video 1918×1078 bị báo 1918×1918 trong hộp so
+    /// sánh.</para>
+    ///
+    /// <para>Nguy hiểm hơn nhiều so với con số sai trên màn hình: mật độ bit/px/khung
+    /// dùng W×H, nên báo vuông làm mật độ thấp hơn thật, planner cho rằng nguồn còn dư
+    /// chất lượng, và nâng CRF nhiều hơn cần thiết — nén quá mạnh mà không ai biết.</para>
+    /// </summary>
+    [Fact]
+    public void Doc_dung_ca_chieu_rong_va_chieu_cao()
+    {
+        // Nguyên văn dòng ffmpeg cho tệp thật của người dùng.
+        const string line =
+            "  Stream #0:0[0x1](und): Video: h264 (Main) (avc1 / 0x31637661), yuv420p(progressive), " +
+            "1918x1078 [SAR 1:1 DAR 137:77], 8001 kb/s, 30 fps, 30 tbr, 30k tbn (default)";
+
+        var (w, h) = FFmpegOutputParser.ParseDimensions(line);
+
+        Assert.Equal(1918, w);
+        Assert.Equal(1078, h);
+    }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(3840, 2160)]
+    [InlineData(1280, 720)]
+    [InlineData(1918, 1078)]
+    public void Khong_bao_khung_hinh_vuong(int expectedW, int expectedH)
+    {
+        var (w, h) = FFmpegOutputParser.ParseDimensions($"Video: h264, {expectedW}x{expectedH}, 30 fps");
+
+        Assert.Equal(expectedW, w);
+        Assert.Equal(expectedH, h);
+    }
+
+    [Fact]
+    public void Khong_co_khung_hinh_thi_tra_null_ca_hai()
+    {
+        // Không có cặp số nào thì phải trả null cho cả hai. Trả null lệch phía thì mật độ
+        // bit/px/khung có thể được tính bằng 0 và ra số vô nghĩa.
+        var (w, h) = FFmpegOutputParser.ParseDimensions("Stream #0:0: Audio: aac (LC), 48000 Hz, stereo");
+        Assert.Null(w);
+        Assert.Null(h);
+
+        var (w2, h2) = FFmpegOutputParser.ParseDimensions(null);
+        Assert.Null(w2);
+        Assert.Null(h2);
+    }
+
     [Theory]
     [InlineData("  Duration: 00:01:23.45, start: 0.000000, bitrate: 1234 kb/s", 83.45)]
     [InlineData("  Duration: 01:02:03.04, start: 0.000000, bitrate: 500 kb/s", 3723.04)]

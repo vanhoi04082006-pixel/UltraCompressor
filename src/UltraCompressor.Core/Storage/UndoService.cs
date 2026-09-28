@@ -98,7 +98,17 @@ public static class UndoService
             else errors.Add($"{item.FileName}: {error}");
         }
 
-        if (errors.Count == 0 && keepDays == 0)
+        // Đã duyệt xong thì job phải sang trạng thái "đã ghi", bất kể còn giữ backup hay
+        // không.
+        //
+        // Trước đây điều kiện là `errors.Count == 0 && keepDays == 0`. Nhưng keepDays mặc
+        // định là 30, nên nhánh này không bao giờ chạy: bấm "Duyệt" xong, bản gốc đã bị
+        // thay thế thật, báo "Đã duyệt" — mà job vẫn hiện "Chờ duyệt" và đếm 0 tệp.
+        // Người dùng tưởng thao tác chưa xong, bấm lại nhiều lần.
+        //
+        // keepDays quyết định thời điểm XOÁ file .bak, không quyết định việc duyệt có
+        // thành công hay không. Hai việc đó tách bạch: giữ backup lâu vẫn là đã duyệt.
+        if (errors.Count == 0)
         {
             job.Status = JobStatus.Committed;
             job.Committed = true;

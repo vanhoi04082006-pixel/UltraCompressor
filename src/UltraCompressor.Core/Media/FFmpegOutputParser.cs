@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace UltraCompressor.Core.Media;
@@ -150,8 +151,42 @@ public static partial class FFmpegOutputParser
         return null;
     }
 
-    public static bool HasVideoStream(IEnumerable<string> lines) => lines.Any(l => HasVideoStreamRegex().IsMatch(l));
+    [GeneratedRegex(@"(?<w>\d{2,5})x(?<h>\d{2,5})")]
+    private static partial Regex DimensionRegex();
 
+    /// <summary>
+    /// Tách cặp chiều rộng × chiều cao từ dòng mô tả luồng.
+    ///
+    /// <para>Trước đây chỉ có hàm trả về chiều rộng, rồi cả <c>Width</c> lẫn
+    /// <c>Height</c> cùng nhận giá trị đó. Hậu quả: mọi tệp bị báo chiều cao bằng chiều
+    /// rộng — video 1918×1078 thành 1918×1918.</para>
+    ///
+    /// <para>Không chỉ sai ở màn hình thông tin. Mật độ bit/px/khung dùng <c>W×H</c>,
+    /// nên báo vuông làm mật độ thấp hơn thật, planner nghĩ nguồn còn dư chất lượng, và
+    /// nâng CRF nhiều hơn cần thiết — tức lỗi hiển thị âm thầm này làm hỏng luôn kết
+    /// quả nén.</para>
+    /// </summary>
+    public static (int? Width, int? Height) ParseDimensions(string? line)
+    {
+        if (string.IsNullOrEmpty(line)) return (null, null);
+
+        var m = DimensionRegex().Match(line);
+        if (!m.Success) return (null, null);
+
+        // Ghi rõ kiểu int? cho cả hai nhánh của toán tử ?: — để trình biên dịch tự suy
+        // luận thì gặp CS0173, và cách "sửa" bằng cách đảo hai nhánh chỉ che lỗi.
+        int? w = int.TryParse(m.Groups["w"].Value, CultureInfo.InvariantCulture, out var width)
+            ? width
+            : (int?)null;
+
+        int? h = int.TryParse(m.Groups["h"].Value, CultureInfo.InvariantCulture, out var height)
+            ? height
+            : (int?)null;
+
+        return (w, h);
+    }
+
+    public static bool HasVideoStream(IEnumerable<string> lines) => lines.Any(l => HasVideoStreamRegex().IsMatch(l));
     public static bool HasAudioStream(IEnumerable<string> lines) => lines.Any(l => HasAudioStreamRegex().IsMatch(l));
 
     /// <summary>Phần trăm 0–99 (giữ 100 cho bước cuối), hoặc null nếu chưa đủ dữ liệu.</summary>

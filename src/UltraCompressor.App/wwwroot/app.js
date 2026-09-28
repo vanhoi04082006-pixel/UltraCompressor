@@ -428,7 +428,13 @@ async function openCompare(jobId, filePath) {
   const playable = [data.original, data.compressed].some((s) => s && s.url && s.kind === 'Video');
   $('btnPlayBoth').disabled = !playable;
   $('btnPauseBoth').disabled = !playable;
-}
+
+  // Chạy thử thì trên đĩa chưa có bản nén, nút mở bản nén phải ẩn chứ không bấm
+  // được rồi báo lỗi.
+  $('btnOpenOriginal').hidden = !data.original?.exists;
+  $('btnOpenCompressed').hidden = !data.compressed?.exists;
+  $('btnOpenCompressed').disabled = !data.compressed?.exists;
+  }
 
 /* Bề mặt hiển thị: video nhúng có thanh điều khiển, ảnh và GIF dùng <img>, PDF không nhúng
    được nên chỉ hiện ảnh xem trước. Mọi thứ nằm trong khung cao cố định để hai bên luôn
@@ -1093,10 +1099,15 @@ function wire() {
   $('btnOpenLogs').addEventListener('click', () => call('openLogs'));
   $('btnPlayBoth').addEventListener('click', playBoth);
   $('btnPauseBoth').addEventListener('click', pauseBoth);
-  $('btnOpenOriginal').addEventListener('click', async () => {
-    const result = await call('playFile', { path: compareState?.original?.path });
-    if (!result?.ok) toast(result?.error || 'Không mở được trình phát.', 'warn');
-  });
+  for (const [button, key] of [['btnOpenOriginal', 'original'], ['btnOpenCompressed', 'compressed']]) {
+    $(button).addEventListener('click', async () => {
+      const side = compareState?.[key];
+      if (!side?.path) return;
+
+      const result = await call('playFile', { path: side.path });
+      if (!result?.ok) toast(result?.error || 'Không mở được trình phát.', 'warn');
+    });
+  }
   initCompareSplit();
   $('btnOpenData').addEventListener('click', () => call('openData'));
   $('btnCheckTools').addEventListener('click', async () => {

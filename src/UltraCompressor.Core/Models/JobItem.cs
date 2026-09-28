@@ -67,6 +67,15 @@ public sealed class JobItem
     /// <summary>Bitrate nguồn (kbit/s) nếu đã probe.</summary>
     public double? SourceBitrateKbps { get; set; }
 
+    /// <summary>
+    /// Tham số đã chọn cho tệp này, bằng tiếng Việt — ví dụ
+    /// <c>CRF 26 (medium) · 1920px → 1280px · tiếng 128k — nguồn đã rất nén (0.05 bit/px/khung)</c>.
+    ///
+    /// Người dùng chỉ chọn mức mục tiêu, không chọn tham số. Trường này là thứ trả lời
+    /// "vì sao tệp này bị nén như vậy" mà không bắt họ phải mở nhật ký.
+    /// </summary>
+    public string? Plan { get; set; }
+
     /// <summary>Tệp nén thành công (không bị bỏ qua, không lỗi).</summary>
     [JsonIgnore]
     public bool Succeeded => IsComplete && Skip == SkipReason.None;

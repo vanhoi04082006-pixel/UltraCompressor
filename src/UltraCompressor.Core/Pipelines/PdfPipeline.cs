@@ -26,6 +26,10 @@ public sealed class PdfPipeline : FFmpegPipelineBase
         var profile = CompressionProfile.For(context.Level);
         onProgress(0);
 
+        // Ghostscript không có cơ chế tiến độ dạng máy đọc được mà vẫn giữ được chế độ im
+        // lặng, nên báo 0 rồi 100. Không có callback tiến độ: trước đây nó báo 50% giữa
+        // chừng — số bịa, và với PDF nhiều trăm trang thì thanh tiến độ đứng yên ở 50% suốt
+        // thời gian xử lý, trông y hệt tệp bị kẹt.
         var (result, _) = await ExecuteToolAsync(
             gs,
             [
@@ -39,7 +43,7 @@ public sealed class PdfPipeline : FFmpegPipelineBase
                 $"-sOutputFile={context.TempPath}",
                 context.SourcePath,
             ],
-            _ => onProgress(50),
+            onProgress: _ => { },
             token);
 
         if (result.Cancelled)

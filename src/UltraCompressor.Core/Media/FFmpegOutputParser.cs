@@ -23,6 +23,12 @@ public static partial class FFmpegOutputParser
     [GeneratedRegex(@"Stream #\d+:\d+.*?:\s*Video:", RegexOptions.IgnoreCase)]
     private static partial Regex HasVideoStreamRegex();
 
+    // Dòng `out_time_us=5920000` do `-progress pipe:1` in ra. Chỉ đọc `out_time_us`
+    // chứ không đọc `out_time_ms`: ffmpeg ghi giá trị đó cũng bằng micro giây, tên gọi
+    // gây hiểu nhầm và làm phần trăm nhảy gấp 1000 lần.
+    [GeneratedRegex(@"^out_time_us=(?<us>\d+)\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex ProgressTimeRegex();
+
     [GeneratedRegex(@"Stream #\d+:\d+.*?:\s*Audio:", RegexOptions.IgnoreCase)]
     private static partial Regex HasAudioStreamRegex();
 
@@ -51,6 +57,21 @@ public static partial class FFmpegOutputParser
             m.Groups["n"].Value.Replace(',', '.'),
             System.Globalization.CultureInfo.InvariantCulture,
             out var v) ? v : null;
+    }
+
+    /// <summary>
+    /// Đọc mốc thời gian đã xử lý từ dòng <c>out_time_us=</c> mà
+    /// <c>-progress pipe:1</c> ghi ra. Trả về null nếu dòng không phải dòng đó.
+    /// </summary>
+    public static TimeSpan? ParseProgressTime(string? line)
+    {
+        if (string.IsNullOrEmpty(line)) return null;
+        var m = ProgressTimeRegex().Match(line.Trim());
+        return m.Success
+            ? TimeSpan.FromTicks(long.Parse(
+                m.Groups["us"].Value,
+                System.Globalization.CultureInfo.InvariantCulture) * 10)
+            : null;
     }
 
     public static bool HasVideoStream(IEnumerable<string> lines) => lines.Any(l => HasVideoStreamRegex().IsMatch(l));

@@ -5,6 +5,11 @@ namespace UltraCompressor.Core.Pipelines;
 /// <summary>
 /// Bảng tham số nén, chuyển từ bản gốc v12 sang dạng dữ liệu thuần để kiểm thử được.
 /// Xem <c>docs/PHASE0-REFERENCE.md</c> mục 1 để đối chiếu.
+///
+/// Một mức nén là <b>một con số duy nhất</b> áp cho mọi loại media, nhưng mỗi loại đọc
+/// tham số riêng từ đây: chọn "Cân bằng" là video CRF 23 <i>và</i> ảnh -q:v 5 <i>và</i>
+/// audio 192k <i>và</i> PDF /ebook <i>và</i> GIF lossy 40/20fps. Không có mức nén riêng cho
+/// từng loại, và cũng không chỉnh được tham số tay.
 /// </summary>
 public sealed record CompressionProfile
 {
@@ -29,7 +34,7 @@ public sealed record CompressionProfile
 
     public required string DisplayName { get; init; }
 
-    /// <summary>M?c n�n t��ng ?ng, �? giao di?n d�ng l?i ch�nh thu?c t�nh n�y.</summary>
+    /// <summary>Mức nén tương ứng, để giao diện đúng nhận thuộc tính này.</summary>
     public required CompressionLevel Level { get; init; }
 
     public static CompressionProfile For(CompressionLevel level) => level switch
@@ -81,14 +86,20 @@ public sealed record CompressionProfile
             GifWidthScale = 0.8,
             DisplayName = "Mạnh (size nhỏ nhất)",
         },
-        // Enum �?c t? JSON c� th? mang gi� tr? l?.
+
+        // Enum đọc từ JSON có thể mang giá trị lạ.
         _ => throw new ArgumentOutOfRangeException(nameof(level), level, null),
     };
 
     public static IReadOnlyList<CompressionProfile> All { get; } =
         [.. Enum.GetValues<CompressionLevel>().Select(For)];
 
-    /// <summary>Chuỗi <c>-vf</c> thu nhỏ: chỉ co khi ảnh rộng hơn mức tối đa.</summary>
+    /// <summary>
+    /// Chuỗi <c>-vf</c> thu nhỏ: chỉ co khi ảnh rộng hơn mức tối đa.
+    ///
+    /// <see cref="MaxWidth"/> dùng chung cho ảnh và video — cùng một mức nén thì ảnh và
+    /// video bị thu nhỏ về cùng một bề rộng. Tách riêng được thì phải tách trường.
+    /// </summary>
     public string ScaleFilter => $"scale='min({MaxWidth},iw)':-2";
 
     public string GifFilter =>

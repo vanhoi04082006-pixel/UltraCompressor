@@ -1,3 +1,4 @@
+using System.Globalization;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Processes;
 
@@ -27,17 +28,13 @@ public sealed class GifPipeline : FFmpegPipelineBase
             ? temp
             : temp + ".stage1" + Path.GetExtension(temp);
 
+        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
+        args.AddRange(ProgressArgs);
+        args.AddRange(["-i", context.SourcePath, "-vf", profile.GifFilter, "-loop", "0", "-y", intermediate]);
+
         var (result, duration) = await ExecuteAsync(
             context,
-            [
-                "-hide_banner",
-                "-loglevel", "error",
-                "-nostdin",
-                "-i", context.SourcePath,
-                "-vf", profile.GifFilter,
-                "-loop", "0",
-                "-y", intermediate,
-            ],
+            args,
             // Bước 1 chiếm 80% tiến độ, bước gifsicle chiếm 20% còn lại.
             p => onProgress((int)(p * 0.8)),
             token);
@@ -56,16 +53,19 @@ public sealed class GifPipeline : FFmpegPipelineBase
                 "Không có gifsicle nên chỉ dùng bước ffmpeg.");
         }
 
+        // gifsicle không in tiến độ: nó làm việc nhanh và không nhận đầu vào có tỉ lệ.
+        // 80% rồi nhảy thẳng 100%, thay vì báo đều đặn 85% như trước — con số 85 đó chỉ
+        // là số bịa, gifsicle chẳng báo gì cả.
         var (gifsicleResult, _) = await ExecuteToolAsync(
             gifsicle,
             [
-                $"--lossy={profile.GifLossy}",
+                $"--lossy={profile.GifLossy.ToString(CultureInfo.InvariantCulture)}",
                 "-O3",
                 "--colors", "256",
                 intermediate,
                 "-o", temp,
             ],
-            _ => onProgress(85),
+            _ => onProgress(80),
             token);
 
         // Ưu tiên kết quả nhỏ hơn giữa hai bước — gifsicle đôi khi làm file to hơn.

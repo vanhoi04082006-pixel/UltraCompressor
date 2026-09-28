@@ -7,10 +7,13 @@ thử** liệt kê lỗi do chính bản viết lại này tạo ra.
 
 ### Thêm
 
-- **Màn hình so sánh trước / sau**: bản gốc đứng cạnh bản đã nén, cùng một khung hình ở
-  cùng một thời điểm, kèm dung lượng, khung hình, thời lượng, bitrate. Có nút phát từng
-  bên bằng ffplay. Dùng được cho ảnh, video, GIF và PDF; tệp âm thanh chỉ có số liệu.
-  Nút **◫** trên mỗi dòng tệp trong bảng Chi tiết.
+- **Màn hình so sánh trước / sau** phát trực tiếp trong ứng dụng: mỗi bên một trình phát
+  `<video>`/`<audio>` nhúng, có đủ nút bấm, phát cả hai cùng lúc được. Không còn phải mở
+  hai cửa sổ trình phát bên ngoài.
+- **Thanh kéo giữa hai cột** trong màn hình so sánh để chia tỉ lệ; dùng bàn phím được
+  (← →, mỗi lần 2%).
+- `MediaHost`: phục vụ tệp media cho trang qua virtual host `media.local`, mỗi tệp một mã
+  ngẫu nhiên. Trang không biết đường dẫn thật và không xem được tệp nào chưa đăng ký.
 - **Tiến độ từng tệp.** Dòng thư mục hiện tên tệp đang nén kèm phần trăm; bảng Chi tiết
   có thanh tiến độ riêng cho tệp đang chạy. Trước đó chỉ có thanh tổng đếm số tệp, nên một
   tập video 20 phút kẹt trông y hệt một tệp ảnh nhỏ.
@@ -78,6 +81,19 @@ Các lỗi dưới đây do bản viết lại này gây ra, phát hiện khi ch
 - **Cột "Kết quả" hiện chữ bị đảo** (`-12.2%` thành `2.2%1-`) vì `.grid .sub` áp
   `direction: rtl` — mẹo cắt chữ đường dẫn từ bên trái — cho mọi phần tử con chứ không
   riêng đường dẫn.
+- **Kéo thả không lấy được đường dẫn.** Trang chạy trên `https://app.local` là ngữ cảnh
+  an toàn nên Chromium không đưa đường dẫn tệp ra cho JavaScript, và `entry.fullPath`
+  cũng không dựng được — kéo thư mục báo "Không đọc được đường dẫn", kéo tệp lẻ hỏng luôn.
+  Đã tắt `AllowExternalDrop` để thông điệp thả chạy ngược lên `Form`, và nhận đường dẫn
+  thật từ `MainForm.OnDragDrop` (cả thư mục lẫn tệp lẻ). Handler của Form vốn đã có sẵn
+  nhưng không bao giờ chạy vì WebView2 nuốt thả.
+- **Bấm phát mở trình phát toàn màn hình**, không đóng hay thu nhỏ được, buộc phải nhấn
+  Esc. Bỏ cờ `-fs`, thêm tiêu đề và kích thước cửa sổ. Nay màn hình so sánh phát trực
+  tiếp trong ứng dụng nên cửa sổ ngoài chỉ còn dùng khi thật cần.
+- **Tên tệp trong màn hình so sánh bị đảo** (`02-clip.mp4` thành `clip.mp4-02`) vì dùng
+  `direction: rtl` cho cả tên tệp, không riêng đường dẫn.
+- **`kind` đặt nhầm chỗ** nên giao diện không biết đâu là video để nhúng trình phát, rơi
+  xuống nhánh ảnh xem trước. Đưa xuống từng bên so sánh.
 
 ### Đã đổi
 

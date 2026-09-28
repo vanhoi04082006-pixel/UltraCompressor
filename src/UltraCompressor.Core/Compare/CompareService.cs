@@ -15,6 +15,9 @@ public sealed record CompareSide
 
     public required string FileName { get; init; }
 
+    /// <summary>Loại media. Giao diện đọc trường này để chọn thẻ hiển thị: video, ảnh hay âm thanh.</summary>
+    public required string Kind { get; init; }
+
     public long Size { get; init; }
 
     public string SizeText { get; init; } = string.Empty;
@@ -38,6 +41,9 @@ public sealed record CompareSide
     /// <summary>Ảnh xem trước dạng data URI, hoặc null nếu không dựng được (ví dụ tệp âm thanh).</summary>
     public string? Thumbnail { get; init; }
 
+    /// <summary>URL để nhúng trực tiếp vào trang (video/âm thanh/ảnh). Xem <c>MediaHost</c>.</summary>
+    public string? Url { get; init; }
+
     public string? Error { get; init; }
 }
 
@@ -46,6 +52,9 @@ public sealed record CompareResult
     public required string FilePath { get; init; }
 
     public required string FileName { get; init; }
+
+    /// <summary>Loại media, để giao diện chọn đúng thẻ hiển thị (video, ảnh, âm thanh).</summary>
+    public required string Kind { get; init; }
 
     public required CompareSide Original { get; init; }
 
@@ -137,6 +146,7 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         {
             FilePath = item.FilePath,
             FileName = item.FileName,
+            Kind = item.Kind.ToString(),
             Original = original,
             Compressed = compressed,
             SavedBytes = saved,
@@ -160,6 +170,7 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
             {
                 Path = path,
                 FileName = fileName,
+                Kind = kind.ToString(),
                 Exists = false,
                 SizeText = "—",
                 ResolutionText = "—",
@@ -180,6 +191,7 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
             {
                 Path = path,
                 FileName = fileName,
+                Kind = kind.ToString(),
                 Exists = true,
                 SizeText = "—",
                 ResolutionText = "—",
@@ -217,6 +229,7 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         {
             Path = path,
             FileName = fileName,
+            Kind = kind.ToString(),
             Exists = true,
             Size = size,
             SizeText = Format.Size(size),

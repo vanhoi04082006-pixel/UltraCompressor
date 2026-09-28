@@ -89,6 +89,8 @@ public sealed class MainForm : Form
         _host.PickToolFile = BrowseForToolFile;
 
         DragEnter += OnDragEnter;
+        DragOver += OnDragOver;
+        DragLeave += OnDragLeave;
         DragDrop += OnDragDrop;
         FormClosed += OnFormClosed;
         Shown += OnShown;
@@ -157,10 +159,28 @@ public sealed class MainForm : Form
             core.Settings.AreDevToolsEnabled = true;
             core.Settings.IsStatusBarEnabled = false;
 
-            // Cho phép thả tệp/thư mục từ Windows Explorer vào cửa sổ. Bản WebView2
-            // không có sự kiện "đã thả" ở phía .NET, nên sự kiện drop đi tới trang web
-            // dưới dạng DataTransfer HTML5 và xử lý trong wwwroot/app.js.
-            _browser.AllowExternalDrop = true;
+            // KHÔNG cho WebView2 tự nhận thả.
+            //
+            // Bản đầu bật cờ này và xử lý drop trong JavaScript. Nhưng trang chạy trên
+            // https://app.local là ngữ cảnh an toàn, nên Chromium không đưa đường dẫn tệp
+            // ra cho JavaScript, và entry.fullPath cũng không dựng được — kéo vào báo
+            // "Không đọc được đường dẫn", kéo tệp lẻ thì hỏng luôn.
+            //
+            // Tắt cờ này đi thì cửa sổ con WebView2 không gọi DragAcceptFiles, thông điệp
+            // thả chạy ngược lên Form, và OnDragDrop nhận được đường dẫn thật của cả thư mục
+            // lẫn tệp lẻ. Lớp phủ "Thả vào đây" cũng chuyển sang bật/tắt từ phía cửa sổ.
+            _browser.AllowExternalDrop = false;
+
+            var media = new MediaHost();
+            _host.RegisterMedia = media.Register;
+            core.AddWebResourceRequestedFilter(
+                MediaHost.Origin + "/*",
+                CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += (_, args) =>
+            {
+                var response = media.Respond(env, args);
+                if (response is not null) args.Response = response;
+            };
 
             core.WebMessageReceived += OnWebMessage;
             core.NavigationCompleted += OnNavigationCompleted;
@@ -428,33 +448,77 @@ public sealed class MainForm : Form
         e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true
             ? DragDropEffects.Copy
             : DragDropEffects.None;
+
+        if (e.Effect == DragDropEffects.Copy) PushDropHover(true);
+    }
+
+    private void OnDragOver(object? sender, System.Windows.Forms.DragEventArgs e)
+    {
+        // Can ca DragOver: thieu no thi hieu ung "duoc tha" chi dung o khoanh khac dau,
+        // va con tro lai thanh vong cam ngay sau do.
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy;
+    }
+
+    private void OnDragLeave(object? sender, EventArgs e) => PushDropHover(false);
+
+    /// <summary>Bật/tắt lớp phủ "Thả vào đây" từ phía cửa sổ.</summary>
+    private void PushDropHover(bool active)
+    {
+        _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
+        {
+            Event = "dropHover",
+            Data = System.Text.Json.JsonSerializer.SerializeToNode(
+                new { active }, BridgeJson.Options),
+        }));
     }
 
     private void OnDragDrop(object? sender, System.Windows.Forms.DragEventArgs e)
     {
-        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
+        PushDropHover(false);
 
-        // Chỉ nhận thư mục. Kéo tệp lẻ lên thì báo rõ thay vì im lặng bỏ qua.
-        var folders = paths.Where(Directory.Exists).ToArray();
-        var rejected = paths.Count(p => !Directory.Exists(p));
+        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0) return;
 
-        if (folders.Length > 0)
+        // Nhận cả thư mục lẫn tệp lẻ. Ứng dụng luôn làm việc theo thư mục nên tệp lẻ
+        // được gom về thư mục chứa nó; việc lọc định dạng để bộ quét lo.
+        var folders = new List<string>();
+        var missing = 0;
+
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path))
+            {
+                folders.Add(path);
+                continue;
+            }
+
+            var parent = Path.GetDirectoryName(path);
+            if (File.Exists(path) && !string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+            {
+                folders.Add(parent);
+                continue;
+            }
+
+            missing += 1;
+        }
+
+        var unique = folders.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (unique.Length > 0)
         {
             _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
             {
                 Event = "foldersDropped",
                 Data = System.Text.Json.JsonSerializer.SerializeToNode(
-                    new { paths = folders }, BridgeJson.Options),
+                    new { paths = unique }, BridgeJson.Options),
             }));
         }
 
-        if (rejected > 0)
+        if (missing > 0)
         {
             _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
             {
                 Event = "notice",
                 Data = System.Text.Json.JsonSerializer.SerializeToNode(
-                    new { level = "warn", message = $"Chỉ nhận thư mục. Bỏ qua {rejected} mục không phải thư mục." },
+                    new { level = "warn", message = $"Bo qua {missing} muc khong ton tai tren dia." },
                     BridgeJson.Options),
             }));
         }

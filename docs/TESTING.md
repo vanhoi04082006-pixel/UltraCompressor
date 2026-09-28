@@ -98,6 +98,9 @@ Ghi lại ở đây để lần sau không phải tìm lại từ đầu.
 | Bảng chi tiết đứng yên khi job chạy | Tệp đang nén vẫn hiện "Chờ" | `AppHost.OpenJobId` có setter nhưng chưa từng được gán, nên `PushAsync` không gửi sự kiện `items` |
 | Báo "Gifsicle chưa có" khi `dotnet run` | Cảnh báo sai dù đã đặt gifsicle vào `tools\` | tệp thực thi nằm ở `bin\Debug\...` nên không có công cụ cạnh bên; nay dò thêm thư mục `tools\` của dự án |
 | Cột "Kết quả" đảo chữ | `-12.2%` thành `2.2%1-` | `.grid .sub` áp `direction: rtl` cho mọi phần tử con thay vì chỉ đường dẫn |
+| Kéo thả báo "Không đọc được đường dẫn" | Kéo thư mục không vào, kéo tệp hỏng luôn | trang chạy trên `https` là ngữ cảnh an toàn nên Chromium không đưa đường dẫn cho JavaScript; và `AllowExternalDrop = true` khiến WebView2 nuốt thả nên handler của Form không bao giờ chạy |
+| Trình phát ngoài phóng toàn màn hình | Không đóng/thu nhỏ được | cờ `-fs` của ffplay |
+| `kind` rơi về cấp cha nên không nhúng được video | Màn hình so sánh chỉ hiện ảnh xem trước | `CompareResult.Kind` nhưng `renderCompareSide` đọc `side.kind` |
 
 Hai lỗi đầu là nghiêm trọng: job nhiều tệp — tức là trường hợp dùng chính — treo sau tệp
 đầu tiên. Chúng lọt qua vì test chỉ có một tệp mỗi job, và vì không test bằng tệp thật
@@ -106,6 +109,29 @@ nào nặng hơn 0,1 giây.
 Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn ảnh chụp giao diện** lúc
 ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
 tuỳ chọn.
+
+## Kéo thả thì kiểm thử bằng cách nào
+
+Không script được thao tác kéo chuột từ Explorer. Cách kiểm tra thực tế:
+
+1. Chạy ứng dụng từ `bin\` với `UC_CAPTURE` và `UC_EVAL_JS` chỉ ghi lại trạng thái.
+2. Người dùng kéo một thư mục thật vào cửa sổ.
+3. Đọc lại nhật ký: dòng `[js]` hoặc kết quả ghi ra cho biết danh sách thư mục đã vào.
+
+Cần kiểm riêng hai trường hợp vì chúng đi hai đường khác nhau trong mã: thả **thư mục**
+và thả **tệp lẻ** (tệp lẻ phải được gom về thư mục chứa nó).
+
+## Kiểm tra nhúng video
+
+`<video>` trong WebView2 chỉ chạy nếu bản dựng có codec. Trước khi làm tính năng nhúng,
+kiểm tra trước bằng:
+
+```javascript
+document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"')
+```
+
+Trả về `"probably"` hoặc `"maybe"` thì dùng được. Nếu rỗng thì phải rơi về trình phát
+ngoài. Trên máy này WebView2 có cả H.264 lẫn AAC.
 
 ## Trước khi gửi thay đổi
 

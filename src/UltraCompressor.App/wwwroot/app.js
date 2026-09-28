@@ -50,6 +50,8 @@ function handleEvent(name, data) {
     if (data.jobId === openJobId) renderItems();
   } else if (name === 'foldersDropped') {
     addFolders(data.paths || []);
+  } else if (name === 'dropHover') {
+    showDropZone(data.active === true);
   } else if (name === 'notice') {
     toast(data.message, data.level || 'info');
   }
@@ -381,18 +383,19 @@ async function openDetail(jobId) {
 
 // Giữ dữ liệu của màn hình đang mở để nút Phát biết đường dẫn, và để đóng modal không
 // phải dựng lại từ đầu.
+/* Dữ liệu của màn hình đang mở. Giữ lại để các nút điều khiển biết đang so tệp nào. */
 let compareState = null;
+let comparePlayers = { original: null, compressed: null };
 
 async function openCompare(jobId, filePath) {
   if (!jobId || !filePath) return;
 
   $('compareTitle').textContent = 'Đang dựng ảnh xem trước…';
-  $('shotOriginal').innerHTML = '';
-  $('shotCompressed').innerHTML = '';
-  $('factsOriginal').innerHTML = '';
-  $('factsCompressed').innerHTML = '';
+  for (const id of ['shotOriginal', 'shotCompressed']) $(id).innerHTML = '';
+  for (const id of ['factsOriginal', 'factsCompressed']) $(id).innerHTML = '';
   $('compareSaved').textContent = '';
   $('compareNote').textContent = '';
+  comparePlayers = { original: null, compressed: null };
   openModal('modalCompare');
 
   let payload;
@@ -424,17 +427,23 @@ async function openCompare(jobId, filePath) {
   renderCompareSide('Original', data.original);
   renderCompareSide('Compressed', data.compressed);
 
-  const canPlay = data.canPlay === true;
-  $('btnPlayOriginal').hidden = !canPlay || !data.original?.exists;
-  $('btnPlayCompressed').hidden = !canPlay || !data.compressed?.exists;
+  const playable = [data.original, data.compressed].some((s) => s && s.url && s.kind === 'Video');
+  $('btnPlayBoth').disabled = !playable;
+  $('btnPauseBoth').disabled = !playable;
 }
 
+/* Bề mặt hiển thị: video nhúng có thanh điều khiển, ảnh và GIF dùng <img>, PDF không nhúng
+   được nên chỉ hiện ảnh xem trước. Mọi thứ nằm trong khung cao cố định để hai bên luôn
+   cùng kích thước, so trực tiếp được. */
 function renderCompareSide(prefix, side) {
+  const key = prefix === 'Original' ? 'original' : 'compressed';
   const shot = $(`shot${prefix}`);
   const facts = $(`facts${prefix}`);
 
   shot.innerHTML = '';
   facts.innerHTML = '';
+  $(`name${prefix}`).textContent = '';
+  comparePlayers[key] = null;
 
   if (!side) {
     shot.appendChild(el('p', 'compare-none', 'Chưa có bản nén trên đĩa'));
@@ -446,20 +455,43 @@ function renderCompareSide(prefix, side) {
     return;
   }
 
-  if (side.thumbnail) {
-    const img = el('img', 'compare-img');
+  $(`name${prefix}`).textContent = side.fileName;
+
+  if (side.url && side.kind === 'Video') {
+    const video = document.createElement('video');
+    video.src = side.url;
+    video.controls = true;
+    video.preload = 'metadata';
+    video.className = 'compare-media';
+    video.setAttribute('playsinline', '');
+    shot.appendChild(video);
+    comparePlayers[key] = video;
+  } else if (side.url && (side.kind === 'Image' || side.kind === 'Gif')) {
+    const img = document.createElement('img');
+    img.src = side.url;
+    img.alt = side.fileName;
+    img.className = 'compare-media';
+    shot.appendChild(img);
+  } else if (side.url && side.kind === 'Audio') {
+    const audio = document.createElement('audio');
+    audio.src = side.url;
+    audio.controls = true;
+    audio.className = 'compare-audio';
+    shot.appendChild(audio);
+    comparePlayers[key] = audio;
+  } else if (side.thumbnail) {
+    const img = document.createElement('img');
     img.src = side.thumbnail;
     img.alt = side.fileName;
-    img.loading = 'lazy';
+    img.className = 'compare-media';
     shot.appendChild(img);
   } else {
     shot.appendChild(el('p', 'compare-none', 'Không có ảnh xem trước'));
   }
 
   const rows = [
-    ['Tệp', side.fileName],
     ['Dung lượng', side.sizeText],
-    ['Kích thước khung', side.resolutionText],
+    ['Khung hình', side.resolutionText],
     ['Thời lượng', side.durationText],
     ['Bitrate', side.bitrateText],
   ];
@@ -471,13 +503,71 @@ function renderCompareSide(prefix, side) {
   }
 }
 
-async function playCompareSide(prefix) {
-  const side = compareState?.[prefix === 'Original' ? 'original' : 'compressed'];
-  if (!side?.path) return;
-
-  const result = await call('playFile', { path: side.path });
-  if (!result?.ok) toast(result?.error || 'Không mở được trình phát.', 'warn');
+/* Phát cả hai cùng lúc. Không kéo được hai trình phát về đúng thời điểm tuyệt đối vì
+   tải giải mã mỗi bên một tốc độ, nhưng chơi cùng lệnh là đủ để so sánh trực quan. */
+function playBoth() {
+  for (const p of Object.values(comparePlayers)) {
+    if (!p) continue;
+    p.currentTime = 0;
+    p.play().catch(() => {});
+  }
 }
+
+function pauseBoth() {
+  for (const p of Object.values(comparePlayers)) {
+    if (p) p.pause();
+  }
+}
+
+/* Thanh kéo giữa hai cột. Dùng biến CSS --split để phần trăm hai cột, thay vì tính lại
+   bằng JavaScript. */
+function initCompareSplit() {
+  const grid = $('compareGrid');
+  const handle = $('compareSplit');
+  if (!grid || !handle) return;
+
+  const apply = (percent) => {
+    const clamped = Math.max(15, Math.min(85, percent));
+    grid.style.setProperty('--split', `${clamped}%`);
+  };
+
+  let dragging = false;
+
+  const move = (clientX) => {
+    const box = grid.getBoundingClientRect();
+    if (box.width === 0) return;
+    apply(((clientX - box.left) / box.width) * 100);
+  };
+
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('is-resizing');
+    e.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (dragging) move(e.clientX);
+  });
+
+  const stop = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('is-resizing');
+    if (handle.hasPointerCapture?.(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+  };
+
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+
+  // Bàn phím: mũi tên trái/phải dịch 2% mỗi lần bấm.
+  handle.addEventListener('keydown', (e) => {
+    const current = parseFloat(getComputedStyle(grid).getPropertyValue('--split')) || 50;
+    if (e.key === 'ArrowLeft') { apply(current - 2); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { apply(current + 2); e.preventDefault(); }
+  });
+}
+
 
 
 function closeDetail() {
@@ -671,53 +761,28 @@ async function handleDroppedPaths(entries) {
   await addFolders(unique);
 }
 
-function initDropZone() {
+/* Lop phu "Tha vao day".
+ *
+ * Duong dan thay the khong lay tu JavaScript: trang chay tren https la ngu canh an toan
+ * nen Chromium khong dua duong dan tep ra cho trang. Cua so Windows nhan tha truc tiep
+ * (MainForm.OnDragDrop) va day duong dan that sang day qua su kien "foldersDropped";
+ * su kien "dropHover" chi bao lop phu nen bat/tat.
+ *
+ * Van giu preventDefault tren dragover: du WebView2 da dung nhan tha, nhung thieu lenh nay
+ * tranh trinh duyet tu mo tep bi tha neu cau hinh AllowExternalDrop doi trong tuong lai. */
+function showDropZone(on) {
   const zone = $('dropZone');
-  if (!zone) return;
+  if (zone) zone.classList.toggle('is-active', on === true);
+}
 
-  // dragleave bắn liên tục khi chuột đi qua phần tử con, nên đếm ngược bằng bộ đếm
-  // thay vì bật/tắt trực tiếp, nếu không vùng thả sẽ nhấp nháy.
-  let depth = 0;
-
-  const show = (on) => zone.classList.toggle('is-active', on);
-
-  window.addEventListener('dragenter', (e) => {
+function initDropZone() {
+  const preventFileNavigation = (e) => {
     if (!hasFiles(e.dataTransfer)) return;
     e.preventDefault();
-    depth += 1;
-    show(true);
-  });
+  };
 
-  window.addEventListener('dragover', (e) => {
-    if (!hasFiles(e.dataTransfer)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-  });
-
-  window.addEventListener('dragleave', () => {
-    depth = Math.max(0, depth - 1);
-    if (depth === 0) show(false);
-  });
-
-  window.addEventListener('drop', async (e) => {
-    if (!hasFiles(e.dataTransfer)) return;
-    e.preventDefault();
-    depth = 0;
-    show(false);
-
-    const dt = e.dataTransfer;
-    const items = dt.items ? Array.from(dt.items).filter((i) => i.kind === 'file') : [];
-    const collected = items.map(pathFromDropItem);
-
-    if (collected.length === 0 && dt.files) {
-      collected.push(...Array.from(dt.files).map((f) => ({ path: f.path || null, isDir: false })));
-    }
-
-    const found = collected.filter((x) => x && x.path);
-    const dirs = found.filter((x) => x.isDir).length;
-    call('log', { message: `drop: ${items.length} muc, doc ${found.length} duong dan (${dirs} thu muc)` }).catch(() => {});
-    await handleDroppedPaths(found);
-  });
+  window.addEventListener('dragover', preventFileNavigation);
+  window.addEventListener('drop', preventFileNavigation);
 }
 
 async function start() {
@@ -1137,8 +1202,13 @@ function wire() {
   $('btnLog').addEventListener('click', showLog);
   $('btnRefreshLog').addEventListener('click', showLog);
   $('btnOpenLogs').addEventListener('click', () => call('openLogs'));
-  $('btnPlayOriginal').addEventListener('click', () => playCompareSide('Original'));
-  $('btnPlayCompressed').addEventListener('click', () => playCompareSide('Compressed'));
+  $('btnPlayBoth').addEventListener('click', playBoth);
+  $('btnPauseBoth').addEventListener('click', pauseBoth);
+  $('btnOpenOriginal').addEventListener('click', async () => {
+    const result = await call('playFile', { path: compareState?.original?.path });
+    if (!result?.ok) toast(result?.error || 'Không mở được trình phát.', 'warn');
+  });
+  initCompareSplit();
   $('btnOpenData').addEventListener('click', () => call('openData'));
   $('btnCheckTools').addEventListener('click', async () => {
     const data = await call('checkTools');

@@ -46,6 +46,9 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Mở hộp chọn thư mục của hệ điều hành. Gán từ cửa sổ chủ.</summary>
     public Func<IReadOnlyList<string>>? PickFolders { get; set; }
 
+  /// <summary>Đăng ký một tệp media và trả URL để giao diện nhúng trình phát.</summary>
+  public Func<string, string?>? RegisterMedia { get; set; }
+
     /// <summary>Mở hộp chọn tệp thực thi. Gán từ cửa sổ chủ.</summary>
     public Func<string?>? PickToolFile { get; set; }
 
@@ -651,9 +654,21 @@ public sealed class AppHost : IAsyncDisposable
         try
         {
             var result = await _compare.BuildAsync(item, job!.OutputFolder);
-            return result is null
-                ? ToNode(new { ok = false, error = "Tệp không còn tồn tại trên đĩa." })
-                : ToNode(new { ok = true, compare = result });
+            if (result is null) return ToNode(new { ok = false, error = "Tệp không còn tồn tại trên đĩa." });
+
+            // Cấp URL nhúng cho hai bên. Không có thì giao diện vẫn hiện được ảnh xem
+            // trước và số liệu, chỉ mất phần phát trực tiếp.
+            return ToNode(new
+            {
+                ok = true,
+                compare = result with
+                {
+                    Original = result.Original with { Url = RegisterMedia?.Invoke(result.Original.Path) },
+                    Compressed = result.Compressed is null
+                        ? null
+                        : result.Compressed with { Url = RegisterMedia?.Invoke(result.Compressed.Path) },
+                },
+            });
         }
         catch (Exception ex)
         {
@@ -677,21 +692,26 @@ public sealed class AppHost : IAsyncDisposable
         {
             if (ffplay is not null && File.Exists(ffplay))
             {
-                // -autoexit để cửa sổ tự đóng khi hết, -fs chơi toàn màn hình.
-                new System.Diagnostics.Process
+                // KHÔNG dùng -fs. Bản trước bật toàn màn hình nên người dùng không thể
+                // đóng hay thu nhỏ được, buộc phải nhấn Esc. Cửa sổ thường có nút đóng,
+                // nút thu nhỏ và thanh tiêu đề để nhận biết đang phát tệp nào.
+                var start = new System.Diagnostics.ProcessStartInfo
                 {
-                    StartInfo = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = ffplay,
-                        UseShellExecute = false,
-                        ArgumentList = { "-autoexit", "-fs", path },
-                    },
-                }.Start();
+                    FileName = ffplay,
+                    UseShellExecute = false,
+                };
 
+                start.ArgumentList.Add("-autoexit");
+                start.ArgumentList.Add("-window_title");
+                start.ArgumentList.Add($"UltraCompressor — {Path.GetFileName(path)}");
+                start.ArgumentList.Add("-x"); start.ArgumentList.Add("960");
+                start.ArgumentList.Add("-y"); start.ArgumentList.Add("540");
+                start.ArgumentList.Add(path);
+
+                System.Diagnostics.Process.Start(start);
                 return ToNode(new { ok = true, player = "ffplay" });
             }
 
-            // Không có ffplay thì đưa cho trình liên kết mặc định của Windows.
             new System.Diagnostics.Process
             {
                 StartInfo = new System.Diagnostics.ProcessStartInfo

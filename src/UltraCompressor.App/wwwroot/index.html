@@ -330,32 +330,43 @@
 <!-- Màn hình so sánh: bản gốc bên trái, bản đã nén bên phải. -->
 <div class="modal-root" id="modalCompare" hidden>
   <div class="modal-backdrop" data-close></div>
-  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
+  <div class="modal modal-full" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
     <div class="modal-head">
       <h2 id="compareTitle">So sánh trước / sau</h2>
-      <button class="btn btn-ghost btn-sm" data-close aria-label="Đóng">✕</button>
+      <div class="compare-tools">
+        <button class="btn btn-ghost btn-sm" id="btnPlayBoth" title="Phát cả hai cùng lúc">▶ Phát cả hai</button>
+        <button class="btn btn-ghost btn-sm" id="btnPauseBoth" title="Dừng cả hai">❙❙ Dừng cả hai</button>
+        <button class="btn btn-ghost btn-sm" data-close aria-label="Đóng">✕</button>
+      </div>
     </div>
-    <div class="modal-body">
+    <div class="modal-body compare-body">
       <div class="compare-head">
         <span class="compare-saved" id="compareSaved"></span>
         <span class="compare-note" id="compareNote"></span>
       </div>
-      <div class="compare-grid">
-        <section class="compare-col">
-          <header><h3>Bản gốc</h3></header>
+      <div class="compare-grid" id="compareGrid">
+        <section class="compare-col" id="colOriginal">
+          <header>
+            <h3>Bản gốc</h3>
+            <span class="compare-fname" id="nameOriginal"></span>
+          </header>
           <div class="compare-shot" id="shotOriginal"></div>
           <dl class="compare-facts" id="factsOriginal"></dl>
         </section>
-        <section class="compare-col">
-          <header><h3>Đã nén</h3></header>
+        <div class="compare-split" id="compareSplit" role="separator" aria-orientation="vertical"
+             tabindex="0" title="Kéo để chia đôi"></div>
+        <section class="compare-col" id="colCompressed">
+          <header>
+            <h3>Đã nén</h3>
+            <span class="compare-fname" id="nameCompressed"></span>
+          </header>
           <div class="compare-shot" id="shotCompressed"></div>
           <dl class="compare-facts" id="factsCompressed"></dl>
         </section>
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-ghost" id="btnPlayOriginal">Phát bản gốc</button>
-      <button class="btn btn-ghost" id="btnPlayCompressed">Phát bản nén</button>
+      <button class="btn btn-ghost" id="btnOpenOriginal">Mở bằng trình phát ngoài</button>
       <button class="btn btn-primary" data-close>Đóng</button>
     </div>
   </div>

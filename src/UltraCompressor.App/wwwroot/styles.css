@@ -780,35 +780,54 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
 .dotbad { background: var(--danger); }
 .dotwarn { background: var(--warn); }
 
-/* ============================================================ so sánh trước / sau */
+/* ============================================================ so sanh truoc / sau */
+
+.compare-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+.compare-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
 
 .compare-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
   flex-wrap: wrap;
-  margin-bottom: var(--space-3);
 }
 
-.compare-saved {
-  font-weight: 600;
-  color: var(--ok);
-}
+.compare-saved { font-weight: 600; color: var(--ok); }
+.compare-note  { color: var(--text-muted); font-size: 12px; }
 
-.compare-note {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
+/* --split là tỉ lệ cột trái; thanh kéo giữa ghi vào biến này nên không phải tính lại
+   bằng JavaScript mỗi lần kéo. */
 .compare-grid {
+  --split: 50%;
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  grid-template-columns: var(--split) 10px 1fr;
+  gap: var(--space-2);
+  align-items: stretch;
 }
 
 .compare-col {
   display: flex;
   flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 0;
+}
+
+.compare-col header {
+  display: flex;
+  align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -818,26 +837,44 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
   font-size: 13px;
   color: var(--text-muted);
   font-weight: 600;
+  flex: none;
 }
 
-/* Hai ảnh phải cùng cao để so được. Khung cố định chiều cao, ảnh nằm giữa. */
+.compare-fname {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* KHÔNG dùng direction: rtl ở đây. Mẹo đó dùng để cắt đường dẫn từ bên trái, nhưng với
+     tên tệp nó làm đảo thứ tự ký tự: "02-clip.mp4" thành "clip.mp4-02". */
+}
+
+/* Khung cao cố định: hai bên luôn bằng nhau nên so trực tiếp được. */
 .compare-shot {
+  flex: 1;
+  min-height: 220px;
   display: grid;
   place-items: center;
-  height: 300px;
   padding: var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--bg-sunken);
+  background: #000;
   overflow: hidden;
 }
 
-.compare-img {
+.compare-media {
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
+  min-height: 0;
   display: block;
+  object-fit: contain;
+  background: #000;
 }
+
+video.compare-media { width: 100%; height: 100%; }
+
+audio.compare-audio { width: 100%; }
 
 .compare-none {
   color: var(--text-faint);
@@ -853,9 +890,26 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
   gap: 2px var(--space-3);
   margin: 0;
   font-size: 12px;
+  flex: none;
 }
 
 .compare-facts dt { color: var(--text-faint); }
+.compare-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Thanh kéo giữa hai cột. */
+.compare-split {
+  cursor: col-resize;
+  background: var(--line);
+  border-radius: 99px;
+  transition: background 140ms var(--ease);
+}
+
+.compare-split:hover,
+.compare-split:focus-visible { background: var(--accent); outline: none; }
+
+body.is-resizing { cursor: col-resize; user-select: none; }
+body.is-resizing iframe,
+body.is-resizing video { pointer-events: none; }
 .compare-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 900px) {
@@ -902,6 +956,14 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
 
 .modal-wide { width: min(1000px, 100%); }
 .modal-narrow { width: min(460px, 100%); }
+
+/* Màn hình so sánh cần chỗ: hai trình phát cạnh nhau, cộng thêm số liệu. */
+.modal-full {
+  width: min(1500px, 100%);
+  height: min(880px, 100%);
+}
+
+.modal-full .modal-body { display: flex; flex-direction: column; min-height: 0; }
 
 .modal-head {
   display: flex;

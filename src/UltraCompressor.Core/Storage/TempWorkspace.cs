@@ -38,7 +38,14 @@ public sealed class TempWorkspace : IDisposable
         FileTransaction.TryDelete(path);
     }
 
-    /// <summary>Dọn các tệp tạm còn sót từ lần chạy trước bị gián đoạn.</summary>
+    /// <summary>
+    /// Dọn các tệp tạm còn sót từ lần chạy trước bị gián đoạn.
+    ///
+    /// Gọi lúc khởi động thì truyền <see cref="TimeSpan.Zero"/> để xoá hết: lúc đó không có
+    /// công việc nào chạy nên thứ gì còn nằm trong thư mục tạm chắc chắn là rác. Trước đây
+    /// lọc theo tuổi 6 giờ, nên một lần đóng cưỡng bức (task manager, mất điện) để lại tệp
+    /// tạm nặng hàng trăm MB trong suốt 6 tiếng đó.
+    /// </summary>
     public int RemoveStale(TimeSpan olderThan)
     {
         var removed = 0;

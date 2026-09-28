@@ -111,9 +111,9 @@ public sealed class CompressionEngine : IAsyncDisposable
         var full = Path.GetFullPath(path);
         lock (_jobsGate)
         {
-            if (_jobs.Any(j => string.Equals(j.FolderPath, full, StringComparison.OrdinalIgnoreCase)))
+            if (_jobs.Any(j => !j.IsFileJob && string.Equals(j.FolderPath, full, StringComparison.OrdinalIgnoreCase)))
             {
-                var existing = _jobs.First(j => string.Equals(j.FolderPath, full, StringComparison.OrdinalIgnoreCase));
+                var existing = _jobs.First(j => !j.IsFileJob && string.Equals(j.FolderPath, full, StringComparison.OrdinalIgnoreCase));
                 return new ScanResult(existing, ["Thư mục này đã có trong danh sách."]);
             }
         }
@@ -128,6 +128,70 @@ public sealed class CompressionEngine : IAsyncDisposable
         _ = SaveSessionAsync();
         return result;
     }
+
+    /// <summary>Thêm đúng một tệp lẻ vào danh sách.</summary>
+    public ScanResult AddFile(string path, CompressionLevel level, bool dryRun, string? outputFolder)
+    {
+        var full = Path.GetFullPath(path);
+        lock (_jobsGate)
+        {
+            if (_jobs.Any(j => j.IsFileJob
+                && string.Equals(j.SingleFilePath, full, StringComparison.OrdinalIgnoreCase)))
+            {
+                var existing = _jobs.First(j => j.IsFileJob
+                    && string.Equals(j.SingleFilePath, full, StringComparison.OrdinalIgnoreCase));
+                return new ScanResult(existing, ["Tệp này đã có trong danh sách."]);
+            }
+        }
+
+        var result = _scanner.ScanFile(full, level, dryRun, outputFolder);
+        if (result.Errors.Count == 0 || result.Job.Items.Count > 0)
+        {
+            lock (_jobsGate) _jobs.Add(result.Job);
+        }
+
+        Raise(ChangeReason.Jobs);
+        _ = SaveSessionAsync();
+        return result;
+    }
+
+    /// <summary>
+    /// Thêm một danh sách đường dẫn, tự phân biệt thư mục với tệp lẻ. Đây là cửa duy nhất
+    /// dùng cho cả nút bấm, hộp thoại và kéo-thả, nên ba đường đó không thể lệch nhau.
+    /// </summary>
+    public IReadOnlyList<ScanResult> AddPaths(
+        IEnumerable<string> paths,
+        CompressionLevel level,
+        bool dryRun,
+        string? outputFolder)
+    {
+        var results = new List<ScanResult>();
+
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch
+            {
+                results.Add(new ScanResult(
+                    new Job { FolderPath = path, Level = level, IsFileJob = true, SingleFilePath = path },
+                    [$"Đường dẫn không hợp lệ: '{path}'."]));
+                continue;
+            }
+
+            results.Add(Directory.Exists(full)
+                ? AddFolder(full, level, dryRun, outputFolder)
+                : AddFile(full, level, dryRun, outputFolder));
+        }
+
+        return results;
+    }
+
 
     public async Task<(IReadOnlyList<Job> Jobs, string? Error)> LoadSessionAsync(CancellationToken token = default)
     {

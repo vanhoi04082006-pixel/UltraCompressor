@@ -54,6 +54,8 @@ public sealed class SessionStore(string path) : IDisposable
     {
         Id = job.Id,
         FolderPath = job.FolderPath,
+        IsFileJob = job.IsFileJob,
+        SingleFilePath = job.SingleFilePath,
         Status = job.Status == JobStatus.Running ? JobStatus.Waiting : job.Status,
         Level = job.Level,
         DryRun = job.DryRun,

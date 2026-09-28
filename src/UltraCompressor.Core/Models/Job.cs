@@ -38,6 +38,24 @@ public sealed class Job
 
     public List<JobItem> Items { get; set; } = [];
 
+    /// <summary>
+    /// Job chỉ gồm đúng một tệp lẻ, không phải cả thư mục. Thêm từ trường này thay vì tách
+    /// kiểu job riêng để phần lưu phiên, duyệt, hoàn tác vẫn dùng chung một đường.
+    /// </summary>
+    public bool IsFileJob { get; set; }
+
+    /// <summary>Đường dẫn tệp lẻ khi <see cref="IsFileJob"/> là true.</summary>
+    public string? SingleFilePath { get; set; }
+
+    /// <summary>
+    /// Tên hiển thị trên dòng danh sách. Job thư mục hiện tên thư mục; job một tệp lẻ hiện
+    /// tên tệp — hiện tên thư mục cha thì ba tệp cùng thư mục sẽ trông như một.
+    /// </summary>
+    [JsonIgnore]
+    public string DisplayName => IsFileJob && SingleFilePath is { Length: > 0 } single
+        ? Path.GetFileName(single)
+        : FolderName;
+
     [JsonIgnore]
     public long TotalFiles => Items.Count;
 

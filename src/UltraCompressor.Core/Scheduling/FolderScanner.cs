@@ -19,7 +19,6 @@ public sealed class FolderScanner(AppConfig config)
             DryRun = dryRun,
             OutputFolder = outputFolder,
         };
-
         if (!Directory.Exists(job.FolderPath))
         {
             errors.Add($"Không tìm thấy thư mục '{job.FolderPath}'.");
@@ -83,6 +82,90 @@ public sealed class FolderScanner(AppConfig config)
         if (job.Items.All(i => i.IsComplete))
         {
             errors.Add("Không có tệp phù hợp để nén trong thư mục này.");
+        }
+
+        return new ScanResult(job, errors);
+    }
+
+    /// <summary>
+    /// Quét <b>một tệp lẻ</b>. Cùng bộ lọc và cùng cách ghi "bị loại" với quét thư mục, nên
+    /// một tệp lẻ không được hỗ trợ vẫn hiện trong bảng với lý do cụ thể thay vì biến mất.
+    ///
+    /// <see cref="Job.FolderPath"/> đặt là thư mục chứa tệp: nó là gốc để tính đường dẫn
+    /// tương đối khi xuất kết quả, và là nơi tạo tệp <c>.bak</c> — cả hai đều phải khớp với
+    /// tệp gốc.
+    /// </summary>
+    public ScanResult ScanFile(string filePath, CompressionLevel level, bool dryRun, string? outputFolder)
+    {
+        var errors = new List<string>();
+
+        string full;
+        try
+        {
+            full = Path.GetFullPath(filePath);
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Đường dẫn không hợp lệ '{filePath}': {ex.Message}");
+            return new ScanResult(
+                new Job { FolderPath = filePath, Level = level, DryRun = dryRun, OutputFolder = outputFolder, IsFileJob = true, SingleFilePath = filePath },
+                errors);
+        }
+
+        var job = new Job
+        {
+            FolderPath = Path.GetDirectoryName(full) ?? full,
+            Level = level,
+            DryRun = dryRun,
+            OutputFolder = outputFolder,
+            IsFileJob = true,
+            SingleFilePath = full,
+        };
+
+        if (!File.Exists(full))
+        {
+            errors.Add($"Không tìm thấy tệp '{full}'.");
+            return new ScanResult(job, errors);
+        }
+
+        var name = Path.GetFileName(full);
+        var kind = MediaClassifier.Classify(full);
+
+        if (IsExcluded(name))
+        {
+            job.Items.Add(Mark(full, kind, SkipReason.ExcludedByFilter, 0));
+        }
+        else if (kind == MediaKind.Unknown)
+        {
+            job.Items.Add(Mark(full, kind, SkipReason.UnsupportedFormat, 0));
+        }
+        else
+        {
+            long size;
+            try
+            {
+                size = new FileInfo(full).Length;
+            }
+            catch
+            {
+                job.Items.Add(Mark(full, kind, SkipReason.Error, 0, "Không đọc được kích thước."));
+                return new ScanResult(job, errors);
+            }
+
+            if (_config.MinFileSizeBytes > 0 && size < _config.MinFileSizeBytes)
+            {
+                job.Items.Add(Mark(full, kind, SkipReason.ExcludedByFilter, size,
+                    $"Nhỏ hơn ngưỡng {Format.Size(_config.MinFileSizeBytes)}."));
+            }
+            else
+            {
+                job.Items.Add(new JobItem { FilePath = full, Kind = kind, OldSize = size });
+            }
+        }
+
+        if (job.Items.All(i => i.IsComplete))
+        {
+            errors.Add($"Không nén được '{name}' — định dạng không hỗ trợ hoặc bị bộ lọc chặn.");
         }
 
         return new ScanResult(job, errors);

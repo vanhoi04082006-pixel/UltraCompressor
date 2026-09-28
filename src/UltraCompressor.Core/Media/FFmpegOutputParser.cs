@@ -15,10 +15,20 @@ public static partial class FFmpegOutputParser
     [GeneratedRegex(@"time=\s*(?<h>\d+):(?<m>\d{1,2}):(?<s>\d{1,2}(?:[.,]\d+)?)", RegexOptions.IgnoreCase)]
     private static partial Regex TimeRegex();
 
-    // Dòng tổng kết của ffmpeg dùng "bitrate= 262.1kbits/s" (có dấu bằng), còn ffprobe và
-    // một số bản ffmpeg dùng "bitrate: 262 kb/s". Chấp nhận cả hai, không có "s" cũng được.
-    [GeneratedRegex(@"bitrate\s*[:=]\s*(?<n>\d+(?:\.\d+)?)\s*kbits?(?:/s)?", RegexOptions.IgnoreCase)]
+    // Dòng tổng kết của ffmpeg dùng "bitrate= 262.1kbits/s" (có dấu bằng), dòng Input #0
+    // dùng "bitrate: 1629 kb/s" (dấu hai chấm, KHÔNG có chữ "t"), còn ffprobe lại dùng
+    // "bitrate: 1629000" không có đơn vị. Regex cũ chỉ nhận "kbits" nên bỏ sót đúng
+    // dòng Input #0 — tức bỏ sót bitrate thật của tệp.
+    [GeneratedRegex(
+        @"bitrate\s*[:=]\s*(?<n>\d+(?:[.,]\d+)?)\s*(?:kbits?|kb)s?",
+        RegexOptions.IgnoreCase)]
     private static partial Regex BitrateRegex();
+
+    // Dòng mô tả luồng viết tốc độ trần như "..., 1374 kb/s, 23.98 fps, ..." — KHÔNG có
+    // chữ "bitrate" phía trước. Regex trên không khớp chỗ này, nên cần một regex riêng
+    // cho phần tử "N kb/s" trần.
+    [GeneratedRegex(@"(?<n>\d+(?:[.,]\d+)?)\s*(?:kbits?|kb)/s", RegexOptions.IgnoreCase)]
+    private static partial Regex StreamBitrateRegex();
 
     [GeneratedRegex(@"Stream #\d+:\d+.*?:\s*Video:", RegexOptions.IgnoreCase)]
     private static partial Regex HasVideoStreamRegex();
@@ -48,11 +58,26 @@ public static partial class FFmpegOutputParser
         return m.Success ? Compose(m) : null;
     }
 
-    /// <summary>Đọc bitrate (kbit/s) từ dòng tổng kết của ffmpeg.</summary>
+    /// <summary>Đọc bitrate (kbit/s) từ một dòng có chữ "bitrate".</summary>
     public static double? ParseBitrateKbps(string? line)
     {
         if (string.IsNullOrEmpty(line)) return null;
-        var m = BitrateRegex().Match(line);
+        return AsKbps(BitrateRegex(), line);
+    }
+
+    /// <summary>
+    /// Đọc tốc độ trần viết trần trong dòng mô tả luồng ("..., 1374 kb/s, ...").
+    /// Ưu tiên số đi kèm chữ "kb/s"; dòng cuối đôi khi có cả <c>kb/s</c> lẫn <c>tbr</c>.
+    /// </summary>
+    public static double? ParseStreamBitrateKbps(string? line)
+    {
+        if (string.IsNullOrEmpty(line)) return null;
+        return AsKbps(StreamBitrateRegex(), line);
+    }
+
+    private static double? AsKbps(Regex regex, string line)
+    {
+        var m = regex.Match(line);
         return m.Success && double.TryParse(
             m.Groups["n"].Value.Replace(',', '.'),
             System.Globalization.CultureInfo.InvariantCulture,
@@ -72,6 +97,57 @@ public static partial class FFmpegOutputParser
                 m.Groups["us"].Value,
                 System.Globalization.CultureInfo.InvariantCulture) * 10)
             : null;
+    }
+
+    /// <summary>
+    /// Tìm bitrate tổng của tệp nguồn trong stderr của ffmpeg.
+    ///
+    /// <para>Bitrate nằm ở dòng <c>Duration:</c>, tức dòng NGAY SAU dòng
+    /// <c>Input #0</c> — không phải trên chính dòng đó. Nên phải quét từ vị trí
+    /// <c>Input #0</c> tới trước dòng <c>Stream #</c> đầu tiên; quét toàn bộ sẽ vô tình
+    /// lấy nhầm bitrate của riêng một luồng.</para>
+    ///
+    /// <para>Không lấy <c>lines[^1]</c> như bản gốc: dòng cuối là
+    /// "At least one output file must be specified", nên cách đó luôn trả null và bitrate
+    /// mất trắng. Hậu quả âm thầm: planner không tính được mật độ bit/px/khung, rơi về
+    /// tham số nền cho mọi tệp, job vẫn chạy và vẫn ra tệp — chỉ là không thích ứng gì
+    /// cả. Đo thật mới thấy: video 19 phút chỉ giảm được 9,7%.</para>
+    /// </summary>
+    public static double? FindInputBitrateKbps(IReadOnlyList<string> lines)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!lines[i].Contains("Input #", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Dòng "Input #0" không mang số; bitrate nằm ở vài dòng kế, dừng trước "Stream #".
+            for (var j = i; j < lines.Count; j++)
+            {
+                if (j > i && lines[j].Contains("Stream #", StringComparison.OrdinalIgnoreCase)) break;
+
+                var value = ParseBitrateKbps(lines[j]);
+                if (value is > 0) return value;
+            }
+
+            break;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Tìm bitrate của riêng luồng video từ dòng mô tả luồng. Dùng làm dự phòng khi
+    /// không đọc được bitrate tổng.
+    /// </summary>
+    public static double? FindVideoStreamBitrateKbps(IReadOnlyList<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (!HasVideoStreamRegex().IsMatch(line)) continue;
+            var value = ParseStreamBitrateKbps(line);
+            if (value is > 0) return value;
+        }
+
+        return null;
     }
 
     public static bool HasVideoStream(IEnumerable<string> lines) => lines.Any(l => HasVideoStreamRegex().IsMatch(l));

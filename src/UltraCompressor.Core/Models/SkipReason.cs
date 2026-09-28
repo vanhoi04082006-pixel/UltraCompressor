@@ -17,6 +17,13 @@ public enum SkipReason
     /// <summary>Nén xong nhưng kết quả không nhỏ hơn bản gốc.</summary>
     NoSizeGain,
 
+    /// <summary>
+    /// Bỏ qua ngay từ đầu vì tệp đã quá nhỏ so với thứ nén thêm có thể thu được — mã hoá
+    /// lại chỉ tổn chất lượng. Khác <see cref="NoSizeGain"/> ở chỗ: <c>NoSizeGain</c> đã mất
+    /// công chạy xong mới biết, còn lý do này biết trước mà không cần mã hoá.
+    /// </summary>
+    NotWorthIt,
+
     /// <summary>Kết quả nhỏ hơn nhưng dưới ngưỡng tiết kiệm tối thiểu.</summary>
     BelowMinSaving,
 

@@ -16,6 +16,65 @@ public class FFmpegOutputParserTests
         Assert.Equal(expectedSeconds, duration!.Value.TotalSeconds, 2);
     }
 
+    /// <summary>
+    /// Bug thật gặp khi test trên tệp thật: bản gốc đọc bitrate ở <c>lines[^1]</c>, tức dòng
+    /// cuối của stderr. Nhưng dòng đó là "At least one output file must be specified" —
+    /// vì lệnh <c>ffmpeg -i</c> không có tệp đầu ra. Bitrate luôn null, mật độ
+    /// bit/px/khung mất trắng, và planner rơi về tham số nền cho MỌI tệp.
+    ///
+    /// Job vẫn chạy và vẫn ra tệp, nên lỗi này gần như vô hình cho tới khi ta đo ra tệp
+    /// 19 phút chỉ giảm được 9,7%.
+    /// </summary>
+    [Fact]
+    public void Doc_bitrate_tu_dong_ffmpeg_that_khong_phai_vao_dong_cuoi()
+    {
+        // Nguyên văn stderr của ffmpeg cho một tệp thật, đã cắt gọn còn đúng thứ tự.
+        var stderr = new[]
+        {
+            "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers",
+            "  built with gcc 14.2.0",
+            "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'Mama x Holic - 01.mp4':",
+            "  Metadata:",
+            "    major_brand     : isom",
+            "  Duration: 00:19:34.49, start: 0.000000, bitrate: 1629 kb/s",
+            "  Stream #0:0[0x1](und): Video: h264 (Main) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080 [SAR 1:1 DAR 16:9], 1374 kb/s, 23.98 fps, 23.98 tbr, 90k tbn (default)",
+            "  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 249 kb/s (default)",
+            "      handler_name    : SoundHandler",
+            "At least one output file must be specified",
+        };
+
+        // 1629 là bitrate TỔNG của tệp; 1374 là riêng luồng video và luôn thấp hơn.
+        // Phải lấy 1629: mật độ bit/px/khung cần trả lời "cả tệp này còn dư bao nhiêu bit".
+        Assert.Equal(1629, FFmpegOutputParser.FindInputBitrateKbps(stderr));
+        Assert.Equal(1374, FFmpegOutputParser.FindVideoStreamBitrateKbps(stderr));
+    }
+
+    [Fact]
+    public void Doc_bitrate_fallback_khi_khong_co_dong_input()
+    {
+        // Một số bản ffmpeg / một số container không in dòng Input #0. Khi đó dùng bitrate
+        // của riêng luồng video thay vì bỏ trống.
+        var stderr = new[]
+        {
+            "  Duration: 00:19:34.49, start: 0.000000, bitrate: 1629 kb/s",
+            "  Stream #0:0: Video: h264 (Main), 1920x1080, 1374 kb/s, 23.98 fps",
+        };
+
+        Assert.Null(FFmpegOutputParser.FindInputBitrateKbps(stderr));
+        Assert.Equal(1374, FFmpegOutputParser.FindVideoStreamBitrateKbps(stderr));
+    }
+
+    [Fact]
+    public void Doc_bitrate_tra_null_khi_khong_co_du_lieu()
+    {
+        // Không có gì thì trả null, không trả 0 — 0 sẽ bị planner hiểu là bitrate 0 và
+        // kích hoạt nhầm nhánh "nguồn đã cạn".
+        var stderr = new[] { "ffmpeg version 7.1", "At least one output file must be specified" };
+
+        Assert.Null(FFmpegOutputParser.FindInputBitrateKbps(stderr));
+        Assert.Null(FFmpegOutputParser.FindVideoStreamBitrateKbps(stderr));
+    }
+
     [Fact]
     public void Duration_khong_co_thi_tra_null()
     {

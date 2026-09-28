@@ -452,7 +452,7 @@ public sealed class CompressionEngine : IAsyncDisposable
         if (plan.DropAudio) parts.Add("bỏ tiếng");
         else parts.Add($"tiếng {plan.AudioBitrateKbps}k");
 
-        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+        if (plan.Reason.Length > 0) parts.Add(plan.Reason);
 
         return string.Join(" · ", parts);
     }
@@ -462,6 +462,13 @@ public sealed class CompressionEngine : IAsyncDisposable
         var plan = CompressionPlanner.PlanImage(
             goal, context.Probe, context.Item.SourceWidth, context.Item.OldSize);
 
+        // Không in "-q:v 31" cho tệp bị bỏ qua: con số đó là tham số tệ nhất của MJPEG, đọc
+        // lên sẽ tưởng ảnh bị nén tệ. Tệp bị bỏ qua thì nói thẳng là bỏ qua.
+        if (plan.Delta == PlanDelta.NotWorthIt)
+        {
+            return $"không nén — {plan.Reason}";
+        }
+
         var parts = new List<string> { $"-q:v {plan.QScale}" };
 
         if (plan.TargetWidth > 0 && context.Item.SourceWidth is { } w && w > 0)
@@ -469,7 +476,7 @@ public sealed class CompressionEngine : IAsyncDisposable
             parts.Add(w > plan.TargetWidth ? $"{w}px → {plan.TargetWidth}px" : $"giữ {w}px");
         }
 
-        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+        if (plan.Reason.Length > 0) parts.Add(plan.Reason);
 
         return string.Join(" · ", parts);
     }
@@ -490,7 +497,7 @@ public sealed class CompressionEngine : IAsyncDisposable
             parts.Add(w > plan.TargetWidth ? $"{w}px → {plan.TargetWidth}px" : $"giữ {w}px");
         }
 
-        if (plan.Reason.Length > 0) parts.Add($"— {plan.Reason}");
+        if (plan.Reason.Length > 0) parts.Add(plan.Reason);
 
         return string.Join(" · ", parts);
     }

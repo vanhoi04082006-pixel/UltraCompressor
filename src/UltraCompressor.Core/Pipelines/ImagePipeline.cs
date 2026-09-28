@@ -29,6 +29,17 @@ public sealed class ImagePipeline : FFmpegPipelineBase
             context.Item.SourceWidth,
             context.Item.OldSize);
 
+        // Kế hoạch nói "không đáng nén" thì bỏ qua hẳn.
+        //
+        // Trước đây bản này vẫn chạy ffmpeg với -q:v 31 rồi mới so sánh kích thước. -q:v 31
+        // là chất lượng JPEG TỆ NHẤT, nên tệp ra nhỏ hơn một cách vô nghĩa và người dùng tưởng
+        // nén thành công trong khi ảnh đã hỏng. Kế hoạch đã quyết định xong thì phải tin nó:
+        // bỏ qua còn hơn giả vờ làm.
+        if (plan.Delta == PlanDelta.NotWorthIt)
+        {
+            throw new SkipException(SkipReason.NotWorthIt, plan.Reason);
+        }
+
         onProgress(0);
 
         var args = new List<string>

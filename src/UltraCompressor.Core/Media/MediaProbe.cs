@@ -111,10 +111,16 @@ public sealed partial class MediaProbe(string ffmpegPath)
         var videoLine = lines.FirstOrDefault(l => VideoStreamRegex().IsMatch(l));
         var audioLine = lines.FirstOrDefault(l => AudioStreamRegex().IsMatch(l));
 
+        // Bitrate: ưu tiên tổng của tệp nguồn, không thì mới lấy riêng luồng video. Dùng
+        // bitrate tổng thì mật độ bit/px/khung phản ánh đúng "tệp này có bao nhiêu bit",
+        // đó là thứ quyết định nén lại còn thu được không.
+        var totalBitrate = FFmpegOutputParser.FindInputBitrateKbps(lines);
+        var videoBitrate = FFmpegOutputParser.FindVideoStreamBitrateKbps(lines);
+
         var info = new MediaInfo
         {
             Duration = FirstDuration(lines),
-            BitrateKbps = lines.Count > 0 ? FFmpegOutputParser.ParseBitrateKbps(lines[^1]) : null,
+            BitrateKbps = totalBitrate ?? videoBitrate,
             HasVideo = videoLine is not null,
             HasAudio = audioLine is not null,
             Width = ParseDimension(videoLine),

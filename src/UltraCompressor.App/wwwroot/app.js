@@ -50,8 +50,6 @@ function handleEvent(name, data) {
     if (data.jobId === openJobId) renderItems();
   } else if (name === 'foldersDropped') {
     addFolders(data.paths || []);
-  } else if (name === 'dropHover') {
-    showDropZone(data.active === true);
   } else if (name === 'notice') {
     toast(data.message, data.level || 'info');
   }
@@ -668,122 +666,8 @@ async function addFolders(paths) {
   const added = (data?.results || []).filter((r) => r.added).reduce((n, r) => n + r.files, 0);
 
   if (added > 0) toast(`Đã thêm ${added} tệp vào danh sách.`, 'ok');
-  for (const p of problems) toast(p, 'warn');
-}
-
-// ============================================================ kéo thả từ Explorer
-
-/* WebView2 không có sự kiện "đã thả" ở phía .NET, nên kéo từ Explorer tới được
-   Chromium gửi xuống trang dưới dạng HTML5 drag/drop. Bắt buộc phải preventDefault()
-   ở dragover, nếu không trình duyệt sẽ coi đây là thả không hợp lệ và không bắn sự kiện drop.
-
-   Đường dẫn thật lấy theo thứ tự:
-     1. file.path            — WebView2 để lộ đường dẫn tuyệt đối của File.
-     2. entry.fullPath       — dạng URL của mục trình duyệt, ví dụ "/C:/Media/Phim".
-                               Bỏ dấu "/" đầu là ra đường dẫn Windows hợp lệ.
-   Cần cả hai vì WebView2 phiên bản nào đó có thể bỏ trống file.path. */
-
-function entryPathFromUrl(fullPath) {
-  if (!fullPath) return null;
-  let p = fullPath.replace(/^\//, '');
-  if (!p) return null;
-  if (!/^[A-Za-z]:/.test(p)) return null;      // chỉ nhận đường dẫn tuyệt đối ổ đĩa
-  try { p = decodeURIComponent(p); } catch { /* giữ nguyên nếu không giải mã được */ }
-  return p.replace(/\//g, '\\');
-}
-
-function pathFromDropItem(item) {
-  const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-
-  if (entry) {
-    // Thư mục không có đối tượng File để lấy path, phải dựng từ fullPath.
-    if (entry.isDirectory) {
-      return { path: entryPathFromUrl(entry.fullPath), isDir: true };
-    }
-    const entryFile = entry.file ? entry.file() : null;
-    if (entryFile && entryFile.path) return { path: entryFile.path, isDir: false };
-    return { path: entryPathFromUrl(entry.fullPath), isDir: false };
+    for (const p of problems) toast(p, 'warn');
   }
-
-  const file = item.getAsFile ? item.getAsFile() : null;
-  return { path: file && file.path ? file.path : null, isDir: false };
-}
-
-function hasFiles(dt) {
-  if (dt.types && Array.prototype.includes.call(dt.types, 'Files')) return true;
-  return !!(dt.items && Array.prototype.some.call(dt.items, (i) => i.kind === 'file'));
-}
-
-function parentFolderOf(path) {
-  const cut = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
-  if (cut <= 0) return null;                    // không có phần thư mục cha
-  const parent = path.slice(0, cut);
-  // Chặn thả ngay tại gốc ổ đĩa: quét toàn bộ ổ là ý tưởng rất tệ.
-  if (/^[A-Za-z]:\\?$/.test(parent)) return null;
-  return parent;
-}
-
-async function handleDroppedPaths(entries) {
-  const usable = entries.filter((e) => e && e.path);
-  if (usable.length === 0) {
-    toast('Không đọc được đường dẫn từ nội dung vừa thả.', 'warn');
-    return;
-  }
-
-  // Bộ quét chỉ nhận thư mục, nên tệp rời phải gom về thư mục chứa nó.
-  const folders = [];
-  let loose = 0;
-
-  for (const entry of usable) {
-    if (entry.isDir) {
-      folders.push(entry.path);
-      continue;
-    }
-    const parent = parentFolderOf(entry.path);
-    if (parent) {
-      folders.push(parent);
-      loose += 1;
-    } else {
-      toast(`Bỏ qua "${entry.path}" vì nằm ngay gốc ổ đĩa.`, 'warn');
-    }
-  }
-
-  // Bỏ trùng theo dạng không phân biệt hoa/thường, giống cách .NET so sánh đường dẫn.
-  const seen = new Set();
-  const unique = folders.filter((f) => {
-    const key = f.replace(/\\+$/, '').toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  if (loose > 0) toast(`${loose} tệp rời được gom về thư mục chứa nó.`, 'info');
-  await addFolders(unique);
-}
-
-/* Lop phu "Tha vao day".
- *
- * Duong dan thay the khong lay tu JavaScript: trang chay tren https la ngu canh an toan
- * nen Chromium khong dua duong dan tep ra cho trang. Cua so Windows nhan tha truc tiep
- * (MainForm.OnDragDrop) va day duong dan that sang day qua su kien "foldersDropped";
- * su kien "dropHover" chi bao lop phu nen bat/tat.
- *
- * Van giu preventDefault tren dragover: du WebView2 da dung nhan tha, nhung thieu lenh nay
- * tranh trinh duyet tu mo tep bi tha neu cau hinh AllowExternalDrop doi trong tuong lai. */
-function showDropZone(on) {
-  const zone = $('dropZone');
-  if (zone) zone.classList.toggle('is-active', on === true);
-}
-
-function initDropZone() {
-  const preventFileNavigation = (e) => {
-    if (!hasFiles(e.dataTransfer)) return;
-    e.preventDefault();
-  };
-
-  window.addEventListener('dragover', preventFileNavigation);
-  window.addEventListener('drop', preventFileNavigation);
-}
 
 async function start() {
   const mode = $('selMode').value;
@@ -1038,9 +922,8 @@ async function showGuide() {
 
         <h3>Cách dùng</h3>
         <ol>
-          <li>Bấm <b>Thêm thư mục</b>, bấm <code>Ctrl+O</code>, hoặc <b>kéo thả</b> thư mục hay
-              tệp từ Explorer vào cửa sổ. Thư mục con được quét tự động; tệp lẻ được gom về
-              thư mục chứa nó.</li>
+          <li>Bấm <b>Thêm thư mục</b> hoặc nhấn <code>Ctrl+O</code>. Thư mục con được quét
+              tự động.</li>
           <li>Chọn <b>mức nén</b> và <b>cách ghi</b>.</li>
           <li>Bấm <b>Bắt đầu</b>. Dòng thư mục cho biết đang nén tệp nào và tới đâu.</li>
           <li>Mở <b>Chi tiết</b> để xem từng tệp, thanh tiến độ của từng tệp, tệp nào bị giữ
@@ -1273,7 +1156,6 @@ function debounce(fn, ms) {
   }
 
   wire();
-  initDropZone();
   call('getState').then((data) => {
     state = data;
     $('selLevel').value = data.config.level;

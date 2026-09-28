@@ -98,8 +98,7 @@ Ghi lại ở đây để lần sau không phải tìm lại từ đầu.
 | Bảng chi tiết đứng yên khi job chạy | Tệp đang nén vẫn hiện "Chờ" | `AppHost.OpenJobId` có setter nhưng chưa từng được gán, nên `PushAsync` không gửi sự kiện `items` |
 | Báo "Gifsicle chưa có" khi `dotnet run` | Cảnh báo sai dù đã đặt gifsicle vào `tools\` | tệp thực thi nằm ở `bin\Debug\...` nên không có công cụ cạnh bên; nay dò thêm thư mục `tools\` của dự án |
 | Cột "Kết quả" đảo chữ | `-12.2%` thành `2.2%1-` | `.grid .sub` áp `direction: rtl` cho mọi phần tử con thay vì chỉ đường dẫn |
-| Kéo thả báo "Không đọc được đường dẫn" | Kéo thư mục không vào, kéo tệp hỏng luôn | trang chạy trên `https` là ngữ cảnh an toàn nên Chromium không đưa đường dẫn cho JavaScript |
-| Con trỏ kéo vào hiện dấu cấm | Không thả được | `AllowDrop = true` khiến WinForms đăng ký OLE drop target trước WebView2, nhận dữ liệu rỗng rồi từ chối |
+| Con trỏ kéo tệp vào hiện dấu cấm | Không thả được | WebView2 đã đăng ký làm OLE drop target trước, nên cửa sổ cha nhận dữ liệu rỗng rồi từ chối |
 | Cửa sổ xem trước biến mất sau vài giây | Bấm xem bản gốc xong không thấy gì | `preview` chờ ffplay với thời hạn 3 giây, hết thời hạn `ProcessRunner` giết cả cây tiến trình |
 | `kind` rơi về cấp cha nên không nhúng được video | Màn hình so sánh chỉ hiện ảnh xem trước | `CompareResult.Kind` nhưng `renderCompareSide` đọc `side.kind` |
 
@@ -111,31 +110,24 @@ Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn �
 ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
 tuỳ chọn.
 
-## Kéo thả thì kiểm thử bằng cách nào
+## Kéo thả: đã thử ba cách, đều hỏng, đã bỏ
 
-Không script được thao tác kéo chuột từ Explorer. Cách kiểm tra thực tế:
-
-1. Chạy ứng dụng từ `bin\` với `UC_CAPTURE` và `UC_EVAL_JS` chỉ ghi lại trạng thái.
-2. Người dùng kéo một thư mục thật vào cửa sổ.
-3. Đọc lại nhật ký: dòng `Thả N mục, nhận M thư mục.` cho biết đã nhận được gì.
-
-Cần kiểm riêng hai trường hợp vì chúng đi hai nhánh khác nhau trong mã: thả **thư mục**
-và thả **tệp lẻ** (tệp lẻ phải được gom về thư mục chứa nó).
-
-**Vì sao phải bắt WM_DROPFILES thay vì dùng sự kiện `DragDrop` của WinForms.** Ba cách
-đã thử:
+Tính năng này bị gỡ khỏi 2.0.0. Ghi lại để không ai thử lại lần nữa, và vì lý do thì áp dụng
+cho mọi ứng dụng WinForms + WebView2.
 
 | Cách | Kết quả |
 |---|---|
 | Đọc `file.path` trong JavaScript | Rỗng. Trang chạy trên `https` là ngữ cảnh an toàn, Chromium không đưa đường dẫn tệp ra cho trang |
 | `webkitGetAsEntry().fullPath` | Không dựng được đường dẫn dạng ổ đĩa |
-| `AllowDrop = true` của WinForms | Con trỏ hiện dấu cấm: WinForms đăng ký OLE drop target trước WebView2, nhận dữ liệu rỗng rồi từ chối |
+| `AllowDrop` của WinForms, rồi `WM_DROPFILES` | Con trỏ hiện dấu cấm: WebView2 đăng ký làm OLE drop target trước, cửa sổ cha nhận dữ liệu rỗng rồi từ chối |
 
-`WM_DROPFILES` là đường của riêng Windows: chỉ cửa sổ nào gọi `DragAcceptFiles` mới nhận
-được, và thông điệp truyền ngược lên các cửa sổ cha. Vì vậy `AllowDrop` phải để `false`
-(để không ai đăng ký OLE) và ta tự bắt thông điệp trong `WndProc`.
+Làm cho nó chạy được có lẽ phải can thiệp cửa sổ con của WebView2 — nhiều công sức hơn
+giá trị của nó. Nút **Thêm thư mục** và `Ctrl+O` đã đủ, và chúng không bao giờ hỏng.
 
-Bài học chung: **trong một ứng dụng khung chủ WebView2, đừng trông chờ JavaScript lấy được
+Còn một điểm cần nhớ khi gỡ: `AllowExternalDrop` phải để `false`. Nếu bật, thả tệp lên
+cửa sổ khiến trình duyệt điều hướng tới tệp đó và màn hình trắng trơn.
+
+**Bài học chung: trong ứng dụng khung chủ WebView2, đừng trông chờ JavaScript lấy được
 đường dẫn tệp.**
 
 ## Kiểm tra nhúng video

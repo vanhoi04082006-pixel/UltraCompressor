@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="vi" data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -35,15 +35,6 @@
 </head>
 <body>
 
-<!-- Lớp phủ hiện lên khi kéo tệp/thư mục từ Explorer vào cửa sổ. -->
-<div id="dropZone" class="drop-zone" aria-hidden="true">
-  <div class="drop-card">
-    <span class="drop-icon" aria-hidden="true">⤓</span>
-    <strong>Thả vào đây</strong>
-    <span>Thả thư mục hoặc tệp media để thêm vào danh sách nén</span>
-  </div>
-</div>
-
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
@@ -61,7 +52,7 @@
 </header>
 
 <div class="toolbar">
-  <button class="btn btn-primary" id="btnAdd" title="Thêm thư mục (Ctrl+O) — hoặc kéo thả thư mục/tệp vào cửa sổ"><span class="ico">＋</span> Thêm thư mục</button>
+    <button class="btn btn-primary" id="btnAdd" title="Thêm thư mục (Ctrl+O)"><span class="ico">＋</span> Thêm thư mục</button>
   <button class="btn btn-go" id="btnStart" title="Bắt đầu (Ctrl+Enter)" disabled><span class="ico">▶</span> Bắt đầu</button>
   <button class="btn btn-warn" id="btnPause" title="Tạm dừng / Tiếp tục (Space)" disabled><span class="ico">❙❙</span> Tạm dừng</button>
   <button class="btn btn-danger-ghost" id="btnStop" title="Dừng tất cả" disabled><span class="ico">■</span> Dừng</button>
@@ -145,7 +136,7 @@
       <div class="empty" id="jobEmpty">
         <div class="empty-art" aria-hidden="true">⬓</div>
         <h3>Chưa có thư mục nào</h3>
-        <p>Bấm <b>Thêm thư mục</b> hoặc kéo thả một thư mục vào cửa sổ này.<br>Thư mục con cũng được quét tự động.</p>
+        <p>Bấm <b>Thêm thư mục</b> hoặc nhấn <code>Ctrl+O</code>.<br>Thư mục con cũng được quét tự động.</p>
       </div>
     </div>
   </section>

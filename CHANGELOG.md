@@ -17,12 +17,9 @@ thử** liệt kê lỗi do chính bản viết lại này tạo ra.
 - **Tiến độ từng tệp.** Dòng thư mục hiện tên tệp đang nén kèm phần trăm; bảng Chi tiết
   có thanh tiến độ riêng cho tệp đang chạy. Trước đó chỉ có thanh tổng đếm số tệp, nên một
   tập video 20 phút kẹt trông y hệt một tệp ảnh nhỏ.
-- Kéo thả thư mục hoặc tệp từ Explorer vào cửa sổ. WebView2 không có sự kiện "đã thả"
-  ở phía .NET nên sự kiện HTML5 được xử lý trong `wwwroot/app.js`; đường dẫn lấy từ
-  `file.path` của WebView2, dự phòng bằng `entry.fullPath`.
-- Lớp phủ "Thả vào đây" hiện lên khi kéo vào cửa sổ.
-- Lệnh cầu `log` để giao diện ghi vào nhật ký — thao tác kéo chuột không làm được bằng
-  script, nên nhật ký là manh mối duy nhất khi nó hỏng.
+- Kéo thả thư mục hoặc tệp từ Explorer vào cửa sổ — **đã bị gỡ**, xem mục Lỗi bên dưới.
+- Lệnh cầu `log` để giao diện ghi vào nhật ký — thao tác không làm được bằng script thì
+  nhật ký là manh mối duy nhất khi nó hỏng.
 - Biến môi trường `UC_EVAL_SETTLE` để chụp giao diện đúng lúc muốn xem.
 - Log mức debug ghi rõ tệp đang xử lý và tệp vừa xong. Nén video có thể chạy hàng chục
   phút mà không ghi gì, nên không có hai dòng này thì không phân biệt được "đang chạy" với
@@ -81,14 +78,16 @@ Các lỗi dưới đây do bản viết lại này gây ra, phát hiện khi ch
 - **Cột "Kết quả" hiện chữ bị đảo** (`-12.2%` thành `2.2%1-`) vì `.grid .sub` áp
   `direction: rtl` — mẹo cắt chữ đường dẫn từ bên trái — cho mọi phần tử con chứ không
   riêng đường dẫn.
-- **Kéo thả không lấy được đường dẫn.** Trang chạy trên `https://app.local` là ngữ cảnh
-  an toàn nên Chromium không đưa đường dẫn tệp ra cho JavaScript, và `entry.fullPath`
-  cũng không dựng được — kéo thư mục báo "Không đọc được đường dẫn", kéo tệp lẻ hỏng luôn.
-- **Dấu cấm khi kéo vào.** Để WinForms nhận thả (`AllowDrop = true`) thì nó đăng ký cửa sổ
-  làm OLE drop target, đăng ký trước WebView2 nên nhận dữ liệu rỗng và từ chối. Đã bỏ hẳn
-  OLE: `AllowDrop = false` và tự bắt `WM_DROPFILES` trong `WndProc` (chỉ cửa sổ nào gọi
-  `DragAcceptFiles` mới nhận được, và thông điệp truyền ngược lên cửa sổ cha). Nhận được
-  cả thư mục lẫn tệp lẻ, và tệp lẻ gom về thư mục chứa nó.
+- **Kéo thả thư mục — đã thử ba cách, đều hỏng, đã gỡ khỏi 2.0.0.**
+  1. `file.path` trong JavaScript: rỗng, vì trang chạy trên `https://app.local` là ngữ
+     cảnh an toàn nên Chromium không đưa đường dẫn tệp ra cho trang.
+  2. `entry.fullPath` của `webkitGetAsEntry`: không dựng được đường dẫn dạng ổ đĩa.
+  3. `AllowDrop` của WinForms rồi tới `WM_DROPFILES`: WebView2 đã đăng ký làm OLE drop
+     target trước, nên con trỏ hiện dấu cấm và không thả được.
+
+  Làm cho nó chạy được có lẽ phải can thiệp cửa sổ con của WebView2 — nhiều công sức hơn
+  giá trị của nó. Dùng nút **Thêm thư mục** hoặc `Ctrl+O`. Chi tiết ở
+  [`docs/TESTING.md`](docs/TESTING.md).
 - **Cửa sổ xem trước biến mất sau 3 giây.** Lệnh `preview` chờ ffplay với thời hạn 3 giây,
   mà hết thời hạn thì `ProcessRunner` giết cả cây tiến trình. Nay khởi chạy tách rời,
   không chờ, không giết.

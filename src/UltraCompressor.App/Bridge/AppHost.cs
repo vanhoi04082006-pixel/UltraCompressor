@@ -643,8 +643,8 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Ghi một dòng nhật ký do giao diện web gửi lên. Chủ yếu để truy vết phần kéo-thả:
-    /// thao tác kéo chuột từ Explorer không làm được bằng script, nên nếu nó hỏng thì
+    /// Ghi một dòng nhật ký do giao diện web gửi lên. Chủ yếu để truy vết những thao tác
+    /// không làm được bằng script, ví dụ mở hộp thoại hay phát trình phát — nếu nó hỏng thì
     /// nhật ký là manh mối duy nhất còn lại.
     /// </summary>
     private static System.Text.Json.Nodes.JsonNode? LogMessage(BridgeMessage message)

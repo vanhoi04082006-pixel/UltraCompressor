@@ -48,9 +48,7 @@ chính máy này, `gifsicle.exe` in cảnh báo “Can't load DLL” rồi vẫn
 
 ## Cách dùng
 
-1. **Thêm thư mục** — bấm nút, bấm `Ctrl+O`, hoặc **kéo thả từ Explorer vào cửa sổ**.
-   Thả được cả thư mục lẫn tệp lẻ. Thư mục con được quét tự động. Tệp lẻ được gom về
-   thư mục chứa nó, vì ứng dụng luôn làm việc theo thư mục.
+1. **Thêm thư mục** — bấm nút hoặc `Ctrl+O`. Thư mục con được quét tự động.
 2. Chọn **mức nén** và **cách ghi**.
 3. **Bắt đầu**. Xem mức tiết kiệm ở cột tương ứng.
 4. Mở **Chi tiết** để xem từng tệp, tiến độ từng tệp, tệp nào bị giữ nguyên và vì sao.

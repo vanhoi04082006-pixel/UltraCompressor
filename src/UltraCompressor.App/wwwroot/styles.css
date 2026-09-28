@@ -1111,55 +1111,6 @@ body.is-resizing video { pointer-events: none; }
 .toast .t-title { font-weight: 600; }
 .toast .t-body { color: var(--text-muted); font-size: 12px; margin-top: 1px; }
 
-/* ============================================================
-   Vùng thả tệp/thư mục
-   ============================================================ */
-
-.drop-zone {
-  position: fixed;
-  inset: 0;
-  z-index: 900;
-  display: grid;
-  place-items: center;
-  padding: var(--space-6);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: blur(3px);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 140ms var(--ease), visibility 140ms var(--ease);
-  pointer-events: none;
-}
-
-.drop-zone.is-active {
-  opacity: 1;
-  visibility: visible;
-}
-
-.drop-card {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-2);
-  padding: var(--space-8) var(--space-9);
-  border: 2px dashed var(--accent);
-  border-radius: calc(var(--radius) * 2);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-lg, 0 24px 60px rgba(0, 0, 0, .45));
-  text-align: center;
-  transform: scale(.97);
-  transition: transform 160ms var(--ease);
-}
-
-.drop-zone.is-active .drop-card { transform: scale(1); }
-
-.drop-icon {
-  font-size: 34px;
-  line-height: 1;
-  color: var(--accent);
-}
-
-.drop-card strong { font-size: 20px; }
-.drop-card span:last-child { color: var(--text-muted); font-size: 13px; max-width: 34ch; }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

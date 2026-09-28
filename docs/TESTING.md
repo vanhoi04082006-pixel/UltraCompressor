@@ -110,48 +110,39 @@ Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn �
 ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
 tuỳ chọn.
 
-## Kéo thả: cách đã làm việc, và ba cách đã thử trước đó
+## Kéo-thả: đã bỏ, và đừng thử lại
 
-Tính năng này **đã có** trong bản hiện tại. Nhưng ghi lại cả những cách đã hỏng, vì lý do
-thì áp dụng cho mọi ứng dụng WinForms + WebView2.
-
-### Cách đang dùng: `WM_DROPFILES` trên chính HWND của Form
-
-```csharp
-DragAcceptFiles(Handle, true);                    // bật WS_EX_ACCEPTFILES cho Form
-coreWebView2Controller.AllowExternalDrop = false;  // BẮT BUỘC
-```
-
-Rồi bắt `WM_DRAGENTER` / `WM_DRAGOVER` / `WM_DRAGLEAVE` / `WM_DROPFILES` trong `WndProc`
-của Form, đọc đường dẫn bằng `DragQueryFile`, và **luôn gọi `DragFinish`**.
-
-Vì sao chạy được — đây là mấu chốt:
-
-1. `AllowExternalDrop = false` khiến WebView2 **thôi là OLE drop target**. Nên cửa sổ con
-   của Chromium không có `WS_EX_ACCEPTFILES`.
-2. Khi thả, hệ điều hành tìm cửa sổ con sâu nhất dưới con trỏ; thấy không có cờ đó thì
-   **đi lên chuỗi cha**, và tới Form (đã bật cờ) thì dừng.
-3. Vì thế phải đăng ký trên **Form**, không phải trên `_browser.Handle`. `Handle` đó là
-   control WebView2, còn bề mặt thật là cửa sổ **cháu** của nó.
-
-Hai chỗ dễ sai:
-- Bật `DragAcceptFiles` **trước** khi đặt `AllowExternalDrop = false` thì WebView2 kịp
-  đăng ký làm OLE target và ta không bao giờ nhận thông báo. Trong `MainForm` vì thế gọi
-  `EnableDropOnForm()` ở `OnShown`, còn `AllowExternalDrop = false` đặt trong
-  `InitializeBrowserAsync` (chạy sau).
-- Bỏ `DragFinish` thì con trỏ kẹt ở dấu cấm vĩnh viễn.
-
-### Ba cách đã thử và đều hỏng
+Tính năng này **không còn**. Ghi lại vì nó rất dễ bị thử lại, và mỗi lần thử lại đều tốn
+cả buổi.
 
 | Cách | Kết quả |
 |---|---|
-| Đọc `file.path` trong JavaScript | Rỗng. Trang chạy trên `https` là ngữ cảnh an toàn, Chromium không đưa đường dẫn tệp ra cho trang |
+| `WM_DROPFILES` + `WS_EX_ACCEPTFILES` trên Form | Không tới |
+| OLE `IDropTarget` tự viết + `RegisterDragDrop` | Đăng ký OK nhưng không bao giờ được gọi |
+| `AllowExternalDrop = false` để WebView2 nhường quyền | Vô hiệu |
+| `file.path` trong JavaScript | Rỗng — ngữ cảnh `https` không lộ đường dẫn |
 | `webkitGetAsEntry().fullPath` | Không dựng được đường dẫn dạng ổ đĩa |
-| `CoreWebView2.DragOver` / `DragDrop` | **API không tồn tại** ở SDK 1.0.4191.47. Đã kiểm tra bằng reflection: 497 kiểu được xuất, không có `CoreWebView2DragDropEventArgs`, và không thành viên nào chứa "Drop" ngoài `AllowExternalDrop` |
+| `CoreWebView2.DragDrop` | API không tồn tại ở SDK 1.0.4191.47 |
 
-Cách thứ ba đáng lưu ý nhất: nó từng được ghi trong tài liệu và trong lời bình nên rất dễ
-người khác thử lại. Kiểm tra `Microsoft.Web.WebView2.Core.dll` trước khi viết code dựa
-vào nó:
+Cách kiểm chứng (đáng học hơn cả kết luận): **kéo chuột thật**, tách từng tầng.
+
+```powershell
+# 1. Chứng minh chuỗi kéo là đúng: cùng phép kéo đó, thả vào Notepad.
+#    Notepad mở file => Explorer + con trỏ + SendInput đều ổn, lỗi nằm ở phần nhận.
+
+# 2. Chứng minh Form không phải nơi nhận: dòng HWND tại điểm thả, đi ngược lên cha.
+#    Kết quả: Chrome_RenderWidgetHostHWND (pid = msedgewebview2) nằm TRÊN Form.
+
+# 3. Chứng minh không phải do WebView2: một cửa sổ WinForms trần, không WebView2,
+#    bật đúng WS_EX_ACCEPTFILES — cũng không nhận WM_DROPFILES nào.
+```
+
+Điểm 3 mới là kết luận: **cơ chế `WM_DROPFILES` đã bị Windows bỏ hoàn toàn**, nên sửa thêm
+phía .NET cũng vô ích. Explorer ngày nay luôn chạy kéo bằng OLE và chỉ bàn giao cho cửa sổ
+đã `RegisterDragDrop`; mà cửa sổ con của Chromium đã đăng ký trước.
+
+**Bài học chung: trong ứng dụng khung chủ WebView2, đừng trông chờ JavaScript lấy được
+đường dẫn tệp, và đừng tin tài liệu của phiên bản SDK trước.**
 
 ```powershell
 $dll = "$env:USERPROFILE\.nuget\packages\microsoft.web.webview2\<phiên bản>\lib\net462\Microsoft.Web.WebView2.Core.dll"
@@ -160,8 +151,53 @@ $dll = "$env:USERPROFILE\.nuget\packages\microsoft.web.webview2\<phiên bản>\l
     ForEach-Object { "$($t.Name).$($_.Name)" } } | Sort-Object -Unique
 ```
 
-**Bài học chung: trong ứng dụng khung chủ WebView2, đừng trông chờ JavaScript lấy được
-đường dẫn tệp — và đừng tin tài liệu của phiên bản SDK trước.**
+## Ba lớp lỗi mà test tự động bắt được, nhưng người dùng vẫn thấy
+
+Cả ba đều im lặng: job chạy, tệp ra, không test nào đỏ.
+
+| Lỗi | Vì sao test không thấy | Test chặn lại bằng gì |
+|---|---|---|
+| Chiều cao bằng chiều rộng (1918×1918) | `ParseDimension` là hàm thuần, nhưng test chỉ kiểm tra chiều rộng | `FFmpegOutputParser.ParseDimensions` trả về **cả hai**, có test riêng |
+| Bitrate đọc trên dòng cuối stderr | Dòng cuối là `At least one output file must be specified` — luôn không khớp | Test với nguyên văn stderr thật |
+| Job kẹt "Chờ duyệt" sau khi duyệt | `keepDays == 0` mà mặc định là 30 | Test `DiscardBackups` với `keepDays: 30` |
+
+Đặc biệt lỗi 1: mật độ bit/px/khung dùng `W × H`, nên báo vuông làm **kế hoạch nén sai**
+chứ không chỉ sai hiển thị. Lỗi hiển thị âm thầm thì lỗi nghiêm trọng nhất.
+
+## Đo thật ba mức trên tệp thật
+
+`dotnet test` xanh **không** có nghĩa là nén đúng — lớp nén là hàm thuần trả về chuỗi lệnh
+ffmpeg, không hề chạy ffmpeg. Phải chạy thật và **in ra con số**.
+
+Đo trên `Mama x Holic Miwaku no Mama to Amaama Kankei` (2 video 19 phút, 1920×1080, 24 fps):
+
+| Mức | Tập 01 | Tập 02 | Cả thư mục |
+|---|---|---|---|
+| Nhẹ | 9,0% | 2,7% | 26 MB |
+| Cân bằng | 35,2% | 29,5% | 144 MB |
+| Mạnh | 63,5% | 61,1% | 276 MB |
+
+Cùng bộ đó, chạy **trước** khi sửa lỗi bitrate: 9,7% và 3,4% ở mức Cân bằng. Sai 4 lần mà
+không có test nào đỏ.
+
+Hai ảnh `.jpg` nhỏ (55 KB, 40 KB) bị bỏ qua ở mức Cân bằng và Mạnh — đúng bản chất, JPEG
+không cải thiện được nữa. Ở mức Nhẹ thì vẫn thử, rồi `NoSizeGain` loại vì kết quả to hơn.
+
+## Vòng đời tệp: kiểm chứng bằng chính mã của ứng dụng
+
+Không mô phỏng thao tác. Gọi đúng `FileTransaction.Commit` → `UndoService.DiscardBackups`
+→ `UndoService.RestoreAll` trên tệp thật, rồi kiểm tra nội dung còn nguyên:
+
+```
+TRUOC   : goc=10007  .bak tồn tại=False
+Commit  : err=(không có)
+          goc=7  .bak=10007
+Duyệt   : failed=0 -> trạng thái job = Committed
+          còn .bak? True
+Hoàn tác: restored=1 failed=0
+          nội dung sau hoàn tác: "BẢN GỐC - 10000 ký tự xx..."
+          .bak còn lại? False
+```
 
 ## Kiểm tra nhúng video
 
@@ -175,11 +211,17 @@ document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"')
 Trả về `"probably"` hoặc `"maybe"` thì dùng được. Nếu rỗng thì phải rơi về trình phát
 ngoài. Trên máy này WebView2 có cả H.264 lẫn AAC.
 
+**Nhưng codec có trong bản dựng chưa đủ — `Content-Type` sai thì vẫn đen.** Tệp sao lưu có
+tên `phim.mp4.bak`; nếu đoán MIME trực tiếp từ phần mở rộng thì ra
+`application/octet-stream`, Chromium từ chối, và `<video>` hiện khung đen 0:00 **không báo
+lỗi nào**. `MediaHost.MimeTypeOf` phải bỏ lớp `.bak` trước khi đoán. Khung đen không kèm
+chữ giải thích là loại lỗi tệ nhất, nên `<video>` có bắt sự kiện `error` và in lý do.
+
 ## Trước khi gửi thay đổi
 
 ```powershell
-dotnet build UltraCompressor.slnx -c Release    # 0 lỗi, 0 cảnh báo
-dotnet test tests\UltraCompressor.Core.Tests -c Release
+.\check.ps1          # giống hệt CI: định dạng, build, test, build Debug coi cảnh báo là lỗi
+git status --short   # không được còn tệp đã sửa mà chưa commit
 ```
 
 Nếu sửa giao diện, chụp lại các màn hình và **nhìn tấm ảnh**, đừng chỉ tin build xong.

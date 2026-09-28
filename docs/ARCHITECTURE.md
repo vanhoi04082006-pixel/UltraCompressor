@@ -94,12 +94,29 @@ Dòng tiến độ (`frame=... time=...`) nằm trên **stderr** ở mức `info
 `out_time_us` ra **stdout** dạng `key=value`, hoạt động ở mọi mức log. Tỉ lệ phần trăm
 lấy từ thời lượng đã probe sẵn, không phải đoán từ log.
 
-**Kéo thả dùng `WM_DROPFILES` trên HWND của Form, không dùng API drag-drop của
-WebView2.** SDK `Microsoft.Web.WebView2` 1.0.4191.47 đã bỏ hẳn `CoreWebView2DragDropEventArgs`
-(đã kiểm tra bằng reflection: 497 kiểu xuất ra, không có thành viên nào chứa "Drop" ngoài
-`AllowExternalDrop`). Với `AllowExternalDrop = false`, cửa sổ con của Chromium không có
-`WS_EX_ACCEPTFILES`, nên khi thả hệ điều hành đi lên chuỗi cha và dừng ở Form. Đăng ký trên
-`_browser.Handle` là vô dụng — đó là control, còn tệp thật nằm ở cửa sổ cháu.
+**Kéo-thả đã bỏ — và đừng thử thêm lần nữa.** Đã thử đủ các đường và đều thất bại trên
+Windows hiện nay:
+
+| Cách | Kết quả |
+|---|---|
+| `WM_DROPFILES` + `WS_EX_ACCEPTFILES` trên Form | Không tới. Explorer ngày nay luôn chạy kéo bằng OLE, chỉ bàn giao cho cửa sổ đã `RegisterDragDrop`. |
+| OLE `IDropTarget` tự viết (`RegisterDragDrop`) | Đăng ký thành công nhưng không bao giờ được gọi. |
+| `AllowExternalDrop = false` để WebView2 nhường quyền | Vô hiệu — WebView2 vẫn giữ vai trò drop target. |
+| Sự kiện `CoreWebView2.DragDrop` | Không tồn tại trong SDK 1.0.4191.47. |
+
+Hai phép thử tách bạch nguyên nhân, và cả hai đều bằng kéo chuột thật (UI Automation định
+vị mục trong Explorer + `SendInput` di chuyển con trỏ):
+
+- `WindowFromPoint` tại điểm thả trả về `Chrome_RenderWidgetHostHWND` thuộc tiến trình
+  `msedgewebview2` — cửa sổ con đó nằm trên Form trong chuỗi cha.
+- Một cửa sổ WinForms **trần**, không WebView2, bật đúng `WS_EX_ACCEPTFILES`, kéo chuột thật
+  từ Explorer — cũng không nhận `WM_DROPFILES` nào.
+
+Cùng phép kéo đó thả vào Notepad thì mở file bình thường, nên chuỗi kéo là đúng và lỗi nằm
+ở phần tiếp nhận, không phải ở cách tạo kéo. Cơ chế cũ đã bị Windows bỏ hoàn toàn.
+
+Thay vào đó: nút **Thêm thư mục** / **Thêm tệp** (`Ctrl+Shift+O` cho tệp lẻ). Giữ
+`AllowExternalDrop = false` để WebView2 không tự mở tệp thả vào làm trắng màn hình.
 
 **`MediaHost` phải trả `206 Partial Content` khi có header `Range`.** Chromium (kể cả
 `<video>`) luôn gửi `Range` khi tua. Trả `200` cho mọi yêu cầu thì mỗi lần tua phải đọc

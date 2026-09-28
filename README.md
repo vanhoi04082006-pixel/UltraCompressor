@@ -48,7 +48,7 @@ chính máy này, `gifsicle.exe` in cảnh báo “Can't load DLL” rồi vẫn
 
 ## Cách dùng
 
-1. **Thêm thư mục** (`Ctrl+O`), **Thêm tệp** (`Ctrl+Shift+O`) cho tệp lẻ, hoặc **kéo thả** thư mục/tệp vào cửa sổ. Thư mục con được quét tự động.
+1. **Thêm thư mục** (`Ctrl+O`) hoặc **Thêm tệp** (`Ctrl+Shift+O`) cho tệp lẻ. Thư mục con được quét tự động.
 2. Chọn **mức nén** và **cách ghi**. Mức nén được chụp lúc thêm, nên nếu đổi sau đó thì
    dòng job cũ hiện badge màu cảnh báo kèm nút **⟳** để áp dụng mức hiện tại.
 3. **Bắt đầu**. Các hàng đợi chạy **tuần tự theo đúng thứ tự bạn thêm**; bên trong mỗi

@@ -28,6 +28,13 @@ public sealed class MainForm : Form
         _host = host;
 
         Text = "UltraCompressor — Nén media hàng loạt";
+
+        // ApplicationIcon trong csproj chỉ gắn icon vào resource của tệp thực thi, nên
+        // Explorer đọc được. Nhưng WinForms vẫn tự tạo icon mặc định cho Handle nếu không
+        // gán ở đây — biểu hiện là biểu tượng trên thanh tiêu đề và trong Alt+Tab là icon
+        // .NET mặc định, không phải icon ứng dụng. Gán rõ để hai nơi khớp nhau.
+        Icon = AppIcon.Load();
+
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(0x0F, 0x11, 0x15);
         ForeColor = Color.FromArgb(0xE6, 0xEA, 0xF0);
@@ -711,6 +718,13 @@ internal static class NativeMethods
     /// đo báo "không nhận thả" trong khi cờ đã bật đúng, và ta đi tìm một lỗi không có.
     /// </summary>
     public const int WSExAcceptFiles = 0x00000010;
+
+    /// <summary>
+    /// Đặt AppUserModelID cho tiến trình. Phải gọi trước khi tạo cửa sổ đầu tiên.
+    /// Windows 10 trở đi hỗ trợ; bản cũ hơn trả về HRESULT lỗi — bỏ qua được.
+    /// </summary>
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     private const int GwlExStyle = -20;
 

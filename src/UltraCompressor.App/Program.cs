@@ -15,6 +15,18 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
+        // Phải khai báo TRƯỚC khi tạo bất kỳ cửa sổ nào.
+        //
+        // Windows dùng AppUserModelID để gom cửa sổ vào một nhóm khi người dùng ghim ứng
+        // dụng vào thanh tác vụ. Không có mã định danh này thì Windows gán ID theo đường
+        // dẫn tệp, và ứng dụng chạy từ hai đường dẫn khác nhau (bản cài và bản chạy thử)
+        // sẽ thành hai ứng dụng riêng biệt trên thanh tác vụ.
+        //
+        // Đây là AppUserModelID chứ không phải tên hiển thị: chuỗi này được Windows lưu
+        // và so sánh, đổi nó sẽ khiến các ghim cũ không còn khớp.
+        _ = NativeMethods.SetCurrentProcessExplicitAppUserModelID(AppIcon.AppUserModelId);
+
+
         AppHost? host = null;
         MainForm? form = null;
 

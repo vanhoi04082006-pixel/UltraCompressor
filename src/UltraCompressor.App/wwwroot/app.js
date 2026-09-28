@@ -52,7 +52,7 @@ function handleEvent(name, data) {
     items = data.items || [];
     renderItems();
   } else if (name === 'pathsDropped') {
-    addPaths(data.paths || []);
+    addPaths(data.paths || [], 'keo-tha');
   } else if (name === 'dropHover') {
     $('dropzone').hidden = !data.active;
   } else if (name === 'notice') {
@@ -810,8 +810,13 @@ async function loadItems() {
 // ============================================================ hành động
 
 /* Thêm thư mục hoặc tệp lẻ. Dùng chung cho nút bấm và kéo-thả nên hai đường không lệch nhau. */
-async function addPaths(paths) {
-  if (!paths || paths.length === 0) return;
+async function addPaths(paths, source = '') {
+  if (!paths || paths.length === 0) {
+    // Thả xuống mà không có đường dẫn nào: thường là thả vào vùng không nhận thả, hoặc
+    // tệp không tồn tại. Phải nói ra, không được im lặng.
+    if (source === 'keo-tha') toast('Không nhận được tệp nào. Hãy thả vào cửa sổ UltraCompressor.', 'warn');
+    return;
+  }
 
   let data;
   try {
@@ -821,15 +826,22 @@ async function addPaths(paths) {
     return;
   }
 
-  reportAdded(data);
+  reportAdded(data, source);
 }
 
-function reportAdded(data) {
+function reportAdded(data, source = '') {
   const results = data?.results || [];
   const problems = data?.problems || [];
   const added = results.filter((r) => r.added).reduce((n, r) => n + r.files, 0);
 
-  if (added > 0) toast(`Đã thêm ${added} tệp vào danh sách.`, 'ok');
+  if (added > 0) {
+    toast(`Đã thêm ${added} tệp vào danh sách.`, 'ok');
+  } else if (results.length > 0) {
+    // Có thư mục/tệp được gửi tới nhưng không lấy được tệp nào đủ điều kiện. Im lặng ở
+    // đây khiến người dùng tưởng kéo-thả hỏng; nói rõ đã nhận gì và vì sao không thêm.
+    toast('Không thêm được tệp nào. Xem danh sách báo lỗi bên dưới.', 'warn');
+  }
+
   for (const p of problems) toast(p, 'warn');
 }
 

@@ -62,7 +62,7 @@ Ba điều phải kiểm mỗi lần:
 Cắt 2 phút đầu của một tập để đo nhanh, rồi so sánh các tham số:
 
 ```powershell
-$ff = "$env:LOCALAPPDATA\UltraCompressor\ffmpeg.exe"
+$ff = "E:\Projects\UltraCompressor\tools\ffmpeg.exe"
 & $ff -y -i $src -t 120 -c copy $out\base.mp4      # mẫu gốc
 foreach ($crf in 20, 23, 28) {
   & $ff -y -i $out\base.mp4 -c:v libx264 -crf $crf -preset medium -c:a aac -b:a 128k $out\c$crf.mp4
@@ -110,25 +110,58 @@ Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn �
 ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
 tuỳ chọn.
 
-## Kéo thả: đã thử ba cách, đều hỏng, đã bỏ
+## Kéo thả: cách đã làm việc, và ba cách đã thử trước đó
 
-Tính năng này bị gỡ khỏi 2.0.0. Ghi lại để không ai thử lại lần nữa, và vì lý do thì áp dụng
-cho mọi ứng dụng WinForms + WebView2.
+Tính năng này **đã có** trong bản hiện tại. Nhưng ghi lại cả những cách đã hỏng, vì lý do
+thì áp dụng cho mọi ứng dụng WinForms + WebView2.
+
+### Cách đang dùng: `WM_DROPFILES` trên chính HWND của Form
+
+```csharp
+DragAcceptFiles(Handle, true);                    // bật WS_EX_ACCEPTFILES cho Form
+coreWebView2Controller.AllowExternalDrop = false;  // BẮT BUỘC
+```
+
+Rồi bắt `WM_DRAGENTER` / `WM_DRAGOVER` / `WM_DRAGLEAVE` / `WM_DROPFILES` trong `WndProc`
+của Form, đọc đường dẫn bằng `DragQueryFile`, và **luôn gọi `DragFinish`**.
+
+Vì sao chạy được — đây là mấu chốt:
+
+1. `AllowExternalDrop = false` khiến WebView2 **thôi là OLE drop target**. Nên cửa sổ con
+   của Chromium không có `WS_EX_ACCEPTFILES`.
+2. Khi thả, hệ điều hành tìm cửa sổ con sâu nhất dưới con trỏ; thấy không có cờ đó thì
+   **đi lên chuỗi cha**, và tới Form (đã bật cờ) thì dừng.
+3. Vì thế phải đăng ký trên **Form**, không phải trên `_browser.Handle`. `Handle` đó là
+   control WebView2, còn bề mặt thật là cửa sổ **cháu** của nó.
+
+Hai chỗ dễ sai:
+- Bật `DragAcceptFiles` **trước** khi đặt `AllowExternalDrop = false` thì WebView2 kịp
+  đăng ký làm OLE target và ta không bao giờ nhận thông báo. Trong `MainForm` vì thế gọi
+  `EnableDropOnForm()` ở `OnShown`, còn `AllowExternalDrop = false` đặt trong
+  `InitializeBrowserAsync` (chạy sau).
+- Bỏ `DragFinish` thì con trỏ kẹt ở dấu cấm vĩnh viễn.
+
+### Ba cách đã thử và đều hỏng
 
 | Cách | Kết quả |
 |---|---|
 | Đọc `file.path` trong JavaScript | Rỗng. Trang chạy trên `https` là ngữ cảnh an toàn, Chromium không đưa đường dẫn tệp ra cho trang |
 | `webkitGetAsEntry().fullPath` | Không dựng được đường dẫn dạng ổ đĩa |
-| `AllowDrop` của WinForms, rồi `WM_DROPFILES` | Con trỏ hiện dấu cấm: WebView2 đăng ký làm OLE drop target trước, cửa sổ cha nhận dữ liệu rỗng rồi từ chối |
+| `CoreWebView2.DragOver` / `DragDrop` | **API không tồn tại** ở SDK 1.0.4191.47. Đã kiểm tra bằng reflection: 497 kiểu được xuất, không có `CoreWebView2DragDropEventArgs`, và không thành viên nào chứa "Drop" ngoài `AllowExternalDrop` |
 
-Làm cho nó chạy được có lẽ phải can thiệp cửa sổ con của WebView2 — nhiều công sức hơn
-giá trị của nó. Nút **Thêm thư mục** và `Ctrl+O` đã đủ, và chúng không bao giờ hỏng.
+Cách thứ ba đáng lưu ý nhất: nó từng được ghi trong tài liệu và trong lời bình nên rất dễ
+người khác thử lại. Kiểm tra `Microsoft.Web.WebView2.Core.dll` trước khi viết code dựa
+vào nó:
 
-Còn một điểm cần nhớ khi gỡ: `AllowExternalDrop` phải để `false`. Nếu bật, thả tệp lên
-cửa sổ khiến trình duyệt điều hướng tới tệp đó và màn hình trắng trơn.
+```powershell
+$dll = "$env:USERPROFILE\.nuget\packages\microsoft.web.webview2\<phiên bản>\lib\net462\Microsoft.Web.WebView2.Core.dll"
+[System.Reflection.Assembly]::LoadFrom($dll).GetExportedTypes() |
+  ForEach-Object { $t = $_; $_.GetMembers() | Where-Object Name -match 'Drop' |
+    ForEach-Object { "$($t.Name).$($_.Name)" } } | Sort-Object -Unique
+```
 
 **Bài học chung: trong ứng dụng khung chủ WebView2, đừng trông chờ JavaScript lấy được
-đường dẫn tệp.**
+đường dẫn tệp — và đừng tin tài liệu của phiên bản SDK trước.**
 
 ## Kiểm tra nhúng video
 

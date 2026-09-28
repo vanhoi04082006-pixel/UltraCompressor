@@ -6,7 +6,7 @@ làm mất dữ liệu hoặc báo lỗi sai.
 
 - **.NET 10**, khung chủ WinForms, giao diện là web (HTML/CSS/JS thuần) chạy trong WebView2
 - Không cần bước build giao diện, không phụ thuộc npm
-- Dữ liệu người dùng đặt ở `%LOCALAPPDATA%\UltraCompressor`, nâng cấp không mất dữ liệu
+- Mọi thứ của dự án nằm trong thư mục dự án: bản cài ở `app\`, dữ liệu ở `data\`. Không ghi ra ổ đĩa khác
 
 ---
 
@@ -23,7 +23,7 @@ làm mất dữ liệu hoặc báo lỗi sai.
 .\setup.ps1 -SelfContained
 ```
 
-Ứng dụng được cài vào `%LOCALAPPDATA%\UltraCompressor` và tạo lối tắt trên desktop.
+Ứng dụng được cài vào `<dự án>\app` và tạo lối tắt trên desktop. Xoá bản cài cũ ở ổ C: bằng `.\setup.ps1 -RemoveLegacy`.
 
 ### Công cụ ngoài
 
@@ -48,7 +48,7 @@ chính máy này, `gifsicle.exe` in cảnh báo “Can't load DLL” rồi vẫn
 
 ## Cách dùng
 
-1. **Thêm thư mục** — bấm nút hoặc `Ctrl+O`. Thư mục con được quét tự động.
+1. **Thêm thư mục** (`Ctrl+O`), **Thêm tệp** (`Ctrl+Shift+O`) cho tệp lẻ, hoặc **kéo thả** thư mục/tệp vào cửa sổ. Thư mục con được quét tự động.
 2. Chọn **mức nén** và **cách ghi**.
 3. **Bắt đầu**. Xem mức tiết kiệm ở cột tương ứng.
 4. Mở **Chi tiết** để xem từng tệp, tiến độ từng tệp, tệp nào bị giữ nguyên và vì sao.
@@ -98,6 +98,7 @@ những gì sẽ xảy ra chứ không phải con số ước lượng. Bấm **
 | Phím | Tác dụng |
 |---|---|
 | `Ctrl+O` | Thêm thư mục |
+| `Ctrl+Shift+O` | Thêm tệp lẻ (chọn nhiều) |
 | `Ctrl+Enter` | Bắt đầu |
 | `Space` | Tạm dừng / Tiếp tục |
 | `?` | Hướng dẫn |
@@ -145,7 +146,7 @@ nhất (file phải nhỏ hơn 98% mới được nhận) — ngược với ý 
 
 ## Nhật ký
 
-`%LOCALAPPDATA%\UltraCompressor\logs\ultra-YYYYMMDD.log`, xoay vòng ở 4 MB.
+`data\logs\ultra-YYYYMMDD.log`, xoay vòng ở 4 MB.
 
 Ở mức `Debug` (đặt trong Cài đặt) nhật ký ghi **nguyên văn từng lệnh ffmpeg** kèm mã
 thoát và 20 dòng stderr cuối. Đây là thứ cần để chẩn đoán khi kết quả nén kỳ lạ — bản
@@ -190,11 +191,17 @@ reference/original-csharp/   Mã nguồn bản gốc đã decompile bằng ilspy
 artifacts/                   Ảnh chụp màn hình, media mẫu, script kiểm thử (không commit)
 tools/                       ffmpeg.exe, gifsicle.exe — setup.ps1 chép sang thư mục cài
 publish/                     Thư mục staging mà setup.ps1 xuất bản vào (không commit)
+app/                         Bản cài, do setup.ps1 tạo ra (không commit)
+data/                        Cấu hình, phiên, nhật ký, tệp nén tạm, profile trình duyệt
 ```
 
-Mọi thứ liên quan tới dự án đều nằm trong thư mục này. Riêng dữ liệu lúc chạy
-(`config.json`, phiên làm việc, nhật ký) để ở `%LOCALAPPDATA%\UltraCompressor` — đó là
-quy ước của Windows, để nâng cấp app không đụng mất cấu hình của người dùng.
+Mọi thứ liên quan tới dự án — kể cả dữ liệu lúc chạy (`config.json`, phiên làm việc,
+nhật ký, tệp nén tạm, profile WebView2) — đều nằm trong thư mục này. Trước đây dữ liệu
+để ở `%LOCALAPPDATA%\UltraCompressor`, trùng đúng chỗ bản cài nên ổ C: phình lên
+130 MB mà không ai biết; nay thư mục đó đã bị dọn.
+
+Ghi đè nơi lưu bằng biến môi trường `UC_DATA_DIR` (hoặc `UC_ROOT` để chỉ định thư mục
+gốc) khi cần chạy nhiều bản tách bạch.
 
 ### Vài quyết định thiết kế đáng ghi
 

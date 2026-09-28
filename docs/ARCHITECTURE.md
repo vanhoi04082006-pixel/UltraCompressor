@@ -51,7 +51,7 @@ start(dryRun, outputFolder)
             │    ├─ File.Exists?                  ← không có thì bỏ qua
             │    ├─ MediaProbe.ProbeAsync         ← thời lượng, có tiếng, khung hình
             │    ├─ pipeline.Resolve(kind)        ← chọn pipeline theo đuôi tệp
-            │    ├─ workspace.CreatePath()        ← tệp tạm trong %LOCALAPPDATA%
+            │    ├─ workspace.CreatePath()        ← tệp tạm trong data\tmp
             │    ├─ pipeline.RunAsync()           ← gọi ffmpeg/gifsicle/gs
             │    └─ quyết định dùng kết quả:
             │         NewSize >= OldSize  → giữ bản gốc  (NoSizeGain)
@@ -63,9 +63,27 @@ start(dryRun, outputFolder)
 
 ## Ba quyết định đáng ghi
 
-**Tệp tạm luôn nằm trong `%LOCALAPPDATA%\UltraCompressor\tmp`, không nằm cạnh tệp gốc.**
+**Tệp tạm luôn nằm trong `data\tmp` của thư mục dự án, không nằm cạnh tệp gốc.**
 Cùng một ổ đĩa thì việc ghi thêm không làm đầy ổ khác, và dọn `tmp` không đụng tới thư
 mục người dùng.
+
+**Tiến độ từng tệp đọc từ `-progress pipe:1`, không phải từ dòng log của ffmpeg.**
+Dòng tiến độ (`frame=... time=...`) nằm trên **stderr** ở mức `info`, mà pipeline chạy
+`-loglevel error` để không rác log — nên với cách cũ nó **không bao giờ được in**, và
+`ParseTime` không bao giờ khớp, tiến độ đứng ở 0% tới khi xong. `-progress` ghi
+`out_time_us` ra **stdout** dạng `key=value`, hoạt động ở mọi mức log. Tỉ lệ phần trăm
+lấy từ thời lượng đã probe sẵn, không phải đoán từ log.
+
+**Kéo thả dùng `WM_DROPFILES` trên HWND của Form, không dùng API drag-drop của
+WebView2.** SDK `Microsoft.Web.WebView2` 1.0.4191.47 đã bỏ hẳn `CoreWebView2DragDropEventArgs`
+(đã kiểm tra bằng reflection: 497 kiểu xuất ra, không có thành viên nào chứa "Drop" ngoài
+`AllowExternalDrop`). Với `AllowExternalDrop = false`, cửa sổ con của Chromium không có
+`WS_EX_ACCEPTFILES`, nên khi thả hệ điều hành đi lên chuỗi cha và dừng ở Form. Đăng ký trên
+`_browser.Handle` là vô dụng — đó là control, còn tệp thật nằm ở cửa sổ cháu.
+
+**`MediaHost` phải trả `206 Partial Content` khi có header `Range`.** Chromium (kể cả
+`<video>`) luôn gửi `Range` khi tua. Trả `200` cho mọi yêu cầu thì mỗi lần tua phải đọc
+lại tệp từ byte 0 — đó là lý do màn hình so sánh giật so với VLC, vốn seek thẳng trên tệp.
 
 **Không bao giờ ghi đè tệp gốc khi chưa có `.bak`.** `FileTransaction` tạo bản sao lưu
 trước, rồi mới thay thế, và chỉ xoá `.bak` khi thay thế thành công xong. Nếu đứt giữa

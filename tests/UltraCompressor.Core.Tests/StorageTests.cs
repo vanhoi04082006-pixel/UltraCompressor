@@ -184,6 +184,80 @@ public class FolderScannerTests : IDisposable
     }
 
     [Fact]
+    public void Quet_duoc_t_le()
+    {
+        Touch("a.mp4");
+
+        var result = new FolderScanner(new AppConfig())
+            .ScanFile(Path.Combine(_dir, "a.mp4"), CompressionLevel.Strong, true, null);
+
+        Assert.Empty(result.Errors);
+        var item = Assert.Single(result.Job.Items);
+
+        Assert.Equal(MediaKind.Video, item.Kind);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_dir, "a.mp4")), item.FilePath);
+        Assert.False(item.IsComplete);
+
+        // Job tệp lẻ đặt FolderPath là thư mục chứa tệp: cần cho đường dẫn tương đối khi
+        // xuất kết quả và cho tệp .bak, cả hai đều phải khớp với tệp gốc.
+        Assert.True(result.Job.IsFileJob);
+        Assert.Equal(Path.GetFullPath(_dir), result.Job.FolderPath);
+        Assert.Equal("a.mp4", result.Job.DisplayName);
+    }
+
+    [Fact]
+    public void Tep_le_khong_hop_tri_roi_van_hien_voi_ly_do()
+    {
+        // Tệp lẻ sai định dạng phải hiện trong bảng kèm lý do, giống hệt quét thư mục —
+        // không được im lặng biến mất, người dùng không hiểu vì sao không thấy gì.
+        Touch("ghi-chu.txt");
+
+        var result = new FolderScanner(new AppConfig())
+            .ScanFile(Path.Combine(_dir, "ghi-chu.txt"), CompressionLevel.Balanced, true, null);
+
+        var item = Assert.Single(result.Job.Items);
+        Assert.Equal(SkipReason.UnsupportedFormat, item.Skip);
+        Assert.NotEmpty(result.Errors);
+    }
+
+    [Fact]
+    public void Tep_le_bi_bo_loc_va_khong_du_kich_thuoc()
+    {
+        Touch("a.mp4", 10);
+        Touch("a.mp4.bak", 10);
+        var scanner = new FolderScanner(new AppConfig { MinFileSizeBytes = 1024 });
+
+        var filtered = scanner.ScanFile(Path.Combine(_dir, "a.mp4.bak"), CompressionLevel.Balanced, true, null);
+        Assert.Equal(SkipReason.ExcludedByFilter, Assert.Single(filtered.Job.Items).Skip);
+
+        var tooSmall = scanner.ScanFile(Path.Combine(_dir, "a.mp4"), CompressionLevel.Balanced, true, null);
+        Assert.Equal(SkipReason.ExcludedByFilter, Assert.Single(tooSmall.Job.Items).Skip);
+    }
+
+    [Fact]
+    public void Tep_le_khong_ton_tai_thi_bao_loi()
+    {
+        var result = new FolderScanner(new AppConfig())
+            .ScanFile(Path.Combine(_dir, "khong-co.mp4"), CompressionLevel.Balanced, true, null);
+
+        Assert.Empty(result.Job.Items);
+        Assert.NotEmpty(result.Errors);
+    }
+
+    [Fact]
+    public void Job_thu_muc_hien_ten_thu_muc_khong_phai_ten_tep()
+    {
+        var job = new Job { FolderPath = _dir, IsFileJob = true, SingleFilePath = Path.Combine(_dir, "phim.mp4") };
+
+        Assert.Equal("phim.mp4", job.DisplayName);
+
+        job.IsFileJob = false;
+        job.SingleFilePath = null;
+        Assert.Equal(new DirectoryInfo(_dir).Name, job.DisplayName);
+    }
+
+
+    [Fact]
     public void Tep_bak_va_tam_bi_lo_ngay_tu_dau()
     {
         // Bản gốc không lọc gì: chạy lần hai sẽ quét lại chính tệp .bak mà nó vừa tạo

@@ -62,6 +62,30 @@ public class FFmpegOutputParserTests
         Assert.Null(FFmpegOutputParser.ToPercent(TimeSpan.FromSeconds(5), TimeSpan.Zero));
     }
 
+    [Theory]
+    [InlineData("out_time_us=0", 0)]
+    [InlineData("out_time_us=5920000", 5.92)]
+    [InlineData("out_time_us=1200000000", 1200)]
+    public void Doc_thoi_diem_tu_dong_kenh_tien_bo(string line, double expectedSeconds)
+    {
+        // -progress pipe:1 là nguồn tiến độ duy nhất còn hoạt động khi pipeline chạy với
+        // -loglevel error. Không có nó thì ffmpeg im lặng và thanh tiến độ đứng ở 0%.
+        var position = FFmpegOutputParser.ParseProgressTime(line);
+        Assert.NotNull(position);
+        Assert.Equal(expectedSeconds, position!.Value.TotalSeconds, 3);
+    }
+
+    [Fact]
+    public void Khong_doc_nham_out_time_ms_thanh_micro_giay()
+    {
+        // ffmpeg ghi out_time_ms cũng bằng đơn vị micro giây. Đọc nhầm sang trường đó làm
+        // phần trăm nhảy gấp 1000 lần, nên parser cố tình chỉ chấp nhận out_time_us.
+        Assert.Null(FFmpegOutputParser.ParseProgressTime("out_time_ms=5920000"));
+        Assert.Null(FFmpegOutputParser.ParseProgressTime("out_time=00:00:05.920000"));
+        Assert.Null(FFmpegOutputParser.ParseProgressTime("progress=continue"));
+        Assert.Null(FFmpegOutputParser.ParseProgressTime(null));
+    }
+
     [Fact]
     public void Doc_bitrate()
     {

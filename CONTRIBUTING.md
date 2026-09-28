@@ -36,6 +36,39 @@ Sửa `end_of_line` trong `.editorconfig` thì phải sửa cả `.gitattributes
 Một test phải **thất bại trước khi sửa**. Viết test sau khi đã sửa xong thì test đó gần
 như chắc chắn chỉ kiểm tra lại điều đã đúng.
 
+## Ngưỡng của "đã kiểm thử"
+
+`dotnet test` xanh **không có nghĩa là lõi nén đã đúng**. Lý do cụ thể đã xảy ra ở đây:
+lõi nén toàn bộ là hàm thuần trả về chuỗi lệnh ffmpeg, không hề chạy ffmpeg. Một regex
+đọc sai dòng stderr làm bitrate thành `null` ở **mọi tệp**, planner lặng lẽ rơi về tham số
+nền — job vẫn chạy, vẫn ra tệp, không test nào đỏ. Chỉ khi nén thật tệp thật mới thấy
+video 19 phút chỉ giảm được 9,7%.
+
+Nên:
+
+- **Sửa parser hay tham số nén** → kiểm thử trên tệp thật và **in ra con số**, đừng chỉ
+  kiểm tra "không lỗi". Con số tăng từ 9,7% lên 35,2% mới là bằng chứng.
+- **Nén thật vào bản sao**, không nén vào thư mục người dùng. Xem `docs/TESTING.md`.
+- **Đừng tin test trùng với logic vừa viết.** Test cho cùng một bản sửa nhiều khi chỉ chứng
+  minh rằng tác giả hiểu đúng ý mình — và ba lần trong sáu lần gần nhất, kỳ vọng trong test
+  sai trước khi test chạy.
+- Khi thấy kết quả lạ, **đo lại trước khi sửa code**. Trong sự cố bitrate ở trên, phải
+  chạy `ffmpeg -i` thật và đọc tay dòng nào mới là dòng `Duration:` thì mới thấy regex
+  cần sửa ở đâu.
+
+## Quy tắc commit
+
+Một commit làm **một việc**. Đặc biệt: đừng gộp "sửa lỗi" với "vệ sinh". Khi phải gộp vì
+tiết kiệm thời gian, nói rõ trong phần message điều gì được sửa vì lý do khác.
+
+Quy tắc cứng: **mọi tệp đã sửa đều phải được `git add`**. Chuyện này đã xảy ra — một
+thay đổi dùng đúng (đọc `JobItem.Plan`) bị bỏ sót khi stage, nên CI đỏ trong khi máy
+local vẫn xanh vì file đó có sẵn trên đĩa. Trước khi commit, chạy:
+
+```powershell
+git status --short   # không được còn tệp đã sửa mà chưa commit trừ khi cố ý giữ lại
+```
+
 ## Quy ước
 
 - Tiếng Việt cho thông báo lỗi, chú thích và tên test (viết không dấu: `Ten_mo_ta`).

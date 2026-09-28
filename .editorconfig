@@ -1,0 +1,49 @@
+root = true
+
+# ---------------------------------------------------------------------------
+# Kết thúc dòng
+#
+# `.gitattributes` đã ép `eol=crlf` cho mọi tệp văn bản, nên trong cây làm việc chúng
+# đều là CRLF. Không khai báo `end_of_line` ở đây thì `dotnet format` phải đoán: mặc
+# định của nó là CRLF trên Windows, nên một tệp bị công cụ ghi ra bằng LF sẽ bị báo
+# lỗi định dạng dù nội dung hoàn toàn đúng.
+#
+# Hệ quả thực tế: `dotnet format` chạy được trên máy (LF) nhưng hỏng trên CI (CRLF),
+# hoặc ngược lại — và người ta không biết tin nào đúng. Khai báo tường minh ở đây để
+# kết quả kiểm tra là giống nhau ở mọi nơi, và để `dotnet format` tự sửa cho khớp.
+# ---------------------------------------------------------------------------
+[*]
+end_of_line = crlf
+insert_final_newline = true
+charset = utf-8
+
+[*.{cs,csx}]
+indent_style = space
+indent_size = 4
+tab_size = 4
+
+# `dotnet_separate_import_directive_groups` và phần còn lại dùng mặc định của
+# Roslyn, khớp với `dotnet format` mặc định.
+
+[*.{js,css,html,json}]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+# Không ép: Markdown để nguyên, và quy tắc `trim_trailing_whitespace` sẽ phá
+# vì hai dấu cách cuối dòng chính là ngắt dòng cứng trong Markdown.
+trim_trailing_whitespace = false
+
+[*.{ps1,psm1}]
+indent_style = space
+indent_size = 2
+
+[*.bat]
+end_of_line = crlf
+
+[Makefile]
+indent_style = tab

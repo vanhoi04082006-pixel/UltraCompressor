@@ -665,7 +665,8 @@ public sealed class MainForm : Form
         return dialog.ShowDialog(this) == DialogResult.OK ? dialog.SelectedPath : null;
     }
 
-    private string? BrowseForToolFile()    {
+    private string? BrowseForToolFile()
+    {
         using var dialog = new OpenFileDialog
         {
             Title = "Chọn tệp thực thi của công cụ",

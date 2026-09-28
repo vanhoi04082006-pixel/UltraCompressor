@@ -3,14 +3,26 @@
 ## Trước khi gửi
 
 ```powershell
-dotnet format --verify-no-changes    # định dạng và kiểm tra định dạng
-dotnet build UltraCompressor.slnx -c Release      # phải 0 lỗi, 0 cảnh báo
-dotnet test tests\UltraCompressor.Core.Tests -c Release
+.\check.ps1        # chạy đúng các bước mà GitHub Actions chạy
+.\check.ps1 -Fix   # cho phép tự sửa định dạng
 ```
 
-Đúng ba lệnh trên là workflow mà GitHub Actions chạy, nên chạy trước ở máy sẽ không bị
-đỏ CI. Nếu sửa giao diện, chụp lại màn hình và **nhìn tấm ảnh**. Một lỗi tràn chữ trong
+Một lệnh, đủ bốn bước. Đừng chạy tay từng lệnh — bước kiểm tra định dạng rất dễ sót,
+và nó **không làm build hỏng** nên luôn phát hiện muộn: build xong, test xong, push xong,
+rồi CI mới đỏ.
+
+Nếu sửa giao diện, chụp lại màn hình và **nhìn tấm ảnh**. Một lỗi tràn chữ trong
 bảng đã lọt qua build và test, chỉ thấy được khi nhìn ảnh chụp.
+
+### Về kết thúc dòng
+
+`.gitattributes` ép CRLF cho mọi tệp văn bản và `.editorconfig` khai báo
+`end_of_line = crlf`. Hai tệp đó phải khớp nhau. Nếu chỉ có `.gitattributes` thì
+`dotnet format` phải đoán mặc định, và kết quả kiểm tra sẽ **khác nhau giữa máy
+(CRLF) và CI**: cùng một commit vừa báo lỗi định dạng ở đây lại xanh ở kia, và không
+ai biết tin nào đúng.
+
+Sửa `end_of_line` trong `.editorconfig` thì phải sửa cả `.gitattributes` cho khớp.
 
 ## Test bắt buộc cho từng thay đổi
 
@@ -52,4 +64,5 @@ tiếp**, không chỉ một lần.
   chủ sở hữu bản gốc; chỉ dùng để đối chiếu tại máy.
 - `artifacts/` — ảnh chụp, media mẫu, script kiểm thử tạm.
 - `publish/` — thư mục staging của `setup.ps1`.
-- Dữ liệu người dùng ở `%LOCALAPPDATA%\UltraCompressor`.
+- `app/` — bản cài do `setup.ps1` tạo ra.
+- `data/` — dữ liệu lúc chạy: cấu hình, phiên, nhật ký, tệp nén tạm, profile trình duyệt.

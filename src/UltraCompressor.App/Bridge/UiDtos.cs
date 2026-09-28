@@ -41,6 +41,14 @@ public sealed record JobDto
 
     public required string Level { get; init; }
 
+    /// <summary>
+    /// Mức nén của job khác mức đang chọn trong thanh công cụ không. Mức được chụp lúc
+    /// thêm thư mục, nên đổi dropdown sau đó không đụng tới job cũ — dùng trường này để
+    /// giao diện hiện nút "áp dụng mức hiện tại", thay vì im lặng nén bằng mức cũ.
+    /// </summary>
+    public bool LevelDiffersFromCurrent { get; init; }
+
+
     public bool DryRun { get; init; }
 
     public string? OutputFolder { get; init; }
@@ -81,7 +89,7 @@ public sealed record JobDto
     /// <summary>Phần trăm của tệp đang nén, -1 khi không có tệp nào đang chạy.</summary>
     public int ActivePercent { get; init; } = -1;
 
-    public static JobDto From(Job job, long pendingBackups = -1) => new()
+    public static JobDto From(Job job, long pendingBackups = -1, CompressionLevel? currentLevel = null) => new()
     {
         Id = job.Id,
         FolderName = job.FolderName,
@@ -94,6 +102,7 @@ public sealed record JobDto
         Status = job.Status.ToString(),
         StatusText = JobStatusLabel(job.Status),
         Level = CompressionProfileText(job.Level),
+        LevelDiffersFromCurrent = currentLevel is { } current && current != job.Level,
         DryRun = job.DryRun,
         OutputFolder = job.OutputFolder,
         TotalFiles = job.TotalFiles,

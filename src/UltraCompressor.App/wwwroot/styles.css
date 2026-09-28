@@ -525,6 +525,26 @@ input[type="search"]:focus { background: var(--bg-sunken); border-color: var(--a
   vertical-align: 1px;
 }
 
+/* Mức nén của job. Lệch với mức đang chọn thì tô đậm và viền cảnh báo, vì đó là lý do
+   thường gặp nhất khiến người dùng thấy kết quả không như mong đợi. */
+.level-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: var(--muted-soft);
+  vertical-align: 1px;
+}
+
+.level-tag.is-stale {
+  color: var(--warn);
+  background: var(--warn-soft);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+
 /* ============================================================ kéo thả tệp */
 
 .dropzone {

@@ -230,7 +230,16 @@ function jobRow(job) {
 
   const name = el('span', 'j-name');
   if (job.isFileJob) name.appendChild(el('span', 'file-tag', 'TỆP'));
+
+  // Mức nén của job. Nếu khác mức đang chọn thì tô đậm + cảnh báo, vì job sẽ nén bằng mức
+  // riêng của nó chứ không phải mức trên thanh công cụ.
+  const levelTag = el('span', `level-tag${job.levelDiffersFromCurrent ? ' is-stale' : ''}`, job.level || '—');
+  levelTag.title = job.levelDiffersFromCurrent
+    ? `Job này dùng mức "${job.level}", khác mức đang chọn trên thanh công cụ.`
+    : `Mức nén: ${job.level}`;
+  name.appendChild(levelTag);
   name.appendChild(document.createTextNode(job.displayName));
+
   tdName.appendChild(name);
   tdName.appendChild(el('span', 'sub', job.folderPath));
   tdName.title = job.folderPath;
@@ -295,6 +304,16 @@ function jobRow(job) {
   const actions = el('div', 'row-actions');
 
   actions.appendChild(iconButton('☰', 'Chi tiết', () => openDetail(job.id)));
+
+  // Mức nén của job lệch với mức đang chọn: cho nút sửa ngay, không bắt người dùng tự nhớ.
+  if (job.levelDiffersFromCurrent) {
+    actions.appendChild(iconButton('⟳', `Dùng mức đang chọn thay cho "${job.level}"`, async () => {
+      const result = await call('applyLevel', { jobId: job.id });
+      if (result?.ok) toast(`"${job.displayName}" chuyển sang mức ${result.level}.`, 'ok');
+      else toast(result?.error || 'Không đổi được mức nén.', 'error');
+    }, 'ok'));
+  }
+
   if (job.canPause) {
     actions.appendChild(iconButton('❙❙', 'Tạm dừng job này', () => call('pauseJob', { jobId: job.id })));
   }
@@ -1045,12 +1064,13 @@ async function showGuide() {
 
   const rows = (p) => `
     <tr><td>Video</td><td class="num">CRF ${p.crf}</td><td class="num">${p.preset}</td>
-        <td class="num">${p.maxWidth}px</td><td class="num">${p.audioKbps}k</td></tr>
+        <td class="num">${p.videoMaxWidth}px</td><td class="num">${p.audioKbps}k</td></tr>
     <tr><td>Ảnh</td><td class="num">-q:v ${p.imageQuality}</td><td class="num">—</td>
-        <td class="num">${p.maxWidth}px</td><td class="num">—</td></tr>
+        <td class="num">${p.imageMaxWidth}px</td><td class="num">—</td></tr>
     <tr><td>Âm thanh</td><td class="num">${p.audioKbps}k</td><td class="num">—</td>
         <td class="num">—</td><td class="num">${p.audioKbps}k</td></tr>
-    <tr><td>GIF</td><td class="num">--lossy ${p.gifLossy}</td><td class="num">${p.gifFps} fps</td>
+    <tr><td>GIF</td><td class="num">--lossy ${p.gifLossy}</td>
+        <td class="num">${p.gifFps} fps${p.gifScale < 1 ? ` · x${p.gifScale}` : ''}</td>
         <td class="num">—</td><td class="num">—</td></tr>
     <tr><td>PDF</td><td class="num">${p.pdf}</td><td class="num">—</td>
         <td class="num">—</td><td class="num">—</td></tr>`;
@@ -1107,10 +1127,14 @@ async function showGuide() {
           ${g.levels.map(rows).join('')}
         </tbody>
       </table>
-      <p>Độ rộng tối đa dùng chung cho ảnh và video, nên ảnh cũng bị thu về cùng một bề rộng
-      với video ở mức đó. Tham số này lấy nguyên từ bản gốc; chỉ có ngưỡng “tiết kiệm tối
-      thiểu” được tách riêng và nằm trong Cài đặt, vì bản gốc gộp nhầm ngưỡng này vào mức
-      nén nên mức “Mạnh” lại khó đạt hơn mức “Nhẹ”.</p>
+      <p>Độ rộng tối đa <b>tách riêng cho ảnh và video</b>, vì chúng bị ràng buộc bởi hai
+      thứ khác nhau: ảnh nhìn toàn màn hình và có thể phóng to, còn video đã bị giới hạn bởi
+      khung hình mà mắt theo kịp. Nên mức “Nhẹ” giữ video tới 4K nhưng ảnh chỉ 2560px; mức
+      “Mạnh” giữ video ở 1920px còn ảnh vẫn 1600px. Riêng PDF, <code>/prepress</code> của
+      bản cũ là thiết lập cho in offset (giữ ảnh 300dpi, tệp rất lớn) nên đã đổi thành
+      <code>/default</code> — đúng nghĩa “giữ chất lượng”. Tham số này lấy từ bản gốc; chỉ có
+      ngưỡng “tiết kiệm tối thiểu” được tách riêng và nằm trong Cài đặt, vì bản gốc gộp nhầm
+      ngưỡng này vào mức nén nên mức “Mạnh” lại khó đạt hơn mức “Nhẹ”.</p>
 
       <h3>Định dạng hỗ trợ</h3>
       <p>${(g.extensions || []).join(' · ')}</p>

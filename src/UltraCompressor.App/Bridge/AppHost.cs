@@ -163,7 +163,7 @@ public sealed class AppHost : IAsyncDisposable
 
         return new UiState
         {
-            Jobs = [.. jobs.Select(j => JobDto.From(j, PendingBackupCount(j)))],
+            Jobs = [.. jobs.Select(j => JobDto.From(j, PendingBackupCount(j), _config.Level))],
 
             TotalBytesSaved = saved,
             TotalSavedText = Format.Size(saved),
@@ -223,6 +223,7 @@ public sealed class AppHost : IAsyncDisposable
                 "pauseJob" => PauseJob(message),
                 "resumeJob" => ResumeJob(message),
                 "cancelJob" => CancelJob(message),
+                "applyLevel" => ApplyLevelToJob(message),
                 "commit" => await CommitAsync(message),
                 "undo" => await UndoAsync(message),
                 "undoItem" => UndoItem(message),
@@ -551,6 +552,36 @@ public sealed class AppHost : IAsyncDisposable
         return null;
     }
 
+    /// <summary>
+    /// Đặt lại mức nén của một job theo mức đang chọn trong thanh công cụ.
+    ///
+    /// Mức nén được chụp lúc thêm thư mục, nên nếu người dùng đổi dropdown *sau khi* đã
+    /// thêm thì job cũ vẫn nén bằng mức cũ — và bằng thị giác không có cách nào biết là
+    /// sao. Lệnh này là lối thoát: chỉ đổi mức, **không** chạy lại những tệp đã xử lý.
+    /// </summary>
+    private System.Text.Json.Nodes.JsonNode? ApplyLevelToJob(BridgeMessage message)
+    {
+        var jobId = BridgeJson.GetString(message, "jobId");
+        if (jobId is null) return null;
+
+        var job = _engine.Find(jobId);
+        if (job is null) return ToNode(new { ok = false, error = "Không tìm thấy job." });
+
+        // Job đang chạy hoặc đã xong thì đổi mức cũng không có tác dụng gì cho tệp đã xử
+        // lý, và dễ làm người dùng tưởng sẽ nén lại. Từ chối rõ ràng hơn là báo thành công
+        // rồi không thấy gì đổi.
+        if (job.Status is JobStatus.Running or JobStatus.Paused)
+        {
+            return ToNode(new { ok = false, error = "Job đang chạy. Hãy dừng rồi đổi mức nén." });
+        }
+
+        var before = job.Level;
+        job.Level = _config.Level;
+
+        return ToNode(new { ok = true, level = job.Level.ToString(), before = before.ToString() });
+    }
+
+
     private async Task<System.Text.Json.Nodes.JsonNode?> CommitAsync(BridgeMessage message)
     {
         var jobId = BridgeJson.GetString(message, "jobId");
@@ -869,12 +900,14 @@ public sealed class AppHost : IAsyncDisposable
             name = p.DisplayName,
             crf = p.VideoCrf,
             preset = p.VideoPreset,
+            videoMaxWidth = p.VideoMaxWidth,
             imageQuality = p.ImageQuality,
-            maxWidth = p.MaxWidth,
+            imageMaxWidth = p.ImageMaxWidth,
             audioKbps = p.AudioBitrateKbps,
             pdf = p.PdfPreset,
             gifLossy = p.GifLossy,
             gifFps = p.GifFps,
+            gifScale = p.GifWidthScale,
         }),
         extensions = MediaClassifier.AllSupportedExtensions.OrderBy(e => e),
         dataDirectory = AppPaths.DataDirectory,

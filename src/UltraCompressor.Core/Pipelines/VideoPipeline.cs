@@ -41,7 +41,7 @@ public sealed class VideoPipeline : FFmpegPipelineBase
             "-c:v", "libx264",
             "-crf", profile.VideoCrf.ToString(CultureInfo.InvariantCulture),
             "-preset", profile.VideoPreset,
-            "-vf", profile.ScaleFilter,
+            "-vf", profile.VideoFilter,
         ]);
 
         // Không ép codec âm thanh nếu nguồn không có tiếng. Thông tin đã lấy sẵn ở bước probe

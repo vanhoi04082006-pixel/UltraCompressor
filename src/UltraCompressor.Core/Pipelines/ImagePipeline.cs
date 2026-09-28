@@ -32,7 +32,7 @@ public sealed class ImagePipeline : FFmpegPipelineBase
                 "-i", context.SourcePath,
                 "-map_metadata", "0",
                 "-q:v", profile.ImageQuality.ToString(CultureInfo.InvariantCulture),
-                "-vf", profile.ScaleFilter,
+                "-vf", profile.ImageFilter,
                 "-y", temp,
             ],
             onProgress,

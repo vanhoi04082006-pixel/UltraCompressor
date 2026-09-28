@@ -51,10 +51,6 @@ function handleEvent(name, data) {
     if (data.jobId !== openJobId) return;
     items = data.items || [];
     renderItems();
-  } else if (name === 'pathsDropped') {
-    addPaths(data.paths || [], 'keo-tha');
-  } else if (name === 'dropHover') {
-    $('dropzone').hidden = !data.active;
   } else if (name === 'notice') {
     toast(data.message, data.level || 'info');
   }
@@ -809,27 +805,7 @@ async function loadItems() {
 
 // ============================================================ hành động
 
-/* Thêm thư mục hoặc tệp lẻ. Dùng chung cho nút bấm và kéo-thả nên hai đường không lệch nhau. */
-async function addPaths(paths, source = '') {
-  if (!paths || paths.length === 0) {
-    // Thả xuống mà không có đường dẫn nào: thường là thả vào vùng không nhận thả, hoặc
-    // tệp không tồn tại. Phải nói ra, không được im lặng.
-    if (source === 'keo-tha') toast('Không nhận được tệp nào. Hãy thả vào cửa sổ UltraCompressor.', 'warn');
-    return;
-  }
-
-  let data;
-  try {
-    data = await call('addPaths', { paths });
-  } catch (err) {
-    toast(err.message, 'error');
-    return;
-  }
-
-  reportAdded(data, source);
-}
-
-function reportAdded(data, source = '') {
+function reportAdded(data) {
   const results = data?.results || [];
   const problems = data?.problems || [];
   const added = results.filter((r) => r.added).reduce((n, r) => n + r.files, 0);

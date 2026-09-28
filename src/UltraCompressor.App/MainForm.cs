@@ -117,42 +117,7 @@ public sealed class MainForm : Form
         // Đặt kích thước sau khi đã có handle, khi đó DPI mới đúng.
         FitToWorkArea();
 
-        // Nhận thả tệp. Chỉ làm được từ khi cửa sổ đã có HWND, và phải bật SAU khi
-        // AllowExternalDrop = false (xem InitializeBrowserAsync) — nếu bật trước thì
-        // WebView2 kịp đăng ký làm OLE drop target và ta không bao giờ nhận thông báo.
-        EnableDropOnForm();
-
         await InitializeBrowserAsync();
-    }
-
-    /// <summary>
-    /// Bật cờ <c>WS_EX_ACCEPTFILES</c> trên chính Form. Khi thả, hệ điều hành tìm cửa sổ con
-    /// sâu nhất dưới con trỏ; cửa sổ con của Chromium không có cờ đó nên nó đi lên chuỗi
-    /// cha và dừng ở Form.
-    /// </summary>
-    private void EnableDropOnForm()
-    {
-        try
-        {
-            if (!NativeMethods.AcceptDrop(Handle, true))
-            {
-                // Không nuốt: nếu cờ không bật thì kéo-thả im lặng không hoạt động, mà
-                // người dùng không có cách nào biết vì sao.
-                Diagnostic.Log("Khong bat duoc WS_EX_ACCEPTFILES - keo tha se khong hoat dong.");
-                return;
-            }
-
-            var exStyle = NativeMethods.GetExtendedWindowStyle(Handle);
-            var ok = (exStyle & NativeMethods.WSExAcceptFiles) != 0;
-
-            Diagnostic.Log(
-                $"Da bat nhan tha tren cua so chinh: exstyle=0x{exStyle:X}, " +
-                $"WS_EX_ACCEPTFILES={(ok ? "co" : "KHONG")}.");
-        }
-        catch (Exception ex)
-        {
-            Diagnostic.Log($"Khong bat duoc nhan tha: {ex.GetType().Name}: {ex.Message}");
-        }
     }
 
     private async Task InitializeBrowserAsync()
@@ -202,23 +167,10 @@ public sealed class MainForm : Form
             core.Settings.AreDevToolsEnabled = true;
             core.Settings.IsStatusBarEnabled = false;
 
-            // KÉO-THẢ: đăng ký WM_DROPFILES trên chính HWND của form.
-            //
-            // Vì sao không dùng sự kiện DragOver/DragDrop của WebView2: bản SDK này
-            // (Microsoft.Web.WebView2 1.0.4191.47) đã bỏ hẳn — đã tra bằng reflection,
-            // trong 497 kiểu xuất ra không có `CoreWebView2DragDropEventArgs` cũng không có
-            // thành viên nào chứa "Drop" ngoài `AllowExternalDrop`. Nên không có API sẵn.
-            //
-            // Vì sao cách này chạy được: AllowExternalDrop = false khiến WebView2 thôi là
-            // OLE drop target, nên nó KHÔNG có WS_EX_ACCEPTFILES. Khi thả, hệ điều hành tìm
-            // cửa sổ con sâu nhất dưới con trỏ, thấy không có cờ đó thì đi lên chuỗi cha —
-            // và tới Form (đã bật cờ) thì dừng. Đó là lý do phải đăng ký trên Form chứ
-            // không phải trên `_browser.Handle`: HWND đó là control WebView2, còn tệp thật
-            // nằm ở cửa sổ con của Chromium, là cháu chứ không phải con.
-            //
-            // Bắt buộc giữ AllowExternalDrop = false. Bật lên thì WebView2 nhận thả trước,
-            // ta không bao giờ nhận được thông báo, và trình duyệt còn điều hướng tới tệp
-            // vừa thả làm màn hình trắng trơn.
+            // Chặn WebView2 tự mở tệp vừa thả vào. Không có tính năng kéo-thả nào ở đây:
+            // nếu để mặc định, thả một tệp vào cửa sổ sẽ khiến trình duyệt điều hướng tới
+            // tệp đó và giao diện trắng trơn. Giữ nguyên cờ này còn là cách rẻ nhất để
+            // chặn, và nó cũng làm WebView2 thôi giữ vai trò drop target.
             _browser.AllowExternalDrop = false;
 
 
@@ -426,7 +378,6 @@ public sealed class MainForm : Form
                 $"cua so con WebView2={child}, DPI={DeviceDpi}, " +
                 $"ClientSize (logic)={ClientSize.Width}x{ClientSize.Height}, trang={page}");
 
-            LogDropTargetChain();
         }
         catch (Exception ex)
         {
@@ -434,44 +385,6 @@ public sealed class MainForm : Form
         }
     }
 
-    /// <summary>
-    /// Ghi lại trạng thái nhận thả của từng cửa sổ trong chuỗi: form và cửa sổ con WebView2.
-    ///
-    /// Cơ chế kéo-thả dựa trên tiền đề rằng khi thả, hệ điều hành tìm cửa sổ con sâu nhất
-    /// dưới con trỏ rồi **đi lên chuỗi cha** cho tới khi gặp cửa sổ có cờ
-    /// <c>WS_EX_ACCEPTFILES</c>. Nếu cửa sổ con của Chromium cũng có cờ đó thì thông báo
-    /// không bao giờ tới form, và con trỏ hiện dấu cấm — đúng triệu chứng mà lần thử trước
-    /// gặp. Chỉ đọc từ log này mới phân biệt được "sai thứ tự bật cờ" với "WebView2 vẫn
-    /// là drop target".
-    /// </summary>
-    private void LogDropTargetChain()
-    {
-        try
-        {
-            var form = DescribeDropStyle(Handle, "form");
-            var browser = DescribeDropStyle(_browser.Handle, "control WebView2");
-
-            // Cửa sổ con thật của Chromium là HWND cháu; đi vào nhánh con để tìm nó ra.
-            var grandChild = NativeMethods.FindFirstChild(_browser.Handle);
-            var webview = DescribeDropStyle(grandChild, "cua so con cua Chromium");
-
-            Diagnostic.Log($"Kha nang nhan tha: {form} | {browser} | {webview}");
-        }
-        catch (Exception ex)
-        {
-            Diagnostic.Log($"Khong doc duoc trang thai nhan tha: {ex.Message}");
-        }
-    }
-
-    private static string DescribeDropStyle(IntPtr hwnd, string label)
-    {
-        if (hwnd == IntPtr.Zero) return $"{label}=khong co";
-
-        var exStyle = NativeMethods.GetExtendedWindowStyle(hwnd);
-        var accepts = (exStyle & NativeMethods.WSExAcceptFiles) != 0;
-
-        return $"{label}=0x{exStyle:X} (nhan tha: {(accepts ? "CO" : "khong")})";
-    }
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args)
     {
         Diagnostic.Log($"WebView2: điều hướng xong, thành công={args.IsSuccess}");
@@ -574,90 +487,6 @@ public sealed class MainForm : Form
         return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileNames : [];
     }
 
-    /// <summary>
-    /// Nhận thả tệp / thư mục. Cửa sổ phải có <c>WS_EX_ACCEPTFILES</c> — xem
-    /// <see cref="InitializeBrowserAsync"/> để biết vì sao nó nằm trên Form chứ không
-    /// phải trên control WebView2.
-    /// </summary>
-    protected override void WndProc(ref Message m)
-    {
-        switch (m.Msg)
-        {
-            case NativeMethods.WMDragEnter:
-            case NativeMethods.WMDragOver:
-                // Ta chỉ đọc tệp để nén, không hề di chuyển — nên hiện con trỏ "sao chép".
-                // Gọi DragQueryFile với chỉ số -1 để hệ điều hành chấp nhận lời gọi rồi báo
-                // số mục; số mục bằng 0 thì không có gì để thả.
-                var dropped = NativeMethods.DragQueryFile(new NativeMethods.HDROP(m.WParam), 0xFFFFFFFF, null, 0);
-                m.Result = dropped > 0 ? (nint)NativeMethods.CopyEffect : 0;
-                NotifyDropHover(true);
-                return;
-
-            case NativeMethods.WMDragLeave:
-                NotifyDropHover(false);
-                m.Result = 0;
-                return;
-
-            case NativeMethods.WMDropFiles:
-                HandleDrop(new NativeMethods.HDROP(m.WParam));
-                return;
-        }
-
-        base.WndProc(ref m);
-    }
-
-    private void HandleDrop(NativeMethods.HDROP drop)
-    {
-        try
-        {
-            var paths = new List<string>();
-            var count = NativeMethods.DragQueryFile(drop, 0xFFFFFFFF, null, 0);
-
-            for (var i = 0u; i < count; i++)
-            {
-                var length = NativeMethods.DragQueryFile(drop, i, null, 0);
-                if (length <= 0) continue;
-
-                // length là số ký tự, chưa tính NUL kết thúc.
-                var buffer = new char[length + 1];
-                if (NativeMethods.DragQueryFile(drop, i, buffer, buffer.Length) == 0) continue;
-
-                var path = new string(buffer).TrimEnd('\0').Trim();
-                if (path.Length > 0) paths.Add(path);
-            }
-
-            NotifyDropHover(false);
-
-            // Ghi cả trường hợp 0 mục: đó là dấu hiệu thả vào sai chỗ hoặc cờ chưa bật, và
-            // im lặng khiến rất khó chẩn đoán.
-            Diagnostic.Log($"Keo tha: WM_DROPFILES den, {count} muc, doc duoc {paths.Count} duong dan.");
-
-            if (paths.Count == 0) return;
-
-            Diagnostic.Log($"Keo tha {paths.Count} muc: {string.Join("; ", paths)}");
-
-            _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
-            {
-                Event = "pathsDropped",
-                Data = JsonSerializer.SerializeToNode(new { paths }, BridgeJson.Options),
-            }));
-        }
-        catch (Exception ex)
-        {
-            Diagnostic.Log($"Không xử lý được kéo thả: {ex.Message}");
-        }
-        finally
-        {
-            // Bắt buộc giải phóng, nếu không con trỏ sẽ bị kẹt ở dấu cấm.
-            NativeMethods.DragFinish(drop);
-        }
-    }
-    private void NotifyDropHover(bool active) => _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
-    {
-        Event = "dropHover",
-        Data = JsonSerializer.SerializeToNode(new { active }, BridgeJson.Options),
-    }));
-
 
     /// <summary>Chọn thư mục đích khi xuất kết quả ra nơi khác.</summary>
     private string? BrowseForExportFolder()
@@ -701,32 +530,12 @@ public sealed class MainForm : Form
 
 internal static class NativeMethods
 {
-    /// <summary>Handle của lớp cửa sổ con tạo bởi DragQueryFile.</summary>
-    public readonly record struct HDROP(nint Value);
-
-    public const int WMDragEnter = 0x02C3;
-    public const int WMDragOver = 0x02C2;
-    public const int WMDragLeave = 0x02C5;
-    public const int WMDropFiles = 0x0233;
-
-    private const uint DragDropEffectCopy = 1;
-
-    /// <summary>
-    /// Cờ <c>WS_EX_ACCEPTFILES</c> của <c>GetWindowLong(GWL_EXSTYLE)</c>.
-    ///
-    /// Là <b>0x00000010</b>. Dễ nhầm với <c>WS_EX_LAYERED</c> (0x00080000) — nhầm thì phần
-    /// đo báo "không nhận thả" trong khi cờ đã bật đúng, và ta đi tìm một lỗi không có.
-    /// </summary>
-    public const int WSExAcceptFiles = 0x00000010;
-
     /// <summary>
     /// Đặt AppUserModelID cho tiến trình. Phải gọi trước khi tạo cửa sổ đầu tiên.
     /// Windows 10 trở đi hỗ trợ; bản cũ hơn trả về HRESULT lỗi — bỏ qua được.
     /// </summary>
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
-
-    private const int GwlExStyle = -20;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -736,63 +545,4 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
-
-    /// <summary>Đọc kiểu mở rộng của cửa sổ, dùng để kiểm tra cờ nhận thả.</summary>
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern nint GetWindowLongPtr64(IntPtr hWnd, int index);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong32(IntPtr hWnd, int index);
-
-    public static long GetExtendedWindowStyle(IntPtr hWnd) =>
-        IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GwlExStyle).ToInt64() : GetWindowLong32(hWnd, GwlExStyle);
-
-    /// <summary>
-    /// Cửa sổ con đầu tiên, dùng để lần xuống HWND cháu của Chromium.
-    /// <c>GW_CHILD</c> = 5: trả về cửa sổ con đầu tiên theo thứ tự Z, hoặc 0 nếu không có.
-    /// </summary>
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
-
-    public const uint GWChild = 5;
-
-    public static IntPtr FindFirstChild(IntPtr parent) =>
-        parent == IntPtr.Zero ? IntPtr.Zero : GetWindow(parent, GWChild);
-
-    /// <summary>
-    /// Bật/tắt nhận thả cho một cửa sổ. Bật lên tức là thêm cờ <c>WS_EX_ACCEPTFILES</c>.
-    ///
-    /// <b>Nằm ở shell32.dll, không phải user32.dll.</b> Khai báo nhầm sang user32 sẽ ném
-    /// <c>EntryPointNotFoundException</c> ngay lúc P/Invoke — và vì lời gọi nằm trong
-    /// try/catch nên ứng dụng vẫn chạy bình thường, chỉ có cờ không được bật và kéo-thả
-    /// im lặng không hoạt động. Đây đúng là loại lỗi không có triệu chứng nhìn thấy.
-    /// </summary>
-    [DllImport("shell32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool DragAcceptFiles(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool fAccept);
-
-    /// <summary>
-    /// Đọc đường dẫn từ handle thả. <paramref name="index"/> = 0xFFFFFFFF (-1) trả về
-    /// <b>số</b> mục thay vì độ dài chuỗi. Dùng mảng <c>char</c> chứ không dùng
-    /// <c>StringBuilder</c>: P/Invoke với StringBuilder bị cảnh báo CA1838.
-    /// </summary>
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern uint DragQueryFile(HDROP hDrop, uint index, [Out] char[]? file, int size);
-
-    [DllImport("shell32.dll", SetLastError = true)]
-    public static extern void DragFinish(HDROP hDrop);
-
-    public static bool AcceptDrop(IntPtr hWnd, bool accept) => DragAcceptFiles(hWnd, accept);
-
-    public static DragDropEffect CopyEffect => (DragDropEffect)DragDropEffectCopy;
 }
-
-/// <summary>Hiệu ứng thả tệp, theo đúng giá trị DROPEFFECT của Windows.</summary>
-public enum DragDropEffect
-{
-    None = 0,
-    Copy = 1,
-    Move = 2,
-    Link = 4,
-}
-

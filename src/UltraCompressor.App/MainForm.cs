@@ -263,7 +263,18 @@ public sealed class MainForm : Form
             {
                 var result = await core.ExecuteScriptAsync(script);
                 Diagnostic.Log($"UC_EVAL_JS -> {result}");
-                await Task.Delay(1200);
+
+                // ExecuteScriptAsync trả về ngay khi script trả về, KHÔNG đợi promise bên
+                // trong. Nên script kiểm thử kiểu `async () => { ... await sleep ... }` vẫn
+                // đang chạy ở trong khi ta đã chụp. UC_EVAL_SETTLE (mili giây) là khoảng
+                // chờ để lấy đúng trạng thái muốn chụp, ví dụ lúc job đang nén dở một tệp.
+                var settle = 1200;
+                if (int.TryParse(Environment.GetEnvironmentVariable("UC_EVAL_SETTLE"), out var ms))
+                {
+                    settle = Math.Clamp(ms, 0, 600_000);
+                }
+
+                await Task.Delay(settle);
             }
 
             var dir = Path.GetDirectoryName(target);

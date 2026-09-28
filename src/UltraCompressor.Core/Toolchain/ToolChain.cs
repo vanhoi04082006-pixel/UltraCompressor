@@ -35,6 +35,9 @@ public sealed class ToolChain
 
     public string? PathOf(ToolKind kind) => _locator.Locate(kind);
 
+  /// <summary>Cho phần so sánh tìm công cụ mà không phải tự dựng lại một bộ dò.</summary>
+  public ToolLocator Locator => _locator;
+
     public async Task<IReadOnlyList<ToolReport>> CheckAllAsync(CancellationToken token = default)
     {
         var tasks = Enum.GetValues<ToolKind>().Select(async kind =>

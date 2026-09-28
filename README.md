@@ -1,231 +1,258 @@
-# UltraCompressor
+﻿# UltraCompressor
 
-Nén hàng loạt ảnh, video, âm thanh, GIF và PDF theo thư mục. Là bản viết lại của
-“UltraCompressor Pro v12”, giữ nguyên tham số nén cũ nhưng sửa hết những chỗ bản gốc
-làm mất dữ liệu hoặc báo lỗi sai.
+NĂ©n hĂ ng loáº¡t áº£nh, video, Ă¢m thanh, GIF vĂ  PDF theo thÆ° má»¥c. LĂ  báº£n viáº¿t láº¡i cá»§a
+â€œUltraCompressor Pro v12â€, giá»¯ nguyĂªn tham sá»‘ nĂ©n cÅ© nhÆ°ng sá»­a háº¿t nhá»¯ng chá»— báº£n gá»‘c
+lĂ m máº¥t dá»¯ liá»‡u hoáº·c bĂ¡o lá»—i sai.
 
-- **.NET 10**, khung chủ WinForms, giao diện là web (HTML/CSS/JS thuần) chạy trong WebView2
-- Không cần bước build giao diện, không phụ thuộc npm
-- Dữ liệu người dùng đặt ở `%LOCALAPPDATA%\UltraCompressor`, nâng cấp không mất dữ liệu
+- **.NET 10**, khung chá»§ WinForms, giao diá»‡n lĂ  web (HTML/CSS/JS thuáº§n) cháº¡y trong WebView2
+- KhĂ´ng cáº§n bÆ°á»›c build giao diá»‡n, khĂ´ng phá»¥ thuá»™c npm
+- Dá»¯ liá»‡u ngÆ°á»i dĂ¹ng Ä‘áº·t á»Ÿ `%LOCALAPPDATA%\UltraCompressor`, nĂ¢ng cáº¥p khĂ´ng máº¥t dá»¯ liá»‡u
 
 ---
 
-## Cài đặt
+## CĂ i Ä‘áº·t
 
 ```powershell
-# Công cụ ngoài lấy từ thư mục tools\ (đặt ffmpeg.exe và gifsicle.exe vào đó)
+# CĂ´ng cá»¥ ngoĂ i láº¥y tá»« thÆ° má»¥c tools\ (Ä‘áº·t ffmpeg.exe vĂ  gifsicle.exe vĂ o Ä‘Ă³)
 .\setup.ps1
 
-# Hoặc chỉ định tường minh
+# Hoáº·c chá»‰ Ä‘á»‹nh tÆ°á»ng minh
 .\setup.ps1 -FFmpeg 'D:\tools\ffmpeg.exe' -Gifsicle 'D:\tools\gifsicle.exe'
 
-# Cài kèm runtime .NET để chạy được trên máy chưa cài .NET (tệp lớn hơn nhiều)
+# CĂ i kĂ¨m runtime .NET Ä‘á»ƒ cháº¡y Ä‘Æ°á»£c trĂªn mĂ¡y chÆ°a cĂ i .NET (tá»‡p lá»›n hÆ¡n nhiá»u)
 .\setup.ps1 -SelfContained
 ```
 
-Ứng dụng được cài vào `%LOCALAPPDATA%\UltraCompressor` và tạo lối tắt trên desktop.
+á»¨ng dá»¥ng Ä‘Æ°á»£c cĂ i vĂ o `%LOCALAPPDATA%\UltraCompressor` vĂ  táº¡o lá»‘i táº¯t trĂªn desktop.
 
-### Công cụ ngoài
+### CĂ´ng cá»¥ ngoĂ i
 
-| Công cụ | Cần cho | Ghi chú |
+| CĂ´ng cá»¥ | Cáº§n cho | Ghi chĂº |
 |---|---|---|
-| `ffmpeg.exe` | ảnh, video, âm thanh, GIF | Bắt buộc. Lấy từ [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) |
-| `gifsicle.exe` | tối ưu GIF thêm | Không có vẫn nén GIF được, chỉ kém hiệu quả hơn |
-| `gswin64c.exe` | nén PDF | Cài [Ghostscript](https://ghostscript.com/releases/) bản **đầy đủ** |
-| `ffplay.exe` | xem trước trước/sau | Tuỳ chọn |
+| `ffmpeg.exe` | áº£nh, video, Ă¢m thanh, GIF | Báº¯t buá»™c. Láº¥y tá»« [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) |
+| `gifsicle.exe` | tá»‘i Æ°u GIF thĂªm | KhĂ´ng cĂ³ váº«n nĂ©n GIF Ä‘Æ°á»£c, chá»‰ kĂ©m hiá»‡u quáº£ hÆ¡n |
+| `gswin64c.exe` | nĂ©n PDF | CĂ i [Ghostscript](https://ghostscript.com/releases/) báº£n **Ä‘áº§y Ä‘á»§** |
+| `ffplay.exe` | xem trÆ°á»›c trÆ°á»›c/sau | Tuá»³ chá»n |
 
-> **Lưu ý về Ghostscript.** Bản `gswin64c.exe` đi kèm bản v12 cũ chỉ là tệp stub 93 KB
-> thiếu DLL, chạy lên báo `Can't load Ghostscript DLL`. Bản này nhận ra tình trạng đó
-> ngay khi mở ứng dụng và hướng dẫn cài bản đầy đủ, thay vì âm thầm đánh dấu mọi tệp
-> PDF là “giữ nguyên”.
+> **LÆ°u Ă½ vá» Ghostscript.** Báº£n `gswin64c.exe` Ä‘i kĂ¨m báº£n v12 cÅ© chá»‰ lĂ  tá»‡p stub 93 KB
+> thiáº¿u DLL, cháº¡y lĂªn bĂ¡o `Can't load Ghostscript DLL`. Báº£n nĂ y nháº­n ra tĂ¬nh tráº¡ng Ä‘Ă³
+> ngay khi má»Ÿ á»©ng dá»¥ng vĂ  hÆ°á»›ng dáº«n cĂ i báº£n Ä‘áº§y Ä‘á»§, thay vĂ¬ Ă¢m tháº§m Ä‘Ă¡nh dáº¥u má»i tá»‡p
+> PDF lĂ  â€œgiá»¯ nguyĂªnâ€.
 
-Ứng dụng **chạy thử** từng công cụ chứ không chỉ đọc `--version`: nó tạo một ảnh GIF
-nhỏ rồi nén thật, và chạy một lệnh PostScript tối thiểu cho Ghostscript. Lý do: trên
-chính máy này, `gifsicle.exe` in cảnh báo “Can't load DLL” rồi vẫn chạy tốt, còn
-`gswin64c.exe` báo lỗi tương tự và hỏng thật — chuỗi cảnh báo không đáng tin.
+á»¨ng dá»¥ng **cháº¡y thá»­** tá»«ng cĂ´ng cá»¥ chá»© khĂ´ng chá»‰ Ä‘á»c `--version`: nĂ³ táº¡o má»™t áº£nh GIF
+nhá» rá»“i nĂ©n tháº­t, vĂ  cháº¡y má»™t lá»‡nh PostScript tá»‘i thiá»ƒu cho Ghostscript. LĂ½ do: trĂªn
+chĂ­nh mĂ¡y nĂ y, `gifsicle.exe` in cáº£nh bĂ¡o â€œCan't load DLLâ€ rá»“i váº«n cháº¡y tá»‘t, cĂ²n
+`gswin64c.exe` bĂ¡o lá»—i tÆ°Æ¡ng tá»± vĂ  há»ng tháº­t â€” chuá»—i cáº£nh bĂ¡o khĂ´ng Ä‘Ă¡ng tin.
 
 ---
 
-## Cách dùng
+## CĂ¡ch dĂ¹ng
 
-1. **Thêm thư mục** — bấm nút, bấm `Ctrl+O`, hoặc **kéo thả từ Explorer vào cửa sổ**.
-   Thả được cả thư mục lẫn tệp lẻ. Thư mục con được quét tự động. Tệp lẻ được gom về
-   thư mục chứa nó, vì ứng dụng luôn làm việc theo thư mục.
-2. Chọn **mức nén** và **cách ghi**.
-3. **Bắt đầu**. Xem mức tiết kiệm ở cột tương ứng.
-4. Mở **Chi tiết** để xem từng tệp, tệp nào bị giữ nguyên và vì sao.
-5. **Duyệt** để áp dụng, hoặc **Hoàn tác** để trả bản gốc về.
+1. **ThĂªm thÆ° má»¥c** â€” báº¥m nĂºt, báº¥m `Ctrl+O`, hoáº·c **kĂ©o tháº£ tá»« Explorer vĂ o cá»­a sá»•**.
+   Tháº£ Ä‘Æ°á»£c cáº£ thÆ° má»¥c láº«n tá»‡p láº». ThÆ° má»¥c con Ä‘Æ°á»£c quĂ©t tá»± Ä‘á»™ng. Tá»‡p láº» Ä‘Æ°á»£c gom vá»
+   thÆ° má»¥c chá»©a nĂ³, vĂ¬ á»©ng dá»¥ng luĂ´n lĂ m viá»‡c theo thÆ° má»¥c.
+2. Chá»n **má»©c nĂ©n** vĂ  **cĂ¡ch ghi**.
+3. **Báº¯t Ä‘áº§u**. Xem má»©c tiáº¿t kiá»‡m á»Ÿ cá»™t tÆ°Æ¡ng á»©ng.
+4. Má»Ÿ **Chi tiáº¿t** Ä‘á»ƒ xem tá»«ng tá»‡p, tiáº¿n Ä‘á»™ tá»«ng tá»‡p, tá»‡p nĂ o bá»‹ giá»¯ nguyĂªn vĂ  vĂ¬ sao.
+5. Báº¥m **â—«** trĂªn má»™t tá»‡p Ä‘á»ƒ **so sĂ¡nh song song** báº£n gá»‘c vá»›i báº£n Ä‘Ă£ nĂ©n.
+6. **Duyá»‡t** Ä‘á»ƒ Ă¡p dá»¥ng, hoáº·c **HoĂ n tĂ¡c** Ä‘á»ƒ tráº£ báº£n gá»‘c vá».
 
-### Ba cách ghi kết quả
+### Tiáº¿n Ä‘á»™ tá»«ng tá»‡p
 
-| Cách | Tệp gốc | Bản sao lưu | Khi nào dùng |
+DĂ²ng thÆ° má»¥c hiá»‡n tĂªn tá»‡p Ä‘ang nĂ©n vĂ  pháº§n trÄƒm cá»§a nĂ³. Má»Ÿ **Chi tiáº¿t** sáº½ tháº¥y thanh
+tiáº¿n Ä‘á»™ riĂªng cho tá»‡p Ä‘ang cháº¡y. Cáº§n cáº£ hai: thanh cá»§a thÆ° má»¥c chá»‰ Ä‘áº¿m sá»‘ tá»‡p, nĂªn má»™t
+táº­p video 20 phĂºt káº¹t sáº½ trĂ´ng giá»‘ng há»‡t má»™t tá»‡p áº£nh nhá».
+
+### So sĂ¡nh trÆ°á»›c / sau
+
+Báº¥m **â—«** á»Ÿ má»™t tá»‡p Ä‘á»ƒ má»Ÿ mĂ n hĂ¬nh so sĂ¡nh: báº£n gá»‘c bĂªn trĂ¡i, báº£n Ä‘Ă£ nĂ©n bĂªn pháº£i, cĂ¹ng
+má»™t khung hĂ¬nh á»Ÿ cĂ¹ng má»™t thá»i Ä‘iá»ƒm, kĂ¨m dung lÆ°á»£ng, khung hĂ¬nh, thá»i lÆ°á»£ng vĂ  bitrate.
+Video vĂ  Ă¢m thanh cĂ³ nĂºt phĂ¡t tá»«ng bĂªn.
+
+Nguá»“n hai bĂªn Ä‘Æ°á»£c Ä‘oĂ¡n nhÆ° sau:
+
+| TĂ¬nh huá»‘ng | Báº£n gá»‘c | Báº£n nĂ©n |
+|---|---|---|
+| ÄĂ£ nĂ©n tháº­t | tá»‡p `.bak` | tá»‡p hiá»‡n táº¡i |
+| Xuáº¥t ra thÆ° má»¥c khĂ¡c | tá»‡p trong thÆ° má»¥c gá»‘c | tá»‡p trong thÆ° má»¥c Ä‘Ă­ch |
+| Cháº¡y thá»­, hoáº·c bá»‹ giá»¯ nguyĂªn | tá»‡p hiá»‡n táº¡i | *chÆ°a cĂ³* â€” mĂ n hĂ¬nh nĂ³i rĂµ vĂ¬ sao |
+
+Viá»‡c láº¥y khung hĂ¬nh pháº£i dĂ² hai láº§n: nháº£y nhanh tá»›i gáº§n Ä‘Ă­ch rá»“i má»›i tinh chá»‰nh. Chá»‰
+nháº£y má»™t láº§n thĂ¬ báº£n gá»‘c vĂ  báº£n nĂ©n rÆ¡i vĂ o hai thá»i Ä‘iá»ƒm khĂ¡c nhau (cáº¥u trĂºc GOP khĂ¡c
+nhau) vĂ  so khĂ´ng Ä‘Æ°á»£c.
+
+### Ba cĂ¡ch ghi káº¿t quáº£
+
+| CĂ¡ch | Tá»‡p gá»‘c | Báº£n sao lÆ°u | Khi nĂ o dĂ¹ng |
 |---|---|---|---|
-| **Thử trước** (mặc định) | không đụng | không có | Xem trước sẽ tiết kiệm bao nhiêu |
-| **Nén thật** | thay thế | `.bak` cùng thư mục | Đã hài lòng với kết quả |
-| **Xuất thư mục khác** | không đụng | không có | Giữ nguyên thư mục gốc, lấy kết quả đi nơi khác |
+| **Thá»­ trÆ°á»›c** (máº·c Ä‘á»‹nh) | khĂ´ng Ä‘á»¥ng | khĂ´ng cĂ³ | Xem trÆ°á»›c sáº½ tiáº¿t kiá»‡m bao nhiĂªu |
+| **NĂ©n tháº­t** | thay tháº¿ | `.bak` cĂ¹ng thÆ° má»¥c | ÄĂ£ hĂ i lĂ²ng vá»›i káº¿t quáº£ |
+| **Xuáº¥t thÆ° má»¥c khĂ¡c** | khĂ´ng Ä‘á»¥ng | khĂ´ng cĂ³ | Giá»¯ nguyĂªn thÆ° má»¥c gá»‘c, láº¥y káº¿t quáº£ Ä‘i nÆ¡i khĂ¡c |
 
-Ở chế độ thử, ứng dụng **nén thật từng tệp để đo** rồi xoá kết quả, nên bạn thấy đúng
-những gì sẽ xảy ra chứ không phải con số ước lượng. Bấm **Duyệt** để nén thật và thay thế.
+á» cháº¿ Ä‘á»™ thá»­, á»©ng dá»¥ng **nĂ©n tháº­t tá»«ng tá»‡p Ä‘á»ƒ Ä‘o** rá»“i xoĂ¡ káº¿t quáº£, nĂªn báº¡n tháº¥y Ä‘Ăºng
+nhá»¯ng gĂ¬ sáº½ xáº£y ra chá»© khĂ´ng pháº£i con sá»‘ Æ°á»›c lÆ°á»£ng. Báº¥m **Duyá»‡t** Ä‘á»ƒ nĂ©n tháº­t vĂ  thay tháº¿.
 
-### Phím tắt
+### PhĂ­m táº¯t
 
-| Phím | Tác dụng |
+| PhĂ­m | TĂ¡c dá»¥ng |
 |---|---|
-| `Ctrl+O` | Thêm thư mục |
-| `Ctrl+Enter` | Bắt đầu |
-| `Space` | Tạm dừng / Tiếp tục |
-| `?` | Hướng dẫn |
-| `L` | Nhật ký |
-| `T` | Đổi giao diện sáng/tối |
-| `Esc` | Đóng bảng chi tiết |
+| `Ctrl+O` | ThĂªm thÆ° má»¥c |
+| `Ctrl+Enter` | Báº¯t Ä‘áº§u |
+| `Space` | Táº¡m dá»«ng / Tiáº¿p tá»¥c |
+| `?` | HÆ°á»›ng dáº«n |
+| `L` | Nháº­t kĂ½ |
+| `T` | Äá»•i giao diá»‡n sĂ¡ng/tá»‘i |
+| `Esc` | ÄĂ³ng báº£ng chi tiáº¿t |
 
 ---
 
-## Tham số nén
+## Tham sá»‘ nĂ©n
 
-Giữ nguyên như bản gốc. Xem `docs/PHASE0-REFERENCE.md` để đối chiếu từng dòng với
-code đã decompile.
+Giá»¯ nguyĂªn nhÆ° báº£n gá»‘c. Xem `docs/PHASE0-REFERENCE.md` Ä‘á»ƒ Ä‘á»‘i chiáº¿u tá»«ng dĂ²ng vá»›i
+code Ä‘Ă£ decompile.
 
-| | Nhẹ | Cân bằng | Mạnh |
+| | Nháº¹ | CĂ¢n báº±ng | Máº¡nh |
 |---|---|---|---|
 | Video CRF / preset | 20 / slow | 23 / medium | 28 / veryfast |
-| Video chiều rộng tối đa | 3840px | 1920px | 1080px |
-| Ảnh `-q:v` | 3 | 5 | 10 |
-| Âm thanh | 320k | 192k | 128k |
+| Video chiá»u rá»™ng tá»‘i Ä‘a | 3840px | 1920px | 1080px |
+| áº¢nh `-q:v` | 3 | 5 | 10 |
+| Ă‚m thanh | 320k | 192k | 128k |
 | GIF `--lossy` | 20 | 40 | 80 |
 | PDF `-dPDFSETTINGS` | /prepress | /ebook | /screen |
 
-**Ngưỡng tiết kiệm tối thiểu** là con số độc lập trong Cài đặt, không gắn với mức nén.
-Bản gốc gộp nhầm hai thứ này: ngưỡng tăng dần theo mức, nên mức “Mạnh” lại khó đạt
-nhất (file phải nhỏ hơn 98% mới được nhận) — ngược với ý đồ.
+**NgÆ°á»¡ng tiáº¿t kiá»‡m tá»‘i thiá»ƒu** lĂ  con sá»‘ Ä‘á»™c láº­p trong CĂ i Ä‘áº·t, khĂ´ng gáº¯n vá»›i má»©c nĂ©n.
+Báº£n gá»‘c gá»™p nháº§m hai thá»© nĂ y: ngÆ°á»¡ng tÄƒng dáº§n theo má»©c, nĂªn má»©c â€œMáº¡nhâ€ láº¡i khĂ³ Ä‘áº¡t
+nháº¥t (file pháº£i nhá» hÆ¡n 98% má»›i Ä‘Æ°á»£c nháº­n) â€” ngÆ°á»£c vá»›i Ă½ Ä‘á»“.
 
 ---
 
-## An toàn dữ liệu
+## An toĂ n dá»¯ liá»‡u
 
-- **Ghi đè là nguyên tử.** Sao chép bản gốc sang `.bak` *trước*, rồi mới thay thế tệp.
-  Bản gốc dùng `Move` hai lần; nếu lần hai hỏng thì bản gốc nằm lại trong `.bak` và tệp
-  chính biến mất.
-- **Không bao giờ ghi đè một `.bak` đã có.** Bản `.bak` đầu tiên là bản gốc nguyên vẹn;
-  ghi đè nó nghĩa là mất khả năng quay lại bản thật.
-- **Phiên ghi nguyên tử** (tệp tạm rồi thay thế) và báo lỗi đọc thay vì nuốt im lặng.
-  Treo máy giữa lúc lưu không làm mất danh sách job.
-- **Bộ lọc loại trừ mặc định** bỏ qua `*.bak`. Bản gốc không lọc gì, nên chạy lần hai
-  sẽ nén tiếp chính tệp `.bak` mà nó vừa tạo.
-- **Bỏ qua tệp kết quả lớn hơn bản gốc**, kèm lý do hiển thị rõ.
-- Kiểm tra dung lượng ổ đĩa trước khi nén hàng loạt.
-
----
-
-## Nhật ký
-
-`%LOCALAPPDATA%\UltraCompressor\logs\ultra-YYYYMMDD.log`, xoay vòng ở 4 MB.
-
-Ở mức `Debug` (đặt trong Cài đặt) nhật ký ghi **nguyên văn từng lệnh ffmpeg** kèm mã
-thoát và 20 dòng stderr cuối. Đây là thứ cần để chẩn đoán khi kết quả nén kỳ lạ — bản
-gốc không lưu lại gì nên không tra được.
-
-Xem ngay trong ứng dụng: nút **Nhật ký**.
+- **Ghi Ä‘Ă¨ lĂ  nguyĂªn tá»­.** Sao chĂ©p báº£n gá»‘c sang `.bak` *trÆ°á»›c*, rá»“i má»›i thay tháº¿ tá»‡p.
+  Báº£n gá»‘c dĂ¹ng `Move` hai láº§n; náº¿u láº§n hai há»ng thĂ¬ báº£n gá»‘c náº±m láº¡i trong `.bak` vĂ  tá»‡p
+  chĂ­nh biáº¿n máº¥t.
+- **KhĂ´ng bao giá» ghi Ä‘Ă¨ má»™t `.bak` Ä‘Ă£ cĂ³.** Báº£n `.bak` Ä‘áº§u tiĂªn lĂ  báº£n gá»‘c nguyĂªn váº¹n;
+  ghi Ä‘Ă¨ nĂ³ nghÄ©a lĂ  máº¥t kháº£ nÄƒng quay láº¡i báº£n tháº­t.
+- **PhiĂªn ghi nguyĂªn tá»­** (tá»‡p táº¡m rá»“i thay tháº¿) vĂ  bĂ¡o lá»—i Ä‘á»c thay vĂ¬ nuá»‘t im láº·ng.
+  Treo mĂ¡y giá»¯a lĂºc lÆ°u khĂ´ng lĂ m máº¥t danh sĂ¡ch job.
+- **Bá»™ lá»c loáº¡i trá»« máº·c Ä‘á»‹nh** bá» qua `*.bak`. Báº£n gá»‘c khĂ´ng lá»c gĂ¬, nĂªn cháº¡y láº§n hai
+  sáº½ nĂ©n tiáº¿p chĂ­nh tá»‡p `.bak` mĂ  nĂ³ vá»«a táº¡o.
+- **Bá» qua tá»‡p káº¿t quáº£ lá»›n hÆ¡n báº£n gá»‘c**, kĂ¨m lĂ½ do hiá»ƒn thá»‹ rĂµ.
+- Kiá»ƒm tra dung lÆ°á»£ng á»• Ä‘Ä©a trÆ°á»›c khi nĂ©n hĂ ng loáº¡t.
 
 ---
 
-## Phát triển
+## Nháº­t kĂ½
+
+`%LOCALAPPDATA%\UltraCompressor\logs\ultra-YYYYMMDD.log`, xoay vĂ²ng á»Ÿ 4 MB.
+
+á» má»©c `Debug` (Ä‘áº·t trong CĂ i Ä‘áº·t) nháº­t kĂ½ ghi **nguyĂªn vÄƒn tá»«ng lá»‡nh ffmpeg** kĂ¨m mĂ£
+thoĂ¡t vĂ  20 dĂ²ng stderr cuá»‘i. ÄĂ¢y lĂ  thá»© cáº§n Ä‘á»ƒ cháº©n Ä‘oĂ¡n khi káº¿t quáº£ nĂ©n ká»³ láº¡ â€” báº£n
+gá»‘c khĂ´ng lÆ°u láº¡i gĂ¬ nĂªn khĂ´ng tra Ä‘Æ°á»£c.
+
+Xem ngay trong á»©ng dá»¥ng: nĂºt **Nháº­t kĂ½**.
+
+---
+
+## PhĂ¡t triá»ƒn
 
 ```powershell
-dotnet build                                   # build cả solution
-dotnet test tests\UltraCompressor.Core.Tests   # 120 test
-dotnet run --project src\UltraCompressor.App   # chạy thử, không cần publish
+dotnet build                                   # build cáº£ solution
+dotnet test tests\UltraCompressor.Core.Tests   # 123 test
+dotnet run --project src\UltraCompressor.App   # cháº¡y thá»­, khĂ´ng cáº§n publish
 ```
 
-### Bố cục
+### Bá»‘ cá»¥c
 
 ```
-src/UltraCompressor.Core/     Lõi, không phụ thuộc giao diện
-  Models/                     Job, JobItem, AppConfig, các enum
-  Pipelines/                  Một pipeline cho mỗi loại media
-  Processes/                  Chạy tiến trình ngoài, đọc output theo dòng
-  Scheduling/                 Engine, bộ quét thư mục, cổng tạm dừng, ước lượng ETA
-  Storage/                    Giao dịch tệp, hoàn tác, phiên, kiểm tra dung lượng
-  Toolchain/                  Tìm và kiểm tra khả năng chạy của công cụ ngoài
-  Media/                      Phân tích output của ffmpeg
-  Diagnostics/                Nhật ký theo ngày
+src/UltraCompressor.Core/     LĂµi, khĂ´ng phá»¥ thuá»™c giao diá»‡n
+  Models/                     Job, JobItem, AppConfig, cĂ¡c enum
+  Pipelines/                  Má»™t pipeline cho má»—i loáº¡i media
+  Processes/                  Cháº¡y tiáº¿n trĂ¬nh ngoĂ i, Ä‘á»c output theo dĂ²ng
+  Scheduling/                 Engine, bá»™ quĂ©t thÆ° má»¥c, cá»•ng táº¡m dá»«ng, Æ°á»›c lÆ°á»£ng ETA
+  Storage/                    Giao dá»‹ch tá»‡p, hoĂ n tĂ¡c, phiĂªn, kiá»ƒm tra dung lÆ°á»£ng
+  Toolchain/                  TĂ¬m vĂ  kiá»ƒm tra kháº£ nÄƒng cháº¡y cá»§a cĂ´ng cá»¥ ngoĂ i
+  Media/                      PhĂ¢n tĂ­ch output cá»§a ffmpeg
+  Diagnostics/                Nháº­t kĂ½ theo ngĂ y
 
-src/UltraCompressor.App/      Khung chủ + giao diện web
-  Bridge/                     Cầu postMessage hai chiều, DTO, AppHost
+src/UltraCompressor.App/      Khung chá»§ + giao diá»‡n web
+  Bridge/                     Cáº§u postMessage hai chiá»u, DTO, AppHost
   wwwroot/                    index.html, styles.css, app.js
 
-tests/UltraCompressor.Core.Tests/   120 test cho lõi
+src/UltraCompressor.Core/Compare/   Dá»¯ liá»‡u cho mĂ n hĂ¬nh so sĂ¡nh trÆ°á»›c/sau
+tests/UltraCompressor.Core.Tests/   123 test cho lĂµi
 
-docs/PHASE0-REFERENCE.md     Bảng tham số trích từ bản gốc + 23 lỗi đã tìm ra
-reference/original-csharp/   Mã nguồn bản gốc đã decompile bằng ilspycmd, chỉ để đối chiếu
-artifacts/                   Ảnh chụp màn hình, media mẫu, script kiểm thử (không commit)
-tools/                       ffmpeg.exe, gifsicle.exe — setup.ps1 chép sang thư mục cài
-publish/                     Thư mục staging mà setup.ps1 xuất bản vào (không commit)
+docs/PHASE0-REFERENCE.md     Báº£ng tham sá»‘ trĂ­ch tá»« báº£n gá»‘c + 23 lá»—i Ä‘Ă£ tĂ¬m ra
+reference/original-csharp/   MĂ£ nguá»“n báº£n gá»‘c Ä‘Ă£ decompile báº±ng ilspycmd, chá»‰ Ä‘á»ƒ Ä‘á»‘i chiáº¿u
+artifacts/                   áº¢nh chá»¥p mĂ n hĂ¬nh, media máº«u, script kiá»ƒm thá»­ (khĂ´ng commit)
+tools/                       ffmpeg.exe, gifsicle.exe â€” setup.ps1 chĂ©p sang thÆ° má»¥c cĂ i
+publish/                     ThÆ° má»¥c staging mĂ  setup.ps1 xuáº¥t báº£n vĂ o (khĂ´ng commit)
 ```
 
-Mọi thứ liên quan tới dự án đều nằm trong thư mục này. Riêng dữ liệu lúc chạy
-(`config.json`, phiên làm việc, nhật ký) để ở `%LOCALAPPDATA%\UltraCompressor` — đó là
-quy ước của Windows, để nâng cấp app không đụng mất cấu hình của người dùng.
+Má»i thá»© liĂªn quan tá»›i dá»± Ă¡n Ä‘á»u náº±m trong thÆ° má»¥c nĂ y. RiĂªng dá»¯ liá»‡u lĂºc cháº¡y
+(`config.json`, phiĂªn lĂ m viá»‡c, nháº­t kĂ½) Ä‘á»ƒ á»Ÿ `%LOCALAPPDATA%\UltraCompressor` â€” Ä‘Ă³ lĂ 
+quy Æ°á»›c cá»§a Windows, Ä‘á»ƒ nĂ¢ng cáº¥p app khĂ´ng Ä‘á»¥ng máº¥t cáº¥u hĂ¬nh cá»§a ngÆ°á»i dĂ¹ng.
 
-### Vài quyết định thiết kế đáng ghi
+### VĂ i quyáº¿t Ä‘á»‹nh thiáº¿t káº¿ Ä‘Ă¡ng ghi
 
-**Vì sao WinForms chứ không WPF.** Giao diện là 100% web nên khung chủ chỉ là nơi đặt
-WebView2. Bản đầu tiên dùng WPF và gặp lỗi khó chịu: cửa sổ con WebView2 bị cấp kích
-thước theo đơn vị logic còn bề mặt vẽ theo điểm ảnh thật, lệch đúng hệ số 1,25 trên
-màn hình 125% — mép phải giao diện bị cắt mất. WinForms + `ApplicationHighDpiMode`
-xử lý việc này đúng, và đây cũng là tổ hợp được kiểm thử kỹ nhất.
+**VĂ¬ sao WinForms chá»© khĂ´ng WPF.** Giao diá»‡n lĂ  100% web nĂªn khung chá»§ chá»‰ lĂ  nÆ¡i Ä‘áº·t
+WebView2. Báº£n Ä‘áº§u tiĂªn dĂ¹ng WPF vĂ  gáº·p lá»—i khĂ³ chá»‹u: cá»­a sá»• con WebView2 bá»‹ cáº¥p kĂ­ch
+thÆ°á»›c theo Ä‘Æ¡n vá»‹ logic cĂ²n bá» máº·t váº½ theo Ä‘iá»ƒm áº£nh tháº­t, lá»‡ch Ä‘Ăºng há»‡ sá»‘ 1,25 trĂªn
+mĂ n hĂ¬nh 125% â€” mĂ©p pháº£i giao diá»‡n bá»‹ cáº¯t máº¥t. WinForms + `ApplicationHighDpiMode`
+xá»­ lĂ½ viá»‡c nĂ y Ä‘Ăºng, vĂ  Ä‘Ă¢y cÅ©ng lĂ  tá»• há»£p Ä‘Æ°á»£c kiá»ƒm thá»­ ká»¹ nháº¥t.
 
-Nếu chuyển khung chủ sang công nghệ khác, khai báo DPI trong manifest.
+Náº¿u chuyá»ƒn khung chá»§ sang cĂ´ng nghá»‡ khĂ¡c, khai bĂ¡o DPI trong manifest.
 
-**Vì sao đo từ bên trong tiến trình.** Chụp màn hình từ PowerShell bị Windows ảo hóa theo
-DPI, chỉ lấy được ~80% cửa sổ, rất dễ khiến tưởng giao diện bị cắt trong khi thực tế
-không. `LogGeometryAsync` đo trong tiến trình đã khai báo DPI-aware nên con số đáng tin.
-`UC_CAPTURE` + `UC_EVAL_JS` + `UC_CAPTURE_DELAY` (biến môi trường) cho phép chụp và thao
-tác giao diện khi kiểm thử.
+**VĂ¬ sao Ä‘o tá»« bĂªn trong tiáº¿n trĂ¬nh.** Chá»¥p mĂ n hĂ¬nh tá»« PowerShell bá»‹ Windows áº£o hĂ³a theo
+DPI, chá»‰ láº¥y Ä‘Æ°á»£c ~80% cá»­a sá»•, ráº¥t dá»… khiáº¿n tÆ°á»Ÿng giao diá»‡n bá»‹ cáº¯t trong khi thá»±c táº¿
+khĂ´ng. `LogGeometryAsync` Ä‘o trong tiáº¿n trĂ¬nh Ä‘Ă£ khai bĂ¡o DPI-aware nĂªn con sá»‘ Ä‘Ă¡ng tin.
+`UC_CAPTURE` + `UC_EVAL_JS` + `UC_CAPTURE_DELAY` (biáº¿n mĂ´i trÆ°á»ng) cho phĂ©p chá»¥p vĂ  thao
+tĂ¡c giao diá»‡n khi kiá»ƒm thá»­.
 
-**Cầu web↔lõi.** `postMessage` + JSON, không dùng COM. Trang web không thể tự gọi hàm tuỳ
-ý trên máy người dùng; bề mặt chỉ gồm những lệnh khai báo sẵn.
+**Cáº§u webâ†”lĂµi.** `postMessage` + JSON, khĂ´ng dĂ¹ng COM. Trang web khĂ´ng thá»ƒ tá»± gá»i hĂ m tuá»³
+Ă½ trĂªn mĂ¡y ngÆ°á»i dĂ¹ng; bá» máº·t chá»‰ gá»“m nhá»¯ng lá»‡nh khai bĂ¡o sáºµn.
 
 ---
 
-## Những lỗi tìm được ở bản gốc
+## Nhá»¯ng lá»—i tĂ¬m Ä‘Æ°á»£c á»Ÿ báº£n gá»‘c
 
-Bảng đầy đủ 23 mục ở `docs/PHASE0-REFERENCE.md`. Vài lỗi đáng chú ý:
+Báº£ng Ä‘áº§y Ä‘á»§ 23 má»¥c á»Ÿ `docs/PHASE0-REFERENCE.md`. VĂ i lá»—i Ä‘Ă¡ng chĂº Ă½:
 
-- **Nhánh GIF bị đảo ngược.** `if (File.Exists(gifsicle))` nghĩa là *có* gifsicle thì gọi
-  gifsicle (không giảm fps, không resize, không palettegen), *thiếu* gifsicle mới gọi ffmpeg.
-  Kết quả: filter `fps=15`/`fps=20` là code chết. Bản này luôn chạy ffmpeg trước rồi mới
-  gifsicle — mức Mạnh giảm được 44% trên ảnh kiểm thử.
-- **Ngưỡng chấp nhận tăng theo mức nén**, khiến mức Mạnh khó đạt nhất.
-- **Hủy job lúc đang tạm dừng sẽ treo vô hạn** — vòng chờ không nhìn thấy
+- **NhĂ¡nh GIF bá»‹ Ä‘áº£o ngÆ°á»£c.** `if (File.Exists(gifsicle))` nghÄ©a lĂ  *cĂ³* gifsicle thĂ¬ gá»i
+  gifsicle (khĂ´ng giáº£m fps, khĂ´ng resize, khĂ´ng palettegen), *thiáº¿u* gifsicle má»›i gá»i ffmpeg.
+  Káº¿t quáº£: filter `fps=15`/`fps=20` lĂ  code cháº¿t. Báº£n nĂ y luĂ´n cháº¡y ffmpeg trÆ°á»›c rá»“i má»›i
+  gifsicle â€” má»©c Máº¡nh giáº£m Ä‘Æ°á»£c 44% trĂªn áº£nh kiá»ƒm thá»­.
+- **NgÆ°á»¡ng cháº¥p nháº­n tÄƒng theo má»©c nĂ©n**, khiáº¿n má»©c Máº¡nh khĂ³ Ä‘áº¡t nháº¥t.
+- **Há»§y job lĂºc Ä‘ang táº¡m dá»«ng sáº½ treo vĂ´ háº¡n** â€” vĂ²ng chá» khĂ´ng nhĂ¬n tháº¥y
   `CancellationToken`.
-- **Ghostscript hỏng nhưng báo lỗi im lặng** — không kiểm tra mã thoát, mọi PDF bị đánh
-  dấu “giữ nguyên” mà không có lý do.
-- **Nút “Duyệt” chỉ xoá `.bak`**, không phải duyệt kết quả; hộp thoại xác nhận còn ghi
-  sai nội dung.
-- **ETA luôn trễ** vì “đã xử lý” chỉ cộng dồn sau khi tệp xong.
-- **Mất EXIF/orientation** khi nén ảnh (thiếu `-map_metadata 0`).
-- **EPNG có thể treo** vì không có `-nostdin`.
-- Bản gốc dùng đường dẫn tương đối cho công cụ ngoài, nên phụ thuộc thư mục làm việc
-  hiện tại.
+- **Ghostscript há»ng nhÆ°ng bĂ¡o lá»—i im láº·ng** â€” khĂ´ng kiá»ƒm tra mĂ£ thoĂ¡t, má»i PDF bá»‹ Ä‘Ă¡nh
+  dáº¥u â€œgiá»¯ nguyĂªnâ€ mĂ  khĂ´ng cĂ³ lĂ½ do.
+- **NĂºt â€œDuyá»‡tâ€ chá»‰ xoĂ¡ `.bak`**, khĂ´ng pháº£i duyá»‡t káº¿t quáº£; há»™p thoáº¡i xĂ¡c nháº­n cĂ²n ghi
+  sai ná»™i dung.
+- **ETA luĂ´n trá»…** vĂ¬ â€œÄ‘Ă£ xá»­ lĂ½â€ chá»‰ cá»™ng dá»“n sau khi tá»‡p xong.
+- **Máº¥t EXIF/orientation** khi nĂ©n áº£nh (thiáº¿u `-map_metadata 0`).
+- **EPNG cĂ³ thá»ƒ treo** vĂ¬ khĂ´ng cĂ³ `-nostdin`.
+- Báº£n gá»‘c dĂ¹ng Ä‘Æ°á»ng dáº«n tÆ°Æ¡ng Ä‘á»‘i cho cĂ´ng cá»¥ ngoĂ i, nĂªn phá»¥ thuá»™c thÆ° má»¥c lĂ m viá»‡c
+  hiá»‡n táº¡i.
 
 ---
 
-## Kết quả đo thật
+## Káº¿t quáº£ Ä‘o tháº­t
 
-Các con số dưới đây đo trên một thư mục thật: 2 tập video 1080p (19–20 phút, h.264
-~1500 kb/s) và 2 ảnh JPEG, tổng 442 MB.
+CĂ¡c con sá»‘ dÆ°á»›i Ä‘Ă¢y Ä‘o trĂªn má»™t thÆ° má»¥c tháº­t: 2 táº­p video 1080p (19â€“20 phĂºt, h.264
+~1500 kb/s) vĂ  2 áº£nh JPEG, tá»•ng 442 MB.
 
-| Mức | Video | Ảnh JPEG | Ghi chú |
+| Má»©c | Video | áº¢nh JPEG | Ghi chĂº |
 |---|---|---|---|
-| Cân bằng (CRF 23) | −5,5% | giữ nguyên | chỉ được âm thanh 249k→128k |
-| Mạnh (CRF 28) | −36,6% | giữ nguyên | đo trên 2 phút đầu |
+| CĂ¢n báº±ng (CRF 23) | âˆ’5,5% | giá»¯ nguyĂªn | chá»‰ Ä‘Æ°á»£c Ă¢m thanh 249kâ†’128k |
+| Máº¡nh (CRF 28) | âˆ’36,6% | giá»¯ nguyĂªn | Ä‘o trĂªn 2 phĂºt Ä‘áº§u |
 
-**Vì sao mức Cân bằng gần như không được gì.** Tập gốc đã nén sẵn ở bitrate thấp
-(~1374 kb/s video), nên mã hoá lại ở CRF 23 cho ra thành phẩm lớn hơn bản gốc. Ứng dụng
-nhận ra điều đó và **giữ nguyên bản gốc** thay vì ghi đè bằng thứ tệ hơn. Đây là hành vi
-đúng, không phải lỗi. Muốn tiết kiệm thật thì dùng mức Mạnh, hoặc nâng ngưỡng chấp
-nhận trong Cài đặt.
+**VĂ¬ sao má»©c CĂ¢n báº±ng gáº§n nhÆ° khĂ´ng Ä‘Æ°á»£c gĂ¬.** Táº­p gá»‘c Ä‘Ă£ nĂ©n sáºµn á»Ÿ bitrate tháº¥p
+(~1374 kb/s video), nĂªn mĂ£ hoĂ¡ láº¡i á»Ÿ CRF 23 cho ra thĂ nh pháº©m lá»›n hÆ¡n báº£n gá»‘c. á»¨ng dá»¥ng
+nháº­n ra Ä‘iá»u Ä‘Ă³ vĂ  **giá»¯ nguyĂªn báº£n gá»‘c** thay vĂ¬ ghi Ä‘Ă¨ báº±ng thá»© tá»‡ hÆ¡n. ÄĂ¢y lĂ  hĂ nh vi
+Ä‘Ăºng, khĂ´ng pháº£i lá»—i. Muá»‘n tiáº¿t kiá»‡m tháº­t thĂ¬ dĂ¹ng má»©c Máº¡nh, hoáº·c nĂ¢ng ngÆ°á»¡ng cháº¥p
+nháº­n trong CĂ i Ä‘áº·t.
 
-Chi tiết về quy trình kiểm thử ở [`docs/TESTING.md`](docs/TESTING.md).
-Kiến trúc ở [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Chi tiáº¿t vá» quy trĂ¬nh kiá»ƒm thá»­ á»Ÿ [`docs/TESTING.md`](docs/TESTING.md).
+Kiáº¿n trĂºc á»Ÿ [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+

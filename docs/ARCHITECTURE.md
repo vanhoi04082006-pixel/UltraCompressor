@@ -99,11 +99,18 @@ Ba biến môi trường cho phép chụp và thao tác giao diện khi kiểm t
 | Biến | Tác dụng |
 |---|---|
 | `UC_CAPTURE` | đường dẫn ảnh PNG; đặt rồi thì `CaptureIfRequestedAsync` chạy |
-| `UC_CAPTURE_DELAY` | số giây chờ trước khi chạy script (mặc định 5) |
-| `UC_EVAL_JS` | biểu thức JavaScript chạy ngay trước lúc chụp, kết quả ghi vào nhật ký |
+| `UC_CAPTURE_DELAY` | số giây chờ **trước** khi chạy script (mặc định 5) |
+| `UC_EVAL_SETTLE` | số mili giây chờ **sau** khi chạy script (mặc định 1200) |
+| `UC_EVAL_JS` | biểu thức JavaScript chạy trước lúc chụp, kết quả ghi vào nhật ký |
 
-Script phải là **biểu thức**, không phải câu lệnh có `return` ở ngoài hàm — nếu không sẽ
-là `SyntaxError` và im lặng không làm gì cả. Dùng dạng `(() => { ...; return x; })()`.
+Hai điều cần biết về `UC_EVAL_JS`, cả hai đều đã tốn thời gian tìm ra:
+
+1. **Script phải là biểu thức, không phải câu lệnh có `return` ở ngoài hàm.** `return` ở
+   ngoài hàm là `SyntaxError` và im lặng không làm gì cả — dễ tưởng là hỏng ứng dụng.
+   Dùng dạng `(() => { ...; return x; })()`.
+2. **`ExecuteScriptAsync` không đợi promise.** Script `async` vẫn đang chạy thì ảnh đã được
+   chụp. Muốn chụp đúng lúc job đang nén dở, hãy đặt `UC_EVAL_SETTLE` đủ lâu, hoặc tốt hơn
+   là dùng cầu `log` để ghi kết quả ra nhật ký rồi đọc tệp log sau.
 
 Chụp dùng `CapturePreviewAsync` của WebView2 chứ không chụp màn hình từ PowerShell, vì
 cách sau bị Windows ảo hoá theo DPI và chỉ lấy được một phần cửa sổ.

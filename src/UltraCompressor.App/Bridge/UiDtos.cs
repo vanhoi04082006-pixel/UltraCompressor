@@ -59,6 +59,12 @@ public sealed record JobDto
 
     public long PendingBackups { get; init; }
 
+    /// <summary>Tệp đang được nén, để dòng job hiện tiến độ tới từng tệp chứ không chỉ tổng.</summary>
+    public string? ActiveFileName { get; init; }
+
+    /// <summary>Phần trăm của tệp đang nén, -1 khi không có tệp nào đang chạy.</summary>
+    public int ActivePercent { get; init; } = -1;
+
     public static JobDto From(Job job) => new()
     {
         Id = job.Id,
@@ -86,7 +92,24 @@ public sealed record JobDto
         CanCancel = job.Status is JobStatus.Running or JobStatus.Paused,
         CanReview = job.Status is JobStatus.PendingReview or JobStatus.Committed or JobStatus.Cancelled,
         PendingBackups = UndoService.PendingBackups(job).Count,
+        ActiveFileName = ActiveItemOf(job)?.FileName,
+        ActivePercent = ActiveItemOf(job)?.Percent ?? -1,
     };
+
+    /// <summary>
+    /// Tệp đang nén của job. Job có thể chạy nhiều luồng, lấy tệp nào đang chạy nhiều nhất
+    /// để con số trên dòng job khớp với thứ đang thấy ở bảng chi tiết.
+    /// </summary>
+    private static JobItem? ActiveItemOf(Job job)
+    {
+        JobItem? best = null;
+        foreach (var item in job.Items)
+        {
+            if (item.IsProcessing && (best is null || item.Percent > best.Percent)) best = item;
+        }
+
+        return best;
+    }
 
     private static string JobStatusLabel(JobStatus status) => status switch
     {

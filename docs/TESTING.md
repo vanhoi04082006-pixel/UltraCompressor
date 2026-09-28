@@ -95,10 +95,17 @@ Ghi lại ở đây để lần sau không phải tìm lại từ đầu.
 | Đường dẫn tràn sang ô bên cạnh | Chữ đè lên nhãn trạng thái khi mở bảng chi tiết | `max-width` trên `<td>` bị bỏ qua với bảng `table-layout: auto`; phải giới hạn ở phần tử con bằng đơn vị `ch` |
 | Lối tắt báo không tìm thấy đích | Windows: Missing Shortcut | tệp thực thi là `UltraCompressor.App.exe` (lấy tên project) nhưng `setup.ps1` ghi cứng `UltraCompressor.exe` |
 | Ghostscript "không tìm thấy" dù đã cài | Ứng dụng báo thiếu | `config.json` trỏ `...\MassCompressorTool\gswin64c.exe`, thiếu `\bin` |
+| Bảng chi tiết đứng yên khi job chạy | Tệp đang nén vẫn hiện "Chờ" | `AppHost.OpenJobId` có setter nhưng chưa từng được gán, nên `PushAsync` không gửi sự kiện `items` |
+| Báo "Gifsicle chưa có" khi `dotnet run` | Cảnh báo sai dù đã đặt gifsicle vào `tools\` | tệp thực thi nằm ở `bin\Debug\...` nên không có công cụ cạnh bên; nay dò thêm thư mục `tools\` của dự án |
+| Cột "Kết quả" đảo chữ | `-12.2%` thành `2.2%1-` | `.grid .sub` áp `direction: rtl` cho mọi phần tử con thay vì chỉ đường dẫn |
 
 Hai lỗi đầu là nghiêm trọng: job nhiều tệp — tức là trường hợp dùng chính — treo sau tệp
 đầu tiên. Chúng lọt qua vì test chỉ có một tệp mỗi job, và vì không test bằng tệp thật
 nào nặng hơn 0,1 giây.
+
+Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn ảnh chụp giao diện** lúc
+ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
+tuỳ chọn.
 
 ## Trước khi gửi thay đổi
 

@@ -246,6 +246,17 @@ function jobRow(job) {
   wrap.appendChild(bar);
   wrap.appendChild(el('span', 'progress-text', `${job.progress}%`));
   wrap.appendChild(el('span', 'progress-text', `${job.processedCount}/${job.totalFiles}`));
+
+  // Khi job đang chạy, thanh tổng chỉ là số tệp. Người dùng cần biết đang bận tệp nào và
+  // tới đâu — tệp nào kẹt ở 0% suốt 20 phút thì nhìn số tệp không thấy khác gì.
+  if (job.activeFileName) {
+    const active = el('div', 'active-file');
+    active.appendChild(el('span', 'active-name', job.activeFileName));
+    active.appendChild(el('span', 'active-pct', `${Math.max(0, job.activePercent)}%`));
+    active.title = `Đang nén: ${job.activeFileName}`;
+    wrap.appendChild(active);
+  }
+
   tdProgress.appendChild(wrap);
   tr.appendChild(tdProgress);
 
@@ -362,9 +373,112 @@ async function openDetail(jobId) {
   openJobId = jobId;
   document.querySelector('.workspace').classList.add('split');
   $('detailPanel').hidden = false;
-  $('detailTitle').textContent = state.jobs.find((j) => j.id === jobId)?.folderName || 'Chi tiết';
+  $('detailTitle').textContent = state.jobs.find((j) => j.id === jobId)?.folderName || 'Chi ti?t';
   await loadItems();
 }
+
+// ============================================================ so sánh trước / sau
+
+// Giữ dữ liệu của màn hình đang mở để nút Phát biết đường dẫn, và để đóng modal không
+// phải dựng lại từ đầu.
+let compareState = null;
+
+async function openCompare(jobId, filePath) {
+  if (!jobId || !filePath) return;
+
+  $('compareTitle').textContent = 'Đang dựng ảnh xem trước…';
+  $('shotOriginal').innerHTML = '';
+  $('shotCompressed').innerHTML = '';
+  $('factsOriginal').innerHTML = '';
+  $('factsCompressed').innerHTML = '';
+  $('compareSaved').textContent = '';
+  $('compareNote').textContent = '';
+  openModal('modalCompare');
+
+  let payload;
+  try {
+    payload = await call('getCompare', { jobId, filePath });
+  } catch (err) {
+    $('compareTitle').textContent = 'So sánh trước / sau';
+    $('compareNote').textContent = err.message;
+    return;
+  }
+
+  if (!payload?.ok) {
+    $('compareTitle').textContent = 'So sánh trước / sau';
+    $('compareNote').textContent = payload?.error || 'Không lấy được dữ liệu.';
+    return;
+  }
+
+  const data = payload.compare;
+  compareState = data;
+  $('compareTitle').textContent = data.fileName;
+
+  $('compareSaved').textContent = data.compressed
+    ? `Tiết kiệm ${data.savedText} (${data.savedPercentText})`
+    : '';
+
+  $('compareNote').textContent = data.note || '';
+  $('compareNote').hidden = !data.note;
+
+  renderCompareSide('Original', data.original);
+  renderCompareSide('Compressed', data.compressed);
+
+  const canPlay = data.canPlay === true;
+  $('btnPlayOriginal').hidden = !canPlay || !data.original?.exists;
+  $('btnPlayCompressed').hidden = !canPlay || !data.compressed?.exists;
+}
+
+function renderCompareSide(prefix, side) {
+  const shot = $(`shot${prefix}`);
+  const facts = $(`facts${prefix}`);
+
+  shot.innerHTML = '';
+  facts.innerHTML = '';
+
+  if (!side) {
+    shot.appendChild(el('p', 'compare-none', 'Chưa có bản nén trên đĩa'));
+    return;
+  }
+
+  if (!side.exists) {
+    shot.appendChild(el('p', 'compare-none', 'Không tìm thấy tệp'));
+    return;
+  }
+
+  if (side.thumbnail) {
+    const img = el('img', 'compare-img');
+    img.src = side.thumbnail;
+    img.alt = side.fileName;
+    img.loading = 'lazy';
+    shot.appendChild(img);
+  } else {
+    shot.appendChild(el('p', 'compare-none', 'Không có ảnh xem trước'));
+  }
+
+  const rows = [
+    ['Tệp', side.fileName],
+    ['Dung lượng', side.sizeText],
+    ['Kích thước khung', side.resolutionText],
+    ['Thời lượng', side.durationText],
+    ['Bitrate', side.bitrateText],
+  ];
+
+  for (const [label, value] of rows) {
+    if (!value || value === '—') continue;
+    facts.appendChild(el('dt', null, label));
+    facts.appendChild(el('dd', null, value));
+  }
+}
+
+async function playCompareSide(prefix) {
+  const side = compareState?.[prefix === 'Original' ? 'original' : 'compressed'];
+  if (!side?.path) return;
+
+  const result = await call('playFile', { path: side.path });
+  if (!result?.ok) toast(result?.error || 'Không mở được trình phát.', 'warn');
+}
+
 
 function closeDetail() {
   openJobId = null;
@@ -418,6 +532,18 @@ function renderItems() {
       tdState.appendChild(el('div', 'sub', item.detail));
       tdState.title = item.message || item.detail;
     }
+
+    // Thanh tiến độ riêng cho tệp đang nén. Không có nó thì một tập video 20 phút và một
+    // tệp ảnh nhỏ đều chỉ hiện "Đang xử lý" — không phân biệt được tệp nào sắp xong.
+    if (item.isProcessing) {
+      const bar = el('div', 'progress is-inline');
+      const fill = el('div', 'progress-fill');
+      fill.style.width = `${Math.max(0, Math.min(100, item.percent))}%`;
+      bar.appendChild(fill);
+      bar.appendChild(el('span', 'progress-text', `${Math.max(0, item.percent)}%`));
+      tdState.appendChild(bar);
+    }
+
     tr.appendChild(tdState);
 
     const tdActions = el('td', 'actions-col');
@@ -426,6 +552,8 @@ function renderItems() {
     if (item.canPreview && item.hasBackup) {
       actions.appendChild(iconButton('▷', 'Xem bản gốc', () => preview(item, true)));
     }
+    actions.appendChild(iconButton('◫', 'So sánh bản gốc với bản nén', () =>
+      openCompare(openJobId, item.filePath)));
     if (item.isApplied && item.hasBackup) {
       actions.appendChild(iconButton('↩', 'Khôi phục tệp này', () => undoItem(item), 'danger'));
     }
@@ -1009,6 +1137,8 @@ function wire() {
   $('btnLog').addEventListener('click', showLog);
   $('btnRefreshLog').addEventListener('click', showLog);
   $('btnOpenLogs').addEventListener('click', () => call('openLogs'));
+  $('btnPlayOriginal').addEventListener('click', () => playCompareSide('Original'));
+  $('btnPlayCompressed').addEventListener('click', () => playCompareSide('Compressed'));
   $('btnOpenData').addEventListener('click', () => call('openData'));
   $('btnCheckTools').addEventListener('click', async () => {
     const data = await call('checkTools');

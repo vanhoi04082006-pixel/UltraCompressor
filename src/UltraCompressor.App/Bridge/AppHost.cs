@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using UltraCompressor.Core;
+using UltraCompressor.Core.Compare;
 using UltraCompressor.Core.Diagnostics;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Pipelines;
@@ -21,6 +22,7 @@ public sealed class AppHost : IAsyncDisposable
     private readonly FileLogger _logger;
     private readonly SessionStore _session;
     private readonly CompressionEngine _engine;
+  private readonly CompareService _compare;
 
     private Func<string, Task>? _send;
     private CancellationTokenSource? _pumpCts;
@@ -28,15 +30,16 @@ public sealed class AppHost : IAsyncDisposable
     private string? _openJobId;
     private bool _disposed;
 
-    public AppHost(AppConfig config, ToolChain tools, FileLogger logger, SessionStore session)
-    {
-        _config = config;
-        _tools = tools;
-        _logger = logger;
-        _session = session;
-        _engine = new CompressionEngine(config, tools, session, new TempWorkspace(AppPaths.TempRoot), logger);
-        _engine.Changed += OnEngineChanged;
-    }
+  public AppHost(AppConfig config, ToolChain tools, FileLogger logger, SessionStore session)
+{
+  _config = config;
+  _tools = tools;
+  _logger = logger;
+  _session = session;
+  _engine = new CompressionEngine(config, tools, session, new TempWorkspace(AppPaths.TempRoot), logger);
+  _engine.Changed += OnEngineChanged;
+  _compare = new CompareService(tools.Locator, _engine.Workspace, logger);
+}
 
     public CompressionEngine Engine => _engine;
 
@@ -206,8 +209,10 @@ public sealed class AppHost : IAsyncDisposable
                 "openPath" => OpenFolder(SelectedFolderFrom(message)),
                 "openLogs" => OpenFolder(AppPaths.LogDirectory),
                 "openData" => OpenFolder(AppPaths.DataDirectory),
-                "logTail" => LogTail(message),
-                "log" => LogMessage(message),
+        "logTail" => LogTail(message),
+        "log" => LogMessage(message),
+        "getCompare" => await GetCompareAsync(message),
+        "playFile" => PlayFile(message),
                 "guide" => ToNode(BuildGuide()),
                 _ => null,
             };
@@ -246,10 +251,15 @@ public sealed class AppHost : IAsyncDisposable
         var kindFilter = BridgeJson.GetString(message, "kind") ?? "all";
         var limit = Math.Clamp(BridgeJson.GetInt(message, "limit") ?? 2000, 1, 20000);
 
-        var job = _engine.Find(jobId);
-        if (job is null) return null;
+          var job = _engine.Find(jobId);
+          if (job is null) return null;
 
-        var items = job.Items.AsEnumerable();
+          // Ghi nhớ job đang mở để các lần đẩy trạng thái về sau kèm luôn danh sách tệp.
+          // Không có dòng này thì bảng chi tiết chỉ hiện ảnh chụp tại lúc mở và tiến độ
+          // từng tệp không bao giờ chạy.
+          _openJobId = jobId;
+
+          var items = job.Items.AsEnumerable();
 
         if (!string.IsNullOrEmpty(search))
         {
@@ -625,6 +635,78 @@ public sealed class AppHost : IAsyncDisposable
         var text = BridgeJson.GetString(message, "message");
         if (!string.IsNullOrWhiteSpace(text)) Diagnostic.Log($"[js] {text}");
         return null;
+    }
+
+    /// <summary>Dữ liệu cho màn hình so sánh: bản gốc đứng cạnh bản đã nén.</summary>
+    private async Task<System.Text.Json.Nodes.JsonNode?> GetCompareAsync(BridgeMessage message)
+    {
+        var jobId = BridgeJson.GetString(message, "jobId");
+        var filePath = BridgeJson.GetString(message, "filePath");
+        if (jobId is null || filePath is null) return null;
+
+        var job = _engine.Find(jobId);
+        var item = job?.Items.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return ToNode(new { ok = false, error = "Không tìm thấy tệp trong job." });
+
+        try
+        {
+            var result = await _compare.BuildAsync(item, job!.OutputFolder);
+            return result is null
+                ? ToNode(new { ok = false, error = "Tệp không còn tồn tại trên đĩa." })
+                : ToNode(new { ok = true, compare = result });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("compare", $"Không dựng được dữ liệu so sánh: {ex.Message}", ex);
+            return ToNode(new { ok = false, error = ex.Message });
+        }
+    }
+
+    /// <summary>Mở tệp bằng trình phát ngoài, để so nghe/xem thật hai bên.</summary>
+    private System.Text.Json.Nodes.JsonNode? PlayFile(BridgeMessage message)
+    {
+        var path = BridgeJson.GetString(message, "path");
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return ToNode(new { ok = false, error = "Không tìm thấy tệp." });
+        }
+
+        var ffplay = _tools.PathOf(ToolKind.FFplay);
+
+        try
+        {
+            if (ffplay is not null && File.Exists(ffplay))
+            {
+                // -autoexit để cửa sổ tự đóng khi hết, -fs chơi toàn màn hình.
+                new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = ffplay,
+                        UseShellExecute = false,
+                        ArgumentList = { "-autoexit", "-fs", path },
+                    },
+                }.Start();
+
+                return ToNode(new { ok = true, player = "ffplay" });
+            }
+
+            // Không có ffplay thì đưa cho trình liên kết mặc định của Windows.
+            new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true,
+                },
+            }.Start();
+
+            return ToNode(new { ok = true, player = "system" });
+        }
+        catch (Exception ex)
+        {
+            return ToNode(new { ok = false, error = ex.Message });
+        }
     }
 
     private static System.Text.Json.Nodes.JsonNode? BuildGuide() => ToNode(new

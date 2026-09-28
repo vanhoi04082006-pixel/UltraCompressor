@@ -39,6 +39,11 @@ internal static class Program
             }
 
             var locator = new ToolLocator(AppPaths.BaseDirectory, config.Tools);
+            foreach (var dir in FindDevToolDirectories())
+            {
+                locator.AddSearchDirectory(dir);
+            }
+
             var tools = new ToolChain(locator, new ToolHealthChecker(locator));
             var session = new SessionStore(AppPaths.SessionFile);
             host = new AppHost(config, tools, logger, session);
@@ -95,6 +100,33 @@ internal static class Program
         {
             Diagnostic.Log($"Kiểm tra công cụ lỗi: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Tìm thư mục <c>tools\</c> của dự án khi chạy thử bằng <c>dotnet run</c>.
+    ///
+    /// Cài thật thì ffmpeg và gifsicle nằm cạnh tệp thực thi. Nhưng khi chạy thử, tệp thực
+    /// thi nằm ở <c>bin\Debug\net10.0-windows\</c> — không có công cụ nào cạnh bên, nên ứng
+    /// dụng báo nhầm thiếu Gifsicle trong khi người dùng đã đặt nó vào <c>tools\</c>.
+    /// </summary>
+    private static List<string> FindDevToolDirectories()
+    {
+        var found = new List<string>();
+        var dir = new DirectoryInfo(AppPaths.BaseDirectory);
+
+        for (var i = 0; i < 8 && dir is not null; i++)
+        {
+            foreach (var relative in new[] { "tools", Path.Combine("src", "UltraCompressor.App", "tools") })
+            {
+                var candidate = Path.Combine(dir.FullName, relative);
+                if (found.Contains(candidate)) continue;
+                if (Directory.Exists(candidate)) found.Add(candidate);
+            }
+
+            dir = dir.Parent;
+        }
+
+        return found;
     }
 
     private static LogLevel ParseLogLevel(string? value) => value?.ToLowerInvariant() switch

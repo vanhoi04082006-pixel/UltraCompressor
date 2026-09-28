@@ -577,6 +577,12 @@ input[type="search"]:focus { background: var(--bg-sunken); border-color: var(--a
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Mẹo cắt chữ từ BÊN TRÁI, giữ lại phần cuối của đường dẫn — phần cuối mới là thông
+   tin quan trọng ("\media\Phim"). Chỉ áp cho đường dẫn: nếu áp chung cho mọi .sub thì
+   "-12.2%" sẽ bị đảo thành "2.2%1-". */
+.grid .col-name > .sub {
   direction: rtl;
   text-align: left;
 }
@@ -682,6 +688,42 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
   text-align: right;
 }
 
+/* Thanh nhỏ nằm trong ô trạng thái, không phải thanh tổng của job. */
+.progress.is-inline {
+  min-width: 0;
+  margin-top: var(--space-1);
+}
+
+.progress.is-inline .progress-text { min-width: 34px; }
+
+/* Tên tệp đang nén, hiện dưới thanh tiến độ của job. */
+.active-file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.active-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.active-pct {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ============================================================ rỗng */
 
 .empty {
@@ -737,6 +779,89 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
 .dotok { background: var(--ok); }
 .dotbad { background: var(--danger); }
 .dotwarn { background: var(--warn); }
+
+/* ============================================================ so sánh trước / sau */
+
+.compare-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.compare-saved {
+  font-weight: 600;
+  color: var(--ok);
+}
+
+.compare-note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.compare-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.compare-col header h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* Hai ảnh phải cùng cao để so được. Khung cố định chiều cao, ảnh nằm giữa. */
+.compare-shot {
+  display: grid;
+  place-items: center;
+  height: 300px;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.compare-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.compare-none {
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+  margin: 0;
+  max-width: 30ch;
+}
+
+.compare-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: 12px;
+}
+
+.compare-facts dt { color: var(--text-faint); }
+.compare-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .compare-grid { grid-template-columns: 1fr; }
+  .compare-shot { height: 220px; }
+}
 
 /* ============================================================ hộp thoại */
 

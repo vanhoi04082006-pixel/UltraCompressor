@@ -53,10 +53,12 @@
 </header>
 
 <div class="toolbar">
-    <button class="btn btn-primary" id="btnAdd" title="Thêm thư mục (Ctrl+O)"><span class="ico">＋</span> Thêm thư mục</button>
+  <button class="btn btn-primary" id="btnAdd" title="Thêm thư mục (Ctrl+O)"><span class="ico">＋</span> Thêm thư mục</button>
+  <button class="btn btn-primary-soft" id="btnAddFiles" title="Thêm tệp lẻ (Ctrl+Shift+O)"><span class="ico">＋</span> Thêm tệp</button>
   <button class="btn btn-go" id="btnStart" title="Bắt đầu (Ctrl+Enter)" disabled><span class="ico">▶</span> Bắt đầu</button>
   <button class="btn btn-warn" id="btnPause" title="Tạm dừng / Tiếp tục (Space)" disabled><span class="ico">❙❙</span> Tạm dừng</button>
   <button class="btn btn-danger-ghost" id="btnStop" title="Dừng tất cả" disabled><span class="ico">■</span> Dừng</button>
+
 
   <div class="toolbar-sep" role="separator"></div>
 
@@ -78,9 +80,12 @@
     </select>
   </label>
 
-  <label class="field" id="exportField" hidden>
+  <label class="field field-wide" id="exportField" hidden>
     <span>Thư mục đích</span>
-    <input type="text" id="txtExport" placeholder="D:\Ket qua sau khi nen" spellcheck="false">
+    <span class="field-inline">
+      <input type="text" id="txtExport" placeholder="D:\Ket qua sau khi nen" spellcheck="false">
+      <button class="btn btn-ghost btn-sm" id="btnPickExport" title="Chọn thư mục đích">Chọn…</button>
+    </span>
   </label>
 
   <div class="toolbar-spacer"></div>
@@ -113,7 +118,7 @@
 <main class="workspace">
   <section class="panel panel-jobs">
     <div class="panel-head">
-      <h2>Danh sách thư mục</h2>
+      <h2>Danh sách hàng đợi</h2>
       <div class="panel-head-actions">
         <input type="search" id="searchJobs" placeholder="Lọc theo tên…" spellcheck="false">
         <button class="btn btn-ghost btn-sm" id="btnUndoAll" title="Hoàn tác mọi job đã nén" disabled><span class="ico">↩</span> Hoàn tác tất cả</button>
@@ -124,11 +129,12 @@
       <table class="grid" id="jobTable">
         <thead>
           <tr>
-            <th>Thư mục</th>
+            <th class="col-kind"></th>
+            <th>Thư mục / tệp</th>
             <th>Trạng thái</th>
             <th class="num">Tiết kiệm</th>
             <th class="num">ETA</th>
-            <th>Tiến độ</th>
+            <th class="col-progress">Tiến độ</th>
             <th class="actions-col"></th>
           </tr>
         </thead>
@@ -136,8 +142,9 @@
       </table>
       <div class="empty" id="jobEmpty">
         <div class="empty-art" aria-hidden="true">⬓</div>
-        <h3>Chưa có thư mục nào</h3>
-        <p>Bấm <b>Thêm thư mục</b> hoặc nhấn <code>Ctrl+O</code>.<br>Thư mục con cũng được quét tự động.</p>
+        <h3>Chưa có gì để nén</h3>
+        <p>Bấm <b>Thêm thư mục</b> / <b>Thêm tệp</b>, kéo thả thư mục hoặc tệp vào cửa sổ này,
+           hoặc nhấn <code>Ctrl+O</code>.<br>Thư mục con cũng được quét tự động.</p>
       </div>
     </div>
   </section>
@@ -174,6 +181,7 @@
             <th class="num">Cũ</th>
             <th class="num">Mới</th>
             <th class="num">Kết quả</th>
+            <th class="num col-pct">%</th>
             <th>Trạng thái</th>
             <th class="actions-col"></th>
           </tr>
@@ -185,10 +193,21 @@
   </section>
 </main>
 
+<!-- Lớp phủ hiện lên khi đang kéo tệp / thư mục vào cửa sổ. -->
+<div class="dropzone" id="dropzone" hidden aria-hidden="true">
+  <div class="dropzone-inner">
+    <div class="dropzone-icon">⬓</div>
+    <div class="dropzone-title">Thả vào đây</div>
+    <div class="dropzone-sub">Thư mục hoặc tệp lẻ — thả bao nhiêu cũng được</div>
+  </div>
+</div>
+
 <footer class="statusbar">
   <div class="status-left"><span class="tool-chip" id="toolChips"></span></div>
   <div class="status-right">
-    <button class="linkbtn" id="btnOpenData" title="Mở thư mục dữ liệu">Thư mục dữ liệu</button>
+    <button class="linkbtn" id="btnOpenProject" title="Mở thư mục dự án">Thư mục dự án</button>
+    <span class="dot" aria-hidden="true">·</span>
+    <button class="linkbtn" id="btnOpenData" title="Mở thư mục dữ liệu">Dữ liệu</button>
     <span class="dot" aria-hidden="true">·</span>
     <button class="linkbtn" id="btnCheckTools" title="Kiểm tra lại công cụ">Kiểm tra công cụ</button>
   </div>
@@ -205,6 +224,10 @@
     <div class="modal-body">
       <section class="fieldset">
         <h3>Nén</h3>
+        <p class="hint hint-lead">
+          Mức nén là <b>một con số dùng chung</b> cho mọi loại media, nhưng mỗi loại đọc tham số
+          riêng từ nó. Xem bảng đầy đủ ở mục <b>Tham số nén</b> trong Hướng dẫn.
+        </p>
         <label class="row">
           <span>Tiết kiệm tối thiểu để chấp nhận</span>
           <input type="number" id="cfgMinSaving" min="0" max="90" step="0.5" class="input-num">
@@ -264,6 +287,18 @@
             <option value="Error">Error</option>
           </select>
         </label>
+      </section>
+
+      <section class="fieldset">
+        <h3>Nơi lưu dữ liệu</h3>
+        <p class="hint">
+          Mọi thứ của ứng dụng nằm trong thư mục dự án, không rải ở ổ đĩa khác:
+          cấu hình, phiên làm việc, nhật ký, tệp nén tạm và dữ liệu trình duyệt.
+        </p>
+        <dl class="pathlist">
+          <dt>Dự án</dt><dd id="cfgProjectDir" class="mono">—</dd>
+          <dt>Dữ liệu</dt><dd id="cfgDataDir" class="mono">—</dd>
+        </dl>
       </section>
     </div>
 

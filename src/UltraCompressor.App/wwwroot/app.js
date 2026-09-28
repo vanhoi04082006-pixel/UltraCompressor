@@ -46,10 +46,15 @@ function handleEvent(name, data) {
     state = data;
     renderAll();
   } else if (name === 'items') {
+    // Bỏ qua nếu người dùng đã đóng bảng chi tiết, tránh dựng lại hàng loạt DOM cho
+    // một bảng không ai nhìn.
+    if (data.jobId !== openJobId) return;
     items = data.items || [];
-    if (data.jobId === openJobId) renderItems();
-  } else if (name === 'foldersDropped') {
-    addFolders(data.paths || []);
+    renderItems();
+  } else if (name === 'pathsDropped') {
+    addPaths(data.paths || []);
+  } else if (name === 'dropHover') {
+    $('dropzone').hidden = !data.active;
   } else if (name === 'notice') {
     toast(data.message, data.level || 'info');
   }
@@ -68,6 +73,9 @@ let itemSearch = { search: '', state: 'all', kind: 'all' };
 // ---------------------------------------------------------------- tiện ích
 
 const KIND_LABEL = { Image: 'Ảnh', Video: 'Video', Audio: 'Âm thanh', Gif: 'GIF', Pdf: 'PDF' };
+
+/* Viết tắt 2 ký tự cho badge cột đầu. Rút gọn vì cột này chỉ 24px. */
+const KIND_SHORT = { Image: 'Ả', Video: 'VD', Audio: 'Â', Gif: 'GIF', Pdf: 'PDF' };
 
 const STATUS_TAG = {
   Waiting:   'tag-queued',
@@ -190,7 +198,7 @@ function renderSummary() {
 function renderJobs() {
   const body = $('jobBody');
   const jobs = state.jobs.filter((j) =>
-    !searchTerm || j.folderName.toLowerCase().includes(searchTerm));
+    !searchTerm || j.displayName.toLowerCase().includes(searchTerm));
 
   $('jobEmpty').style.display = state.jobs.length === 0 ? 'flex' : 'none';
   $('jobTable').style.display = state.jobs.length === 0 ? 'none' : 'table';
@@ -205,15 +213,29 @@ function jobRow(job) {
   const tr = el('tr');
   if (job.id === openJobId) tr.classList.add('selected');
 
-  // Thư mục
+  // Badge loại: thư mục thì gộp theo loại nhiều nhất, tệp lẻ thì theo chính tệp đó.
+  const kinds = job.kindCounts ? Object.keys(job.kindCounts) : [];
+  const primary = job.isFileJob
+    ? (kinds[0] || 'File')
+    : (kinds.sort((a, b) => (job.kindCounts[b] || 0) - (job.kindCounts[a] || 0))[0] || 'File');
+
+  tr.appendChild(el('td', 'col-kind')).appendChild(
+    el('span', `kind-badge k-${primary}`, job.isFileJob ? 'F' : (KIND_SHORT[primary] || '?')));
+  tr.title = `${job.displayName} — ${job.totalFiles} tệp`;
+
   // Tên và đường dẫn phải nằm trong span riêng: đặt trực tiếp vào <td> thì
   // max-width của ô không có tác dụng với bảng có table-layout auto, chữ sẽ tràn
-  // sang ô bên cạnh khi bảng chi tiết làm cột này bị bóp.
+  // sang ô bên cạnh khi bảng chi tiết làm cột này bị bớp.
   const tdName = el('td', 'col-name');
-  tdName.appendChild(el('span', 'j-name', job.folderName));
+
+  const name = el('span', 'j-name');
+  if (job.isFileJob) name.appendChild(el('span', 'file-tag', 'TỆP'));
+  name.appendChild(document.createTextNode(job.displayName));
+  tdName.appendChild(name);
   tdName.appendChild(el('span', 'sub', job.folderPath));
   tdName.title = job.folderPath;
   tr.appendChild(tdName);
+
 
   // Trạng thái
   const tdStatus = el('td');
@@ -234,18 +256,23 @@ function jobRow(job) {
   // ETA
   tr.appendChild(el('td', 'num', job.etaText || '—'));
 
-  // Tiến độ
-  const tdProgress = el('td');
+  // Tiến độ: hai dòng để vừa trong cột hẹp. Dòng trên là thanh + phần trăm tổng thể,
+  // dòng dưới là số tệp và tệp đang nén. Gộp tất cả vào một dòng thì ở 150px các con số
+  // tràn sang ô bên cạnh và đè lên nút thao tác.
+  const tdProgress = el('td', 'col-progress');
   const wrap = el('div', 'progress');
+  const top = el('div', 'progress-top');
   const bar = el('div', 'progress-bar');
   const fill = el('div', 'progress-fill');
   if (job.status === 'PendingReview' || job.status === 'Committed') fill.classList.add('is-done');
   if (job.status === 'Failed') fill.classList.add('is-error');
   fill.style.width = `${Math.max(0, Math.min(100, job.progress))}%`;
   bar.appendChild(fill);
-  wrap.appendChild(bar);
-  wrap.appendChild(el('span', 'progress-text', `${job.progress}%`));
-  wrap.appendChild(el('span', 'progress-text', `${job.processedCount}/${job.totalFiles}`));
+  top.append(bar, el('span', 'progress-text', `${job.progress}%`));
+  wrap.appendChild(top);
+
+  const bottom = el('div', 'progress-bottom');
+  bottom.appendChild(el('span', 'progress-text', `${job.processedCount}/${job.totalFiles}`));
 
   // Khi job đang chạy, thanh tổng chỉ là số tệp. Người dùng cần biết đang bận tệp nào và
   // tới đâu — tệp nào kẹt ở 0% suốt 20 phút thì nhìn số tệp không thấy khác gì.
@@ -254,9 +281,12 @@ function jobRow(job) {
     active.appendChild(el('span', 'active-name', job.activeFileName));
     active.appendChild(el('span', 'active-pct', `${Math.max(0, job.activePercent)}%`));
     active.title = `Đang nén: ${job.activeFileName}`;
-    wrap.appendChild(active);
+    bottom.appendChild(active);
+  } else {
+    bottom.appendChild(el('span', 'active-name', '—'));
   }
 
+  wrap.appendChild(bottom);
   tdProgress.appendChild(wrap);
   tr.appendChild(tdProgress);
 
@@ -273,7 +303,7 @@ function jobRow(job) {
   }
   if (job.canCancel) {
     actions.appendChild(iconButton('✕', 'Dừng job này', async () => {
-      if (await confirmDialog({ title: 'Dừng job', text: `Dừng xử lý “${job.folderName}”?`, okText: 'Dừng' })) {
+      if (await confirmDialog({ title: 'Dừng job', text: `Dừng xử lý “${job.displayName}”?`, okText: 'Dừng' })) {
         await call('cancelJob', { jobId: job.id });
       }
     }, 'danger'));
@@ -371,9 +401,11 @@ function renderStatusbar() {
 
 async function openDetail(jobId) {
   openJobId = jobId;
+  itemRows.clear();
+  delete $('itemBody').dataset.signature;
   document.querySelector('.workspace').classList.add('split');
   $('detailPanel').hidden = false;
-  $('detailTitle').textContent = state.jobs.find((j) => j.id === jobId)?.folderName || 'Chi ti?t';
+  $('detailTitle').textContent = state.jobs.find((j) => j.id === jobId)?.displayName || 'Chi tiết';
   await loadItems();
 }
 
@@ -461,6 +493,12 @@ function renderCompareSide(prefix, side) {
 
   $(`name${prefix}`).textContent = side.fileName;
 
+  // GIF hiển thị bằng ảnh xem trước tĩnh, KHÔNG nhúng thẳng tệp .gif.
+  //
+  // Một GIF động nhúng bằng <img> sẽ vẽ lại liên tục trong đúng tiến trình
+  // msedgewebview2 đang render cả giao diện, cộng dồn với video đang phát hai bên thì
+  // kéo cả cửa sổ xuống khung hình. Ảnh tĩnh vẫn so được chất lượng mà không tốn gì; muốn
+  // xem bản động thì bấm "Mở bản gốc ra ngoài".
   if (side.url && side.kind === 'Video') {
     const video = document.createElement('video');
     video.src = side.url;
@@ -470,7 +508,7 @@ function renderCompareSide(prefix, side) {
     video.setAttribute('playsinline', '');
     shot.appendChild(video);
     comparePlayers[key] = video;
-  } else if (side.url && (side.kind === 'Image' || side.kind === 'Gif')) {
+  } else if (side.url && side.kind === 'Image') {
     const img = document.createElement('img');
     img.src = side.url;
     img.alt = side.fileName;
@@ -489,9 +527,17 @@ function renderCompareSide(prefix, side) {
     img.alt = side.fileName;
     img.className = 'compare-media';
     shot.appendChild(img);
+  } else if (side.kind === 'Gif' && side.url) {
+    // Không dựng được ảnh xem trước (thiếu ffmpeg) — vẫn hiện tệp thật cho có gì đó xem.
+    const img = document.createElement('img');
+    img.src = side.url;
+    img.alt = side.fileName;
+    img.className = 'compare-media';
+    shot.appendChild(img);
   } else {
     shot.appendChild(el('p', 'compare-none', 'Không có ảnh xem trước'));
   }
+
 
   const rows = [
     ['Dung lượng', side.sizeText],
@@ -574,9 +620,149 @@ function initCompareSplit() {
 
 
 
+/* ============================================================ bảng chi tiết */
+
+/*
+ * Giữ nguyên phần tử DOM của từng tệp thay vì dựng lại bảng mỗi 250 ms.
+ *
+ * Trước đây renderItems() xoá sạch tbody rồi tạo lại toàn bộ hàng, 4 lần mỗi giây:
+ * mọi nút bị tạo lại, trạng thái rê chuột mất, và với job vài nghìn tệp thì đó là hàng
+ * nghìn phần tử bị huỷ tạo mới mỗi lần — một trong các nguồn làm giao diện nặng.
+ * Nay chỉ dựng lại khi danh sách tệp thực sự đổi; nếu không thì chỉ ghi vào ô cũ.
+ */
+const itemRows = new Map();
+
+function renderItems() {
+  const body = $('itemBody');
+
+  // Danh sách tệp có đổi không (thêm/xoá/lọc)? Đổi thì dựng lại hàng.
+  const signature = items.map((i) => i.filePath).join('\u0000');
+  if (body.dataset.signature !== signature) {
+    body.dataset.signature = signature;
+    body.innerHTML = '';
+    itemRows.clear();
+    for (const item of items) body.appendChild(buildItemRow(item));
+  } else {
+    for (const item of items) updateItemRow(item);
+  }
+
+  const job = state.jobs.find((j) => j.id === openJobId);
+  const total = job ? job.totalFiles : 0;
+  const shown = items.length;
+  $('itemFoot').textContent = shown === total
+    ? `${total} tệp`
+    : `Hiện ${shown} / ${total} tệp`;
+}
+
+function buildItemRow(item) {
+  const tr = el('tr');
+  tr.dataset.path = item.filePath;
+
+  const tdName = el('td', 'col-name');
+  tdName.appendChild(document.createTextNode(item.fileName));
+  const sub = el('span', 'sub');
+  tdName.appendChild(sub);
+  tdName.title = item.filePath;
+  tr.appendChild(tdName);
+
+  tr.appendChild(el('td', 'num')).textContent = item.oldSizeText;
+  tr.appendChild(el('td', 'num'));
+  tr.appendChild(el('td', 'num'));
+
+  const tdPct = el('td', 'num col-pct');
+  tdPct.appendChild(el('span', 'pct-val'));
+  tr.appendChild(tdPct);
+
+  tr.appendChild(el('td'));
+
+  const tdActions = el('td', 'actions-col');
+  const actions = el('div', 'row-actions');
+
+  const previewBtn = iconButton('▷', 'Xem bản gốc', () => preview(item, true));
+  const compareBtn = iconButton('◫', 'So sánh bản gốc với bản nén', () =>
+    openCompare(openJobId, item.filePath));
+  const undoBtn = iconButton('↩', 'Khôi phục tệp này', () => undoItem(item), 'danger');
+  undoBtn.hidden = true;
+  const openBtn = iconButton('📂', 'Mở thư mục chứa tệp', () =>
+    call('openPath', { path: item.filePath }));
+
+  actions.append(previewBtn, compareBtn, undoBtn, openBtn);
+  tdActions.appendChild(actions);
+  tr.appendChild(tdActions);
+
+  const cells = tr.querySelectorAll('td');
+  const row = {
+    tr,
+    name: tdName,
+    sub,
+    oldSize: cells[1],
+    newSize: cells[2],
+    result: cells[3],
+    pct: cells[4],
+    state: cells[5],
+    previewBtn,
+    undoBtn,
+  };
+
+  itemRows.set(item.filePath, row);
+  updateItemRow(item);
+  return tr;
+}
+
+function updateItemRow(item) {
+  const row = itemRows.get(item.filePath);
+  if (!row) return;
+
+  // Trạng thái + thanh tiến độ từng tệp, luôn có mặt ở cột % kể cả khi tệp đang chờ.
+  //
+  // Trước đây thanh chỉ hiện khi `isProcessing`, và mất ngay khi tệp xong — nên không
+  // bao giờ thấy con số 100% của bất kỳ tệp nào, cũng không biết tệp đang chạy ở mức nào.
+  const running = item.isProcessing;
+  const done = item.state === 'done';
+  const pct = done ? 100 : (running ? Math.max(0, item.percent || 0) : 0);
+
+  row.pct.classList.toggle('is-running', running);
+  row.pct.classList.toggle('is-done', done);
+  row.pct.firstChild.textContent = running ? `${pct}%` : (done ? '100%' : '—');
+
+  row.sub.textContent = [item.kind, item.durationText, item.elapsedText && `nén ${item.elapsedText}`]
+    .filter(Boolean).join(' · ');
+
+  row.oldSize.textContent = item.oldSizeText;
+  row.newSize.textContent = (item.isApplied || item.isPredicted || item.detail) ? item.newSizeText : '—';
+
+  row.result.innerHTML = '';
+  if (item.savedBytes > 0) {
+    row.result.appendChild(el('div', null, item.savedText));
+    if (item.savedPercentText) row.result.appendChild(el('span', 'sub', item.savedPercentText));
+  } else {
+    row.result.appendChild(document.createTextNode('—'));
+  }
+
+  const tagClass = done ? 'tag-done'
+    : item.state === 'skipped' ? 'tag-skipped'
+    : item.state === 'predicted' ? 'tag-review'
+    : running ? 'tag-running' : 'tag-queued';
+
+  row.state.innerHTML = '';
+  row.state.appendChild(el('span', `tag ${tagClass}`, item.stateText));
+  if (item.detail) {
+    row.state.appendChild(el('div', 'sub', item.detail));
+    row.state.title = item.message || item.detail;
+  } else {
+    row.state.title = item.message || '';
+  }
+
+  row.previewBtn.hidden = !(item.canPreview && item.hasBackup);
+  row.undoBtn.hidden = !(item.isApplied && item.hasBackup);
+}
+
 function closeDetail() {
   openJobId = null;
   items = [];
+  itemRows.clear();
+  $('itemBody').innerHTML = '';
+  delete $('itemBody').dataset.signature;
   document.querySelector('.workspace').classList.remove('split');
   $('detailPanel').hidden = true;
   renderJobs();
@@ -594,86 +780,38 @@ async function loadItems() {
   renderItems();
 }
 
-function renderItems() {
-  const body = $('itemBody');
-  body.innerHTML = '';
-
-  for (const item of items) {
-    const tr = el('tr');
-
-    const tdName = el('td', 'col-name');
-    tdName.appendChild(document.createTextNode(item.fileName));
-    const sub = el('span', 'sub', item.kind + (item.durationText ? ` · ${item.durationText}` : ''));
-    tdName.appendChild(sub);
-    tdName.title = item.filePath;
-    tr.appendChild(tdName);
-
-    tr.appendChild(el('td', 'num', item.oldSizeText));
-    tr.appendChild(el('td', 'num', item.isApplied || item.detail ? item.newSizeText : '—'));
-
-    const tdResult = el('td', 'num');
-    tdResult.appendChild(el('div', null, item.savedText && item.savedBytes > 0 ? item.savedText : '—'));
-    if (item.savedPercentText) tdResult.appendChild(el('span', 'sub', item.savedPercentText));
-    tr.appendChild(tdResult);
-
-    const tdState = el('td');
-    const tagClass = item.state === 'done' ? 'tag-done'
-      : item.state === 'skipped' ? 'tag-skipped'
-      : item.state === 'predicted' ? 'tag-review'
-      : item.state === 'processing' ? 'tag-running' : 'tag-queued';
-    tdState.appendChild(el('span', `tag ${tagClass}`, item.stateText));
-    if (item.detail) {
-      tdState.appendChild(el('div', 'sub', item.detail));
-      tdState.title = item.message || item.detail;
-    }
-
-    // Thanh tiến độ riêng cho tệp đang nén. Không có nó thì một tập video 20 phút và một
-    // tệp ảnh nhỏ đều chỉ hiện "Đang xử lý" — không phân biệt được tệp nào sắp xong.
-    if (item.isProcessing) {
-      const bar = el('div', 'progress is-inline');
-      const fill = el('div', 'progress-fill');
-      fill.style.width = `${Math.max(0, Math.min(100, item.percent))}%`;
-      bar.appendChild(fill);
-      bar.appendChild(el('span', 'progress-text', `${Math.max(0, item.percent)}%`));
-      tdState.appendChild(bar);
-    }
-
-    tr.appendChild(tdState);
-
-    const tdActions = el('td', 'actions-col');
-    const actions = el('div', 'row-actions');
-
-    if (item.canPreview && item.hasBackup) {
-      actions.appendChild(iconButton('▷', 'Xem bản gốc', () => preview(item, true)));
-    }
-    actions.appendChild(iconButton('◫', 'So sánh bản gốc với bản nén', () =>
-      openCompare(openJobId, item.filePath)));
-    if (item.isApplied && item.hasBackup) {
-      actions.appendChild(iconButton('↩', 'Khôi phục tệp này', () => undoItem(item), 'danger'));
-    }
-    actions.appendChild(iconButton('📂', 'Mở thư mục chứa tệp', () =>
-      call('openPath', { path: item.filePath })));
-
-    tdActions.appendChild(actions);
-    tr.appendChild(tdActions);
-    body.appendChild(tr);
-  }
-
-  const total = state.jobs.find((j) => j.id === openJobId)?.totalFiles || 0;
-  $('itemFoot').textContent = `Hiện ${items.length} / ${total} tệp`;
-}
-
 // ============================================================ hành động
 
-async function addFolders(paths) {
+/* Thêm thư mục hoặc tệp lẻ. Dùng chung cho nút bấm và kéo-thả nên hai đường không lệch nhau. */
+async function addPaths(paths) {
   if (!paths || paths.length === 0) return;
-  const data = await call('addFolder', { paths });
+
+  let data;
+  try {
+    data = await call('addPaths', { paths });
+  } catch (err) {
+    toast(err.message, 'error');
+    return;
+  }
+
+  reportAdded(data);
+}
+
+function reportAdded(data) {
+  const results = data?.results || [];
   const problems = data?.problems || [];
-  const added = (data?.results || []).filter((r) => r.added).reduce((n, r) => n + r.files, 0);
+  const added = results.filter((r) => r.added).reduce((n, r) => n + r.files, 0);
 
   if (added > 0) toast(`Đã thêm ${added} tệp vào danh sách.`, 'ok');
-    for (const p of problems) toast(p, 'warn');
-  }
+  for (const p of problems) toast(p, 'warn');
+}
+
+async function browse(folderPicker) {
+  const result = await call(folderPicker ? 'browseFolder' : 'browseFiles');
+  if (!result || result.cancelled) return;
+  if (result.ok === false) { toast(result.error || 'Không mở được hộp thoại.', 'error'); return; }
+  reportAdded(result);
+}
 
 async function start() {
   const mode = $('selMode').value;
@@ -722,7 +860,7 @@ async function removeJob(job) {
   if (job.pendingBackups > 0) {
     const ok = await confirmDialog({
       title: 'Bỏ khỏi danh sách',
-      text: `Job “${job.folderName}” đã ghi đè ${job.pendingBackups} tệp. Bỏ khỏi danh sách không hoàn tác — bản gốc vẫn nằm trong các tệp .bak.`,
+      text: `Job “${job.displayName}” đã ghi đè ${job.pendingBackups} tệp. Bỏ khỏi danh sách không hoàn tác — bản gốc vẫn nằm trong các tệp .bak.`,
       okText: 'Bỏ khỏi danh sách',
     });
     if (!ok) return;
@@ -735,7 +873,7 @@ async function reviewJob(job) {
   if (job.dryRun) {
     const ok = await confirmDialog({
       title: 'Duyệt kết quả',
-      text: `Nén thật ${job.folderName} và thay thế tệp gốc? Bản gốc được giữ ở tệp .bak cùng thư mục và có thể hoàn tác bất cứ lúc nào.`,
+      text: `Nén thật ${job.displayName} và thay thế tệp gốc? Bản gốc được giữ ở tệp .bak cùng thư mục và có thể hoàn tác bất cứ lúc nào.`,
       okText: 'Nén và thay thế',
       danger: false,
     });
@@ -756,7 +894,7 @@ async function reviewJob(job) {
 
   const ok = await confirmDialog({
     title: 'Duyệt kết quả',
-    text: `Xoá ${job.pendingBackups} tệp sao lưu của “${job.folderName}”? Sau khi xoá sẽ không hoàn tác lại được nữa.`,
+    text: `Xoá ${job.pendingBackups} tệp sao lưu của “${job.displayName}”? Sau khi xoá sẽ không hoàn tác lại được nữa.`,
     okText: 'Duyệt và xoá bản sao lưu',
   });
   if (!ok) return;
@@ -771,14 +909,14 @@ async function reviewJob(job) {
       danger: false,
     });
   } else {
-    toast(`Đã duyệt “${job.folderName}”.`, 'ok');
+    toast(`Đã duyệt “${job.displayName}”.`, 'ok');
   }
 }
 
 async function undoJob(job) {
   const ok = await confirmDialog({
     title: 'Hoàn tác',
-    text: `Khôi phục bản gốc cho mọi tệp đã nén trong “${job.folderName}”? Các tệp nén sẽ bị thay bằng bản gốc.`,
+    text: `Khôi phục bản gốc cho mọi tệp đã nén trong “${job.displayName}”? Các tệp nén sẽ bị thay bằng bản gốc.`,
     okText: 'Hoàn tác',
   });
   if (!ok) return;
@@ -834,6 +972,8 @@ function openSettings() {
   $('cfgLogLevel').value = c.logLevel;
   $('selLevel').value = c.level;
   $('cpuHint').textContent = `Máy này có ${navigator.hardwareConcurrency || '?'} luồng xử lý. Để 0 để ứng dụng tự chọn.`;
+  $('cfgProjectDir').textContent = state.projectDirectory || '—';
+  $('cfgDataDir').textContent = state.dataDirectory || '—';
 
   renderToolList();
   openModal('modalSettings');
@@ -905,18 +1045,25 @@ async function showGuide() {
 
   const rows = (p) => `
     <tr><td>Video</td><td class="num">CRF ${p.crf}</td><td class="num">${p.preset}</td>
-        <td class="num">${p.maxWidth}px</td><td class="num">128k</td></tr>
+        <td class="num">${p.maxWidth}px</td><td class="num">${p.audioKbps}k</td></tr>
     <tr><td>Ảnh</td><td class="num">-q:v ${p.imageQuality}</td><td class="num">—</td>
         <td class="num">${p.maxWidth}px</td><td class="num">—</td></tr>
     <tr><td>Âm thanh</td><td class="num">${p.audioKbps}k</td><td class="num">—</td>
         <td class="num">—</td><td class="num">${p.audioKbps}k</td></tr>
-    <tr><td>GIF</td><td class="num">--lossy ${p.gifLossy}</td><td class="num">—</td>
+    <tr><td>GIF</td><td class="num">--lossy ${p.gifLossy}</td><td class="num">${p.gifFps} fps</td>
         <td class="num">—</td><td class="num">—</td></tr>
     <tr><td>PDF</td><td class="num">${p.pdf}</td><td class="num">—</td>
         <td class="num">—</td><td class="num">—</td></tr>`;
 
   $('guideBody').innerHTML = `
     <div class="guide">
+      <h3>Thêm việc vào danh sách</h3>
+      <ul>
+        <li><b>Thêm thư mục</b> hoặc <code>Ctrl+O</code> — thư mục con được quét tự động.</li>
+        <li><b>Thêm tệp</b> hoặc <code>Ctrl+Shift+O</code> — chọn một hoặc nhiều tệp lẻ.</li>
+        <li><b>Kéo thả</b> thư mục hoặc tệp vào bất kỳ đâu trong cửa sổ này.</li>
+      </ul>
+
       <h3>Ba cách ghi kết quả</h3>
       <p><b>Thử trước — chỉ xem kết quả</b> (mặc định): nén thật từng tệp để đo, ghi lại
       xem sẽ tiết kiệm bao nhiêu, rồi xoá kết quả. Tệp gốc không bị đụng tới.
@@ -926,19 +1073,18 @@ async function showGuide() {
       <p><b>Xuất kết quả ra thư mục khác</b>: giữ nguyên thư mục gốc, kết quả nằm ở
       thư mục đích với đúng cấu trúc thư mục con.</p>
 
-        <h3>Cách dùng</h3>
-        <ol>
-          <li>Bấm <b>Thêm thư mục</b> hoặc nhấn <code>Ctrl+O</code>. Thư mục con được quét
-              tự động.</li>
-          <li>Chọn <b>mức nén</b> và <b>cách ghi</b>.</li>
-          <li>Bấm <b>Bắt đầu</b>. Dòng thư mục cho biết đang nén tệp nào và tới đâu.</li>
-          <li>Mở <b>Chi tiết</b> để xem từng tệp, thanh tiến độ của từng tệp, tệp nào bị giữ
-              nguyên và vì sao.</li>
-          <li>Bấm <b>◫</b> trên một tệp để <b>so sánh song song</b> bản gốc với bản đã nén:
-              video và âm thanh phát thẳng trong ứng dụng, có thanh kéo giữa hai cột để
-              chia tỉ lệ.</li>
-          <li>Bấm <b>Duyệt</b> để áp dụng, hoặc <b>Hoàn tác</b> để trả bản gốc về.</li>
-        </ol>
+      <h3>Cách dùng</h3>
+      <ol>
+        <li>Thêm thư mục / tệp, hoặc kéo thả vào cửa sổ.</li>
+        <li>Chọn <b>mức nén</b> và <b>cách ghi</b>.</li>
+        <li>Bấm <b>Bắt đầu</b>. Dòng hàng đợi cho biết đang nén tệp nào và tới đâu.</li>
+        <li>Mở <b>Chi tiết</b> (nút ☰) để xem từng tệp. Cột <b>%</b> chạy theo từng tệp đang
+            nén, cột <b>Trạng thái</b> nói tệp nào bị giữ nguyên và vì sao.</li>
+        <li>Bấm <b>◫</b> trên một tệp để <b>so sánh song song</b> bản gốc với bản đã nén:
+            video và âm thanh phát thẳng trong ứng dụng, có thanh kéo giữa hai cột để
+            chia tỉ lệ.</li>
+        <li>Bấm <b>Duyệt</b> để áp dụng, hoặc <b>Hoàn tác</b> để trả bản gốc về.</li>
+      </ol>
 
       <h3>Vì sao tệp bị “Giữ nguyên”?</h3>
       <ul>
@@ -949,6 +1095,11 @@ async function showGuide() {
       </ul>
 
       <h3>Tham số nén</h3>
+      <p><b>Một mức nén là một con số dùng chung</b> cho mọi loại media — không có mức riêng
+      cho ảnh, cho video hay cho GIF. Nhưng mỗi loại đọc <b>thông số riêng</b> từ mức đó,
+      nên chọn “Cân bằng” nghĩa là đồng thời: video CRF 23, ảnh <code>-q:v 5</code>,
+      âm thanh 192k, PDF <code>/ebook</code>, GIF lossy 20/20 fps. Bảng dưới liệt kê
+      từng thông số cho ba mức.</p>
       <table>
         <thead><tr><th>Loại</th><th class="num">Nhẹ</th><th class="num">Cân bằng</th>
           <th class="num">Mạnh</th><th class="num">Âm thanh</th></tr></thead>
@@ -956,14 +1107,22 @@ async function showGuide() {
           ${g.levels.map(rows).join('')}
         </tbody>
       </table>
-      <p>Các tham số này giữ nguyên như bản gốc. Chỉ có ngưỡng “tiết kiệm tối thiểu” được
-      tách riêng và nằm trong Cài đặt, vì bản gốc gộp nhầm ngưỡng này vào mức nén nên mức
-      “Mạnh” lại khó đạt hơn mức “Nhẹ”.</p>
+      <p>Độ rộng tối đa dùng chung cho ảnh và video, nên ảnh cũng bị thu về cùng một bề rộng
+      với video ở mức đó. Tham số này lấy nguyên từ bản gốc; chỉ có ngưỡng “tiết kiệm tối
+      thiểu” được tách riêng và nằm trong Cài đặt, vì bản gốc gộp nhầm ngưỡng này vào mức
+      nén nên mức “Mạnh” lại khó đạt hơn mức “Nhẹ”.</p>
 
       <h3>Định dạng hỗ trợ</h3>
       <p>${(g.extensions || []).join(' · ')}</p>
       <p>WAV và FLAC được bỏ qua có chủ ý — chúng thường là bản lưu trữ, nén lại chỉ tổn hại.</p>
+
+      <h3>Nơi lưu dữ liệu</h3>
+      <dl class="pathlist">
+        <dt>Dự án</dt><dd class="mono">${escapeHtml(g.appDirectory || '—')}</dd>
+        <dt>Dữ liệu</dt><dd class="mono">${escapeHtml(g.dataDirectory || '—')}</dd>
+      </dl>
     </div>`;
+
 
   openModal('modalGuide');
 }
@@ -1007,13 +1166,12 @@ function formatTime(seconds) {
 // ============================================================ gắn sự kiện
 
 function wire() {
-  $('btnAdd').addEventListener('click', async () => {
-    const result = await call('browseFolder');
-    if (result?.cancelled) return;
+  $('btnAdd').addEventListener('click', () => browse(true));
+  $('btnAddFiles').addEventListener('click', () => browse(false));
 
-    const added = (result?.results || []).filter((r) => r.added).reduce((n, r) => n + r.files, 0);
-    if (added > 0) toast(`Đã thêm ${added} tệp vào danh sách.`, 'ok');
-    for (const p of result?.problems || []) toast(p, 'warn');
+  $('btnPickExport').addEventListener('click', async () => {
+    const result = await call('browseExport');
+    if (result?.ok && result.path) $('txtExport').value = result.path;
   });
 
   $('btnStart').addEventListener('click', start);
@@ -1056,7 +1214,7 @@ function wire() {
 
     for (const job of jobs) {
       const result = await call('undo', { jobId: job.id });
-      if (result?.Restored > 0) toast(`“${job.folderName}”: đã khôi phục ${result.Restored} tệp.`, 'ok');
+      if (result?.Restored > 0) toast(`“${job.displayName}”: đã khôi phục ${result.Restored} tệp.`, 'ok');
       for (const e of result?.Errors || []) toast(e, 'error');
     }
   });
@@ -1109,6 +1267,7 @@ function wire() {
     });
   }
   initCompareSplit();
+  $('btnOpenProject').addEventListener('click', () => call('openProject'));
   $('btnOpenData').addEventListener('click', () => call('openData'));
   $('btnCheckTools').addEventListener('click', async () => {
     const data = await call('checkTools');
@@ -1139,7 +1298,8 @@ function wire() {
     const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
     if (typing) return;
 
-    if (e.ctrlKey && e.key === 'o') { e.preventDefault(); $('btnAdd').click(); }
+    if (e.ctrlKey && e.shiftKey && (e.key === 'o' || e.key === 'O')) { e.preventDefault(); $('btnAddFiles').click(); }
+    else if (e.ctrlKey && e.key === 'o') { e.preventDefault(); $('btnAdd').click(); }
     else if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); if (!$('btnStart').disabled) start(); }
     else if (e.key === ' ') { e.preventDefault(); if (!$('btnPause').disabled) $('btnPause').click(); }
     else if (e.key === '?') { e.preventDefault(); showGuide(); }

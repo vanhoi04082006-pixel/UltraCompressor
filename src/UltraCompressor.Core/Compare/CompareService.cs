@@ -88,10 +88,14 @@ public sealed record CompareResult
 /// </summary>
 public sealed class CompareService(ToolLocator locator, TempWorkspace workspace, FileLogger? log = null)
 {
-    private const int ThumbWidth = 640;
+    private const int ThumbWidth = 480;
     private const long MaxThumbnailBytes = 8 * 1024 * 1024;
 
+    /// <summary>Số mục tối đa giữ lại. Không giới hạn thì mở nhiều tệp sẽ nuôi bộ nhớ vô hạn.</summary>
+    private const int MaxCacheEntries = 64;
+
     private readonly Dictionary<string, CompareResult> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _cacheGate = new();
 
     public async Task<CompareResult?> BuildAsync(
         JobItem item,
@@ -99,7 +103,10 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         CancellationToken token = default)
     {
         var key = item.FilePath + "|" + (outputFolder ?? string.Empty);
-        if (_cache.TryGetValue(key, out var cached)) return cached;
+        lock (_cacheGate)
+        {
+            if (_cache.TryGetValue(key, out var cached)) return cached;
+        }
 
         var currentExists = File.Exists(item.FilePath);
         if (!currentExists) return null;
@@ -156,7 +163,17 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
             CanPlay = item.Kind is MediaKind.Video or MediaKind.Audio,
         };
 
-        _cache[key] = result;
+        lock (_cacheGate)
+        {
+            if (_cache.Count >= MaxCacheEntries)
+            {
+                // FIFO: bỏ mục cũ nhất. Thứ tự chèn giữ nguyên trong Dictionary của .NET.
+                _cache.Remove(_cache.Keys.First());
+            }
+
+            _cache[key] = result;
+        }
+
         return result;
     }
 
@@ -292,12 +309,29 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         return null;
     }
 
+    /// <summary>
+    /// Dựng ảnh xem trước, có nhớ kết quả trên đĩa.
+    ///
+    /// Bước nhảy tới 10% thời lượng là thao tác đắt nhất của cả màn hình so sánh: với một
+    /// tệp MKV lớn, ffmpeg phải giải mã hàng loạt keyframe thì mới tới được vị trí đó,
+    /// và người dùng thấy một modal trắng chờ vài giây. Mỗi lần bấm lại vào cùng một tệp thì
+    /// chạy lại y hệt là lãng phí, nên kết quả được ghi lại trong thư mục tạm (tự dọn sau
+    /// 6 giờ lúc khởi động). Khoá gồm đường dẫn + kích thước + thời điểm sửa, nên nén lại
+    /// tệp thì ảnh cũ không bị dùng lại.
+    /// </summary>
     private async Task<string?> RenderWithFfmpegAsync(
         string ffmpeg,
         string inputPath,
         double? seconds,
         CancellationToken token)
     {
+        var info = new FileInfo(inputPath);
+        var stamp = $"{info.LastWriteTimeUtc.Ticks}-{info.Length}";
+        var cacheKey = Hash($"{inputPath}|{seconds:0.###}|{ThumbWidth}|{stamp}");
+
+        var cached = workspace.Root + Path.DirectorySeparatorChar + $"thumb-{cacheKey}.jpg";
+        if (TryReadDataUri(cached, out var hit)) return hit;
+
         var temp = workspace.CreatePath("thumb", ".jpg");
 
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
@@ -322,11 +356,33 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         args.AddRange(["-frames:v", "1"]);
         args.AddRange(["-vf", $"scale={ThumbWidth}:-2:flags=lanczos", "-q:v", "4", "-y", temp]);
 
-        return await FinishAsync(ffmpeg, args, temp, token);
+        var result = await ProcessRunner.RunAsync(ffmpeg, args, token: token);
+        if (!result.Succeeded || !File.Exists(temp)) return null;
+
+        var dataUri = ToDataUri(await File.ReadAllBytesAsync(temp, token));
+
+        try
+        {
+            File.Move(temp, cached, overwrite: true);
+            workspace.Release(temp);
+        }
+        catch
+        {
+            // Không nhớ được cũng không sao — vẫn trả ảnh vừa dựng.
+        }
+
+        return dataUri;
     }
 
     private async Task<string?> RenderWithGhostscriptAsync(string gs, string inputPath, CancellationToken token)
     {
+        var info = new FileInfo(inputPath);
+        var stamp = $"{info.LastWriteTimeUtc.Ticks}-{info.Length}";
+        var cacheKey = Hash($"{inputPath}|pdf|{stamp}");
+
+        var cached = workspace.Root + Path.DirectorySeparatorChar + $"thumb-{cacheKey}.jpg";
+        if (TryReadDataUri(cached, out var hit)) return hit;
+
         var temp = workspace.CreatePath("thumb", ".jpg");
 
         // Ghostscript đặt tệp đích bằng -sOutputFile và không có tùy chọn resize như ffmpeg.
@@ -339,26 +395,51 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
             inputPath,
         };
 
-        return await FinishAsync(gs, args, temp, token);
-    }
+        var result = await ProcessRunner.RunAsync(gs, args, token: token);
+        if (!result.Succeeded || !File.Exists(temp)) return null;
 
-    private async Task<string?> FinishAsync(
-        string tool,
-        IReadOnlyList<string> args,
-        string temp,
-        CancellationToken token)
-    {
+        var dataUri = ToDataUri(await File.ReadAllBytesAsync(temp, token));
+
         try
         {
-            var result = await ProcessRunner.RunAsync(tool, args, token: token);
-            if (!result.Succeeded || !File.Exists(temp)) return null;
-
-            var bytes = await File.ReadAllBytesAsync(temp, token);
-            return bytes.Length == 0 ? null : "data:image/jpeg;base64," + Convert.ToBase64String(bytes);
-        }
-        finally
-        {
+            File.Move(temp, cached, overwrite: true);
             workspace.Release(temp);
         }
+        catch
+        {
+            // Không nhớ được cũng không sao.
+        }
+
+        return dataUri;
+    }
+
+    private static string? ToDataUri(byte[] bytes) =>
+        bytes.Length == 0 ? null : "data:image/jpeg;base64," + Convert.ToBase64String(bytes);
+
+    private static bool TryReadDataUri(string path, out string dataUri)
+    {
+        dataUri = string.Empty;
+        try
+        {
+            if (!File.Exists(path)) return false;
+
+            var bytes = File.ReadAllBytes(path);
+            var uri = ToDataUri(bytes);
+            if (uri is null) return false;
+
+            dataUri = uri;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string Hash(string value)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes, 0, 10).ToLowerInvariant();
     }
 }

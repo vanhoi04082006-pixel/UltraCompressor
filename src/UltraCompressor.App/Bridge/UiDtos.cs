@@ -17,6 +17,22 @@ public sealed record JobDto
 
     public required string FolderName { get; init; }
 
+    /// <summary>
+    /// Tên hiện trên dòng danh sách. Khác <see cref="FolderName"/> khi job là một tệp lẻ:
+    /// lúc đó hiện tên tệp chứ không phải tên thư mục cha.
+    /// </summary>
+    public required string DisplayName { get; init; }
+
+    /// <summary>True khi job chỉ gồm một tệp lẻ, không phải cả thư mục.</summary>
+    public bool IsFileJob { get; init; }
+
+    /// <summary>
+    /// Số tệp theo loại trong job, ví dụ <c>{"Video": 12, "Image": 3}</c>. Giao diện dùng để
+    /// chọn badge ở cột đầu mà không phải dựng danh sách tệp cho từng job mỗi lần vẽ.
+    /// </summary>
+    public IReadOnlyDictionary<string, int> KindCounts { get; init; } = new Dictionary<string, int>();
+
+
     public required string FolderPath { get; init; }
 
     public required string Status { get; init; }
@@ -65,10 +81,15 @@ public sealed record JobDto
     /// <summary>Phần trăm của tệp đang nén, -1 khi không có tệp nào đang chạy.</summary>
     public int ActivePercent { get; init; } = -1;
 
-    public static JobDto From(Job job) => new()
+    public static JobDto From(Job job, long pendingBackups = -1) => new()
     {
         Id = job.Id,
         FolderName = job.FolderName,
+        DisplayName = job.DisplayName,
+        IsFileJob = job.IsFileJob,
+        KindCounts = job.Items
+            .GroupBy(i => i.Kind.ToString())
+            .ToDictionary(g => g.Key, g => g.Count()),
         FolderPath = job.FolderPath,
         Status = job.Status.ToString(),
         StatusText = JobStatusLabel(job.Status),
@@ -91,7 +112,7 @@ public sealed record JobDto
         CanPause = job.Status is JobStatus.Running,
         CanCancel = job.Status is JobStatus.Running or JobStatus.Paused,
         CanReview = job.Status is JobStatus.PendingReview or JobStatus.Committed or JobStatus.Cancelled,
-        PendingBackups = UndoService.PendingBackups(job).Count,
+        PendingBackups = pendingBackups >= 0 ? pendingBackups : UndoService.PendingBackups(job).Count,
         ActiveFileName = ActiveItemOf(job)?.FileName,
         ActivePercent = ActiveItemOf(job)?.Percent ?? -1,
     };
@@ -177,6 +198,10 @@ public sealed record ItemDto
 
     public bool CanPreview { get; init; }
 
+    /// <summary>Thời gian đã dùng để nén tệp này, dạng "m:ss". Rỗng khi chưa xong lần nào.</summary>
+    public string ElapsedText { get; init; } = string.Empty;
+
+
     public double? QualityScore { get; init; }
 
     public double DurationSeconds { get; init; }
@@ -204,8 +229,9 @@ public sealed record ItemDto
         IsProcessing = item.IsProcessing,
         IsApplied = item.IsApplied,
         IsPredicted = item.IsPredicted,
-        HasBackup = File.Exists(FileTransaction.BackupPathFor(item.FilePath)),
+        HasBackup = item.IsApplied && File.Exists(FileTransaction.BackupPathFor(item.FilePath)),
         CanPreview = item.Kind is MediaKind.Video or MediaKind.Audio,
+        ElapsedText = item.ElapsedSeconds > 0 ? Format.Time(item.ElapsedSeconds) : string.Empty,
         QualityScore = item.QualityScore,
         DurationSeconds = item.DurationSeconds ?? 0,
         DurationText = item.DurationSeconds is { } d ? Format.Time(d) : string.Empty,
@@ -318,6 +344,9 @@ public sealed record UiState
     public int Concurrency { get; init; }
 
     public string AppDirectory { get; init; } = string.Empty;
+
+    /// <summary>Thư mục gốc dự án — nơi mọi tệp của dự án được gom về.</summary>
+    public string ProjectDirectory { get; init; } = string.Empty;
 
     public string DataDirectory { get; init; } = string.Empty;
 

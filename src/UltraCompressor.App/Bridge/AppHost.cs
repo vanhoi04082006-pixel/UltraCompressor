@@ -28,7 +28,10 @@ public sealed class AppHost : IAsyncDisposable
     private CancellationTokenSource? _pumpCts;
     private volatile bool _dirty = true;
     private string? _openJobId;
+    private ItemQuery _openQuery = ItemQuery.Default;
+    private readonly Dictionary<string, (DateTimeOffset At, long Count)> _backupCount = new(StringComparer.Ordinal);
     private bool _disposed;
+
 
     public AppHost(AppConfig config, ToolChain tools, FileLogger logger, SessionStore session)
     {
@@ -45,6 +48,13 @@ public sealed class AppHost : IAsyncDisposable
 
     /// <summary>Mở hộp chọn thư mục của hệ điều hành. Gán từ cửa sổ chủ.</summary>
     public Func<IReadOnlyList<string>>? PickFolders { get; set; }
+
+    /// <summary>Mở hộp chọn tệp lẻ (đa chọn). Gán từ cửa sổ chủ.</summary>
+    public Func<IReadOnlyList<string>>? PickFiles { get; set; }
+
+    /// <summary>Mở hộp chọn thư mục đích xuất kết quả. Gán từ cửa sổ chủ.</summary>
+    public Func<string?>? PickExportFolder { get; set; }
+
 
     /// <summary>Đăng ký một tệp media và trả URL để giao diện nhúng trình phát.</summary>
     public Func<string, string?>? RegisterMedia { get; set; }
@@ -116,12 +126,18 @@ public sealed class AppHost : IAsyncDisposable
 
             if (!string.IsNullOrEmpty(_openJobId))
             {
-                var items = _engine.Find(_openJobId)?.Items.Select(ItemDto.From).ToList() ?? [];
-                await send(BridgeJson.Serialize(new BridgeMessage
+                // Dùng lại đúng bộ lọc người dùng đang đặt. Trước đây lần đẩy định kỳ gửi
+                // toàn bộ tệp của job, nên mỗi lần nhấn phím tìm kiếm chỉ sống được tới
+                // lần đẩy kế tiếp (250 ms) — danh sách nhảy về nguyên trạng liên tục.
+                var payload = BuildItems(_openJobId, _openQuery);
+                if (payload is not null)
                 {
-                    Event = "items",
-                    Data = JsonSerializer.SerializeToNode(new { jobId = _openJobId, items }, BridgeJson.Options),
-                }));
+                    await send(BridgeJson.Serialize(new BridgeMessage
+                    {
+                        Event = "items",
+                        Data = JsonSerializer.SerializeToNode(payload, BridgeJson.Options),
+                    }));
+                }
             }
         }
         catch (Exception ex)
@@ -129,6 +145,7 @@ public sealed class AppHost : IAsyncDisposable
             _logger.LogError("bridge", $"Không gửi trạng thái: {ex.Message}", ex);
         }
     }
+
 
     private UiState BuildState()
     {
@@ -146,7 +163,8 @@ public sealed class AppHost : IAsyncDisposable
 
         return new UiState
         {
-            Jobs = [.. jobs.Select(JobDto.From)],
+            Jobs = [.. jobs.Select(j => JobDto.From(j, PendingBackupCount(j)))],
+
             TotalBytesSaved = saved,
             TotalSavedText = Format.Size(saved),
             TotalSavedPercentText = originals > 0 ? Format.Percent((double)saved * 100.0 / originals) : Format.Percent(0),
@@ -162,6 +180,7 @@ public sealed class AppHost : IAsyncDisposable
             SpeedText = Format.Size((long)_engine.GlobalBytesPerSecond()) + "/s",
             Concurrency = _engine.Concurrency,
             AppDirectory = AppPaths.BaseDirectory,
+            ProjectDirectory = AppPaths.RootDirectory,
             DataDirectory = AppPaths.DataDirectory,
             SupportedExtensions = [.. MediaClassifier.AllSupportedExtensions.OrderBy(e => e)],
         };
@@ -190,8 +209,11 @@ public sealed class AppHost : IAsyncDisposable
             {
                 "getState" => ToNode(BuildState()),
                 "getItems" => GetItems(message),
-                "addFolder" => await AddFolderAsync(message),
-                "browseFolder" => await BrowseFolderAsync(),
+                "addPaths" => await AddPathsAsync(message),
+                "browseFolder" => await BrowseAsync(folderPicker: true),
+                "browseFiles" => await BrowseAsync(folderPicker: false),
+                "browseExport" => BrowseExport(),
+                "openProject" => OpenFolder(AppPaths.RootDirectory),
                 "removeJob" => RemoveJob(message),
                 "clearAll" => ClearAll(),
                 "start" => await StartAsync(message),
@@ -244,50 +266,112 @@ public sealed class AppHost : IAsyncDisposable
     private static System.Text.Json.Nodes.JsonNode? ToNode<T>(T value) =>
         JsonSerializer.SerializeToNode(value, BridgeJson.Options);
 
+    /// <summary>
+    /// Đếm tệp còn bản sao lưu, có bộ nhớ đệm ngắn.
+    ///
+    /// <c>UndoService.PendingBackups</c> phải <c>File.Exists</c> cho từng tệp đã nén, và
+    /// <see cref="BuildState"/> chạy 4 lần mỗi giây. Với một job vài nghìn tệp đã nén thì
+    /// đó là hàng nghìn lệnh I/O mỗi giây chỉ để lấy một con số, và nó là một trong các
+    /// nguồn làm giao diện nặng. Cache 3 giây, và bị xoá ngay khi Duyệt / Hoàn tác.
+    /// </summary>
+    private long PendingBackupCount(Job job)
+    {
+        var now = DateTimeOffset.Now;
+
+        if (_backupCount.TryGetValue(job.Id, out var cached) && now - cached.At < TimeSpan.FromSeconds(3))
+        {
+            return cached.Count;
+        }
+
+        var count = UndoService.PendingBackups(job).Count;
+        _backupCount[job.Id] = (now, count);
+        return count;
+    }
+
+    private void ForgetBackupCounts() => _backupCount.Clear();
+
+
     private static string? SelectedFolderFrom(BridgeMessage message) => BridgeJson.GetString(message, "path");
+
+    /// <summary>Bộ lọc người dùng đang đặt trên bảng chi tiết.</summary>
+    private readonly record struct ItemQuery(string Search, string State, string Kind, int Limit)
+    {
+        public static ItemQuery Default { get; } = new(string.Empty, "all", "all", 1000);
+    }
 
     private System.Text.Json.Nodes.JsonNode? GetItems(BridgeMessage message)
     {
-        var jobId = BridgeJson.GetString(message, "jobId") ?? string.Empty;
-        var search = BridgeJson.GetString(message, "search")?.Trim();
-        var stateFilter = BridgeJson.GetString(message, "state") ?? "all";
-        var kindFilter = BridgeJson.GetString(message, "kind") ?? "all";
-        var limit = Math.Clamp(BridgeJson.GetInt(message, "limit") ?? 2000, 1, 20000);
+        var query = new ItemQuery(
+            BridgeJson.GetString(message, "search")?.Trim() ?? string.Empty,
+            BridgeJson.GetString(message, "state") ?? "all",
+            BridgeJson.GetString(message, "kind") ?? "all",
+            Math.Clamp(BridgeJson.GetInt(message, "limit") ?? 1000, 1, 20000));
 
+        var jobId = BridgeJson.GetString(message, "jobId") ?? string.Empty;
+
+        // Ghi nhớ job và bộ lọc đang mở để các lần đẩy định kỳ đi kèm luôn danh sách tệp
+        // đúng như người dùng đang xem. Không có hai dòng này thì bảng chi tiết chỉ hiện
+        // ảnh chụp tại lúc mở và tiến độ từng tệp không bao giờ chạy.
+        _openJobId = jobId;
+        _openQuery = query;
+
+        return BuildItems(jobId, query);
+    }
+
+    /// <summary>
+    /// Dựng danh sách tệp cho bảng chi tiết.
+    ///
+    /// Thứ tự là <b>thứ tự lúc quét</b> và giữ nguyên như vậy suốt lần chạy. Trước đây sắp
+    /// xếp theo <c>SavedBytes</c> giảm dần, tức là bảng đảo lại mỗi khi một tệp xong —
+    /// người dùng nhìn một dòng thì dòng đó nhảy đi, không theo dõi được tệp nào đang chạy
+    /// bao nhiêu phần trăm.
+    /// </summary>
+    private System.Text.Json.Nodes.JsonNode? BuildItems(string jobId, ItemQuery query)
+    {
         var job = _engine.Find(jobId);
         if (job is null) return null;
 
-        // Ghi nhớ job đang mở để các lần đẩy trạng thái về sau kèm luôn danh sách tệp.
-        // Không có dòng này thì bảng chi tiết chỉ hiện ảnh chụp tại lúc mở và tiến độ
-        // từng tệp không bao giờ chạy.
-        _openJobId = jobId;
-
-        var items = job.Items.AsEnumerable();
-
-        if (!string.IsNullOrEmpty(search))
+        var position = new Dictionary<JobItem, int>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < job.Items.Count; i++)
         {
-            items = items.Where(i => i.FileName.Contains(search, StringComparison.OrdinalIgnoreCase));
+            position[job.Items[i]] = i;
         }
 
-        items = stateFilter switch
+        IEnumerable<JobItem> items = job.Items;
+
+        if (!string.IsNullOrEmpty(query.Search))
+        {
+            items = items.Where(i => i.FileName.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
+        }
+
+        items = query.State switch
         {
             "done" => items.Where(i => i.Succeeded),
             "skipped" => items.Where(i => i.IsComplete && i.Skip != SkipReason.None),
-            "changed" => items.Where(i => i.Succeeded),
             "pending" => items.Where(i => !i.IsComplete),
             _ => items,
         };
 
-        if (kindFilter != "all")
+        if (query.Kind != "all")
         {
-            items = items.Where(i => string.Equals(i.Kind.ToString(), kindFilter, StringComparison.OrdinalIgnoreCase));
+            items = items.Where(i => string.Equals(i.Kind.ToString(), query.Kind, StringComparison.OrdinalIgnoreCase));
         }
 
-        var ordered = items.OrderByDescending(i => i.SavedBytes).Take(limit).Select(ItemDto.From).ToList();
+        var ordered = items
+            .OrderBy(i => position[i])
+            .Take(query.Limit)
+            .Select(ItemDto.From)
+            .ToList();
+
         return ToNode(new { jobId, total = job.TotalFiles, items = ordered });
     }
 
-    private async Task<System.Text.Json.Nodes.JsonNode?> AddFolderAsync(BridgeMessage message)
+
+    /// <summary>
+    /// Thêm một danh sách đường dẫn từ giao diện. Dùng chung cho nút bấm, hộp thoại và
+    /// kéo-thả nên tự phân biệt thư mục với tệp lẻ.
+    /// </summary>
+    private async Task<System.Text.Json.Nodes.JsonNode?> AddPathsAsync(BridgeMessage message)
     {
         var paths = BridgeJson.GetObject<List<string>>(message, "paths") ?? [];
         if (paths.Count == 0) return null;
@@ -295,60 +379,88 @@ public sealed class AppHost : IAsyncDisposable
         var results = new List<object>();
         var problems = new List<string>();
 
-        foreach (var path in paths)
+        foreach (var scan in _engine.AddPaths(paths, _config.Level, _config.DryRunDefault, null))
         {
-            if (string.IsNullOrWhiteSpace(path)) continue;
-            var scan = _engine.AddFolder(path, _config.Level, _config.DryRunDefault, null);
             problems.AddRange(scan.Errors);
-            results.Add(new { path, added = scan.Job.Items.Count > 0, files = scan.Job.Items.Count });
+            results.Add(new
+            {
+                path = scan.Job.IsFileJob ? scan.Job.SingleFilePath : scan.Job.FolderPath,
+                isFile = scan.Job.IsFileJob,
+                added = scan.Job.Items.Count > 0,
+                files = scan.Job.Items.Count,
+            });
         }
 
         await _session.SaveAsync(_engine.Jobs);
         return ToNode(new { results, problems });
     }
 
-    private async Task<System.Text.Json.Nodes.JsonNode?> BrowseFolderAsync()
+    private async Task<System.Text.Json.Nodes.JsonNode?> BrowseAsync(bool folderPicker)
     {
-        if (PickFolders is null) return ToNode(new { ok = false, error = "Chưa mở được hộp chọn thư mục." });
+        var chosen = folderPicker ? PickFolders?.Invoke() : PickFiles?.Invoke();
 
-        var chosen = PickFolders();
+        if (chosen is null)
+        {
+            return ToNode(new
+            {
+                ok = false,
+                error = folderPicker
+                    ? "Chưa mở được hộp chọn thư mục."
+                    : "Chưa mở được hộp chọn tệp.",
+            });
+        }
+
         if (chosen.Count == 0) return ToNode(new { cancelled = true });
 
-        // Gộp kết quả của nhiều thư mục lại để giao diện báo một lần.
+        // Gộp kết quả của nhiều đường dẫn lại để giao diện báo một lần.
         var results = new List<object>();
         var problems = new List<string>();
 
-        foreach (var path in chosen)
+        foreach (var scan in _engine.AddPaths(chosen, _config.Level, _config.DryRunDefault, null))
         {
-            var scan = _engine.AddFolder(path, _config.Level, _config.DryRunDefault, null);
             problems.AddRange(scan.Errors);
-            results.Add(new { path, added = scan.Job.Items.Count > 0, files = scan.Job.Items.Count });
+            results.Add(new
+            {
+                path = scan.Job.IsFileJob ? scan.Job.SingleFilePath : scan.Job.FolderPath,
+                isFile = scan.Job.IsFileJob,
+                added = scan.Job.Items.Count > 0,
+                files = scan.Job.Items.Count,
+            });
         }
 
         await _session.SaveAsync(_engine.Jobs);
         return ToNode(new { cancelled = false, results, problems });
     }
 
-    private System.Text.Json.Nodes.JsonNode? AddFolderPath(string? path)
+
+    /// <summary>
+    /// Hộp chọn thư mục đích khi xuất kết quả. Trước đây ô này chỉ gõ tay được — bắt
+    /// người dùng tự nhớ và gõ đúng đường dẫn, gõ sai là nén xong mới biết.
+    /// </summary>
+    private System.Text.Json.Nodes.JsonNode? BrowseExport()
     {
-        if (string.IsNullOrWhiteSpace(path)) return null;
-        var scan = _engine.AddFolder(path, _config.Level, _config.DryRunDefault, null);
-        return ToNode(new { path, added = scan.Job.Items.Count > 0, files = scan.Job.Items.Count, problems = scan.Errors });
+        var pick = PickExportFolder?.Invoke();
+        return pick is null
+            ? ToNode(new { ok = false, error = "Chưa mở được hộp chọn thư mục." })
+            : ToNode(new { ok = true, path = pick });
     }
 
     private System.Text.Json.Nodes.JsonNode? RemoveJob(BridgeMessage message)
     {
         var jobId = BridgeJson.GetString(message, "jobId");
         if (jobId is null) return null;
+        ForgetBackupCounts();
         _engine.RemoveJob(jobId);
         return null;
     }
 
     private System.Text.Json.Nodes.JsonNode? ClearAll()
     {
+        ForgetBackupCounts();
         _engine.ClearAll();
         return null;
     }
+
 
     private async Task<System.Text.Json.Nodes.JsonNode?> StartAsync(BridgeMessage message)
     {
@@ -444,6 +556,7 @@ public sealed class AppHost : IAsyncDisposable
         var jobId = BridgeJson.GetString(message, "jobId");
         if (jobId is null) return null;
 
+        ForgetBackupCounts();
         var result = await _engine.CommitAsync(jobId, _config.KeepBackupDays);
         return ToNode(new { result.Restored, result.Failed, result.Errors });
     }
@@ -453,6 +566,7 @@ public sealed class AppHost : IAsyncDisposable
         var jobId = BridgeJson.GetString(message, "jobId");
         if (jobId is null) return null;
 
+        ForgetBackupCounts();
         var result = await _engine.UndoAsync(jobId);
         return ToNode(new { result.Restored, result.Failed, result.Errors });
     }
@@ -465,9 +579,11 @@ public sealed class AppHost : IAsyncDisposable
         var item = job?.Items.FirstOrDefault(i => i.FilePath == filePath);
         if (item is null) return null;
 
+        ForgetBackupCounts();
         var error = UndoService.RestoreOne(item);
         return ToNode(new { ok = error is null, error });
     }
+
 
     private async Task<System.Text.Json.Nodes.JsonNode?> SaveConfigAsync(BridgeMessage message)
     {
@@ -546,9 +662,11 @@ public sealed class AppHost : IAsyncDisposable
 
     private System.Text.Json.Nodes.JsonNode? PurgeBackups()
     {
+        ForgetBackupCounts();
         var removed = UndoService.PurgeExpiredBackups(_engine.Jobs.Select(j => j.FolderPath), _config.KeepBackupDays);
         return ToNode(new { removed });
     }
+
 
     private async Task<System.Text.Json.Nodes.JsonNode?> PreviewAsync(BridgeMessage message)
     {
@@ -756,11 +874,13 @@ public sealed class AppHost : IAsyncDisposable
             audioKbps = p.AudioBitrateKbps,
             pdf = p.PdfPreset,
             gifLossy = p.GifLossy,
+            gifFps = p.GifFps,
         }),
         extensions = MediaClassifier.AllSupportedExtensions.OrderBy(e => e),
         dataDirectory = AppPaths.DataDirectory,
-        appDirectory = AppPaths.BaseDirectory,
+        appDirectory = AppPaths.RootDirectory,
     });
+
 
     private static string CompressionLevelKey(CompressionProfile profile) =>
         profile.VideoCrf switch

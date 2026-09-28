@@ -269,24 +269,59 @@ public sealed class CompressionEngine : IAsyncDisposable
         await _runTask;
     }
 
-    private async Task RunAllAsync(IReadOnlyList<Job> targets, CancellationToken token)
+    /// <summary>
+    /// Chay cac job TUAN TU theo dung thu tu nguoi dung them vao.
+    ///
+    /// Truoc day la <c>Task.WhenAll</c> - tat ca job cung chay song song. Voi danh sach
+    /// nhieu thu muc thi ban do hoa 20 tap phim cung luc, moi job mot tien trinh ffmpeg
+    /// rieng, toc do tong tut va may nghen. Nguoi dung them thu muc A, thu muc B, mot tep
+    /// le, thu muc C thi mong tung cai xong roi moi toi cai sau.
+    ///
+    /// Thu tu la thu tu chen vao danh sach, vi <c>_jobs</c> chi co them vao chu khong sap
+    /// xep lai; <c>StartAsync</c> cung lay target theo thu tu do.
+    ///
+    /// Ben trong mot job van chay song song toi gioi han luong - do la cho ton thoi gian
+    /// that su, va nen song song trong cung mot thu muc van cho toc do cao nhat.
+    /// </summary>
+    private async Task RunAllAsync(List<Job> targets, CancellationToken token)
     {
-        // Đồng hồ ETA có vòng đời riêng: nó dừng khi các job xong, không đợi tới lúc hủy.
-        // Nếu dùng chung token với lần chạy thì RunAllAsync sẽ không bao giờ kết thúc.
+        // Dong ho ETA co vong doi rieng: no dung khi cac job xong, khong doi toi luc huy.
+        // Neu dung chung token voi lan chay thi RunAllAsync se khong bao gio ket thuc.
         using var tickerCts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var etaTicker = StartEtaTicker(tickerCts.Token);
 
         try
         {
-            await Task.WhenAll(targets.Select(job => RunJobAsync(job, token)));
+            for (var i = 0; i < targets.Count; i++)
+            {
+                token.ThrowIfCancellationRequested();
+
+                var job = targets[i];
+                _log.LogInfo(
+                    "engine",
+                    $"Xu ly job {i + 1}/{targets.Count}: {job.DisplayName} " +
+                    $"({job.TotalFiles} tep, muc {job.Level}).");
+
+                await RunJobAsync(job, token);
+            }
         }
         catch (OperationCanceledException)
         {
-            // Người dùng hủy — trạng thái đã được xử lý trong RunJobAsync.
+            // Nguoi dung huy - trang thai da duoc xu ly trong RunJobAsync. Cac job chua toi
+            // phai chuyen sang "da huy" luon, neu khong chung treo o "hang cho" vinh vien
+            // du ca phien nen da ket thuc.
+            foreach (var remaining in targets.Where(j => j.Status == JobStatus.Waiting))
+            {
+                remaining.Status = JobStatus.Cancelled;
+                remaining.CompletedAt = DateTimeOffset.Now;
+                remaining.EtaSeconds = -1;
+            }
+
+            Raise(ChangeReason.JobStatus);
         }
         catch (Exception ex)
         {
-            _log.LogError("engine", "Lỗi không mong đợi khi chạy job", ex);
+            _log.LogError("engine", "Loi khong mong doi khi chay job", ex);
         }
         finally
         {

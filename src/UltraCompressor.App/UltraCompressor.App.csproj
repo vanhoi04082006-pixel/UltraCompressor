@@ -28,7 +28,21 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>vi</SatelliteResourceLanguages>
+
+    <!--
+      Icon của tệp thực thi, dùng cho Taskbar, Alt+Tab, Explorer và lối tắt.
+
+      Không có dòng này thì tệp dùng icon mặc định của .NET, nhìn ra y hệt
+      chương trình dòng lệnh. File .ico sinh bằng tools\Generate-AppIcon.ps1 —
+      sửa logo thì chạy lại script đó, đừng sửa tay file nhị phân.
+    -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Icon phải nằm trong output thì Explorer mới hiện được, kể cả khi publish. -->
+    <None Include="app.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\UltraCompressor.Core\UltraCompressor.Core.csproj" />

@@ -24,7 +24,10 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Source = $PSScriptRoot,
+  # Không đặt mặc định là $PSScriptRoot ở đây: khi chạy bằng
+  # `powershell -File setup.ps1` thì $PSScriptRoot còn rỗng lúc đánh giá mặc định
+  # nên Join-Path bên dưới báo "empty string". Tính sau ở dòng dưới.
+  [string]$Source,
   [string]$InstallTo = (Join-Path $env:LOCALAPPDATA 'UltraCompressor'),
   [string]$FFmpeg,
   [string]$Gifsicle,
@@ -34,6 +37,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Source)) {
+  $Source = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+}
 $project = Join-Path $Source 'src\UltraCompressor.App\UltraCompressor.App.csproj'
 $staging = Join-Path $Source 'publish'
 

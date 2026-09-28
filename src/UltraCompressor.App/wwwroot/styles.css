@@ -51,6 +51,9 @@ html[data-theme="dark"] {
 
   --shadow: 0 10px 30px rgba(0, 0, 0, .45);
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, .3);
+
+  /* Logo ứng dụng, sinh từ tools\Generate-AppIcon.ps1 cùng với app.ico */
+  --brand-logo: url("logo.png");
 }
 
 html[data-theme="light"] {
@@ -262,11 +265,21 @@ html[data-theme="light"] .btn-warn:hover:not(:disabled) { color: #FFFFFF; }
 
 .brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 
+/*
+  Cùng một hình với icon ứng dụng, sinh từ tools\Generate-AppIcon.ps1. Trước đây chỗ
+  này là ô gradient trống nên header không có dấu hiệu nhận diện nào.
+  background-size: cover + bo góc đúng tỉ lệ để mép ảnh không bị lệch.
+*/
 .brand-mark {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: linear-gradient(140deg, var(--accent), var(--ok));
+  /*
+    Chỉ dùng ảnh, không kèm gradient. Cú pháp background dạng rút gọn chỉ nhận
+    MỘT <image> mỗi lớp, nên "linear-gradient(...) url(...)" là sai và trình duyệt
+    loại bỏ cả khai báo. Mà logo.png vốn đã có sẵn nền chuyển sắc bên trong rồi.
+  */
+  background: var(--brand-logo) center / cover no-repeat;
   box-shadow: var(--shadow-sm);
   flex: none;
 }

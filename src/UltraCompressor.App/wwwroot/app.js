@@ -767,9 +767,17 @@ function updateItemRow(item) {
   row.state.appendChild(el('span', `tag ${tagClass}`, item.stateText));
   if (item.detail) {
     row.state.appendChild(el('div', 'sub', item.detail));
-    row.state.title = item.message || item.detail;
-  } else {
-    row.state.title = item.message || '';
+  }
+
+  // Tham số nén đã dùng cho tệp này. Đưa vào title để không làm bảng chật, nhưng người
+  // dùng thì luôn thấy được bằng cách rê chuột — và không phải mở nhật ký ra đọc.
+  const plan = item.plan || '';
+  const notes = [item.message, item.detail, plan].filter(Boolean).join(' · ');
+  row.state.title = notes;
+  if (plan) {
+    const planEl = el('div', 'sub plan-note', plan);
+    planEl.title = plan;
+    row.state.appendChild(planEl);
   }
 
   row.previewBtn.hidden = !(item.canPreview && item.hasBackup);

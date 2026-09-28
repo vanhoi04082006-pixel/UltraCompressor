@@ -739,6 +739,21 @@ input[type="search"]:focus { background: var(--bg-sunken); border-color: var(--a
   text-align: left;
 }
 
+/* Dòng tham số nén. Mờ hơn dòng trạng thái và tách bạch bằng gạch dọc để đọc là
+   "đã nén bằng gì" chứ không lẫn vào "kết quả ra sao". Cắt chữ vẫn dùng, nhưng giữ
+   phần ĐẦU dòng vì "CRF 26" quan trọng hơn phần sau dấu gạch nối. */
+.grid .plan-note {
+  color: var(--text-faint);
+  opacity: 0.8;
+  border-left: 2px solid var(--border);
+  padding-left: 5px;
+  margin-top: 2px;
+}
+
+.grid tr:hover .plan-note {
+  opacity: 1;
+}
+
 .grid-items .col-name { max-width: 100%; }
 
 .actions-col { width: 1%; }

@@ -194,6 +194,12 @@ public sealed record ItemDto
 
     public string? Message { get; init; }
 
+    /// <summary>
+    /// Tham số nén thật đã dùng cho tệp này, do planner tính từ mức mục tiêu cộng đặc
+    /// tính của tệp. Rỗng trước khi tệp được xử lý.
+    /// </summary>
+    public string Plan { get; init; } = string.Empty;
+
     public int Percent { get; init; }
 
     public bool IsProcessing { get; init; }
@@ -234,6 +240,7 @@ public sealed record ItemDto
         Detail = DetailText(item),
         SkipReasonText = item.Skip == SkipReason.None ? null : item.Skip.ToString(),
         Message = item.Message,
+        Plan = item.Plan ?? string.Empty,
         Percent = item.Percent,
         IsProcessing = item.IsProcessing,
         IsApplied = item.IsApplied,

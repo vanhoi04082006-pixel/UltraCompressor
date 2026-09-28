@@ -41,7 +41,8 @@ public static class UndoService
             else
             {
                 errors.Add($"{item.FileName}: {error}");
-            }        }
+            }
+        }
 
         job.Committed = false;
         job.Status = JobStatus.Waiting;

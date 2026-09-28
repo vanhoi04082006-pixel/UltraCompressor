@@ -161,9 +161,12 @@ Xem ngay trong ứng dụng: nút **Nhật ký**.
 
 ```powershell
 dotnet build                                   # build cả solution
-dotnet test tests\UltraCompressor.Core.Tests   # 120 test
+dotnet format                                  # chuẩn hoá định dạng
+dotnet test tests\UltraCompressor.Core.Tests   # 123 test
 dotnet run --project src\UltraCompressor.App   # chạy thử, không cần publish
 ```
+
+GitHub Actions chạy đúng ba lệnh đầu trên mỗi lần đẩy.
 
 ### Bố cục
 

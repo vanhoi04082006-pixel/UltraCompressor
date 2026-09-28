@@ -64,7 +64,8 @@ public static class ProcessRunner
         Action<string>? onStderrLine,
         TimeSpan? timeout,
         CancellationToken token)
-    {        var startInfo = new System.Diagnostics.ProcessStartInfo
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = fileName,
             UseShellExecute = false,

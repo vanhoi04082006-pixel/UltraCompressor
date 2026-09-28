@@ -87,8 +87,8 @@ public sealed class CompressionEngine : IAsyncDisposable
     /// <summary>Số luồng nén đang dùng.</summary>
     public int Concurrency => ResolveConcurrency(_config);
 
-  /// <summary>Kho tệp tạm dùng chung, để phần so sánh không tạo thêm một thư mục tạm.</summary>
-  public TempWorkspace Workspace => _workspace;
+    /// <summary>Kho tệp tạm dùng chung, để phần so sánh không tạo thêm một thư mục tạm.</summary>
+    public TempWorkspace Workspace => _workspace;
 
     public static int ResolveConcurrency(AppConfig config)
     {

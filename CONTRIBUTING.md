@@ -3,12 +3,14 @@
 ## Trước khi gửi
 
 ```powershell
+dotnet format --verify-no-changes    # định dạng và kiểm tra định dạng
 dotnet build UltraCompressor.slnx -c Release      # phải 0 lỗi, 0 cảnh báo
 dotnet test tests\UltraCompressor.Core.Tests -c Release
 ```
 
-Nếu đụng giao diện, chụp lại màn hình và **nhìn tấm ảnh**. Một lỗi tràn chữ trong bảng đã
-lọt qua build và test, chỉ thấy được khi nhìn ảnh chụp.
+Đúng ba lệnh trên là workflow mà GitHub Actions chạy, nên chạy trước ở máy sẽ không bị
+đỏ CI. Nếu sửa giao diện, chụp lại màn hình và **nhìn tấm ảnh**. Một lỗi tràn chữ trong
+bảng đã lọt qua build và test, chỉ thấy được khi nhìn ảnh chụp.
 
 ## Test bắt buộc cho từng thay đổi
 

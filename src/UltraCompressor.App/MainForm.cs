@@ -39,7 +39,11 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.None;
 
         ClientSize = new Size(1280, 800);
-        AllowDrop = true;
+
+        // Cố tình để AllowDrop = false. Đặt true thì WinForms đăng ký cửa sổ này làm OLE
+        // drop target, nó đăng ký trước WebView2 nên nhận dữ liệu rỗng và con trỏ hiện
+        // dấu cấm. Thay vào đó ta bắt WM_DROPFILES trong WndProc — xem WndProc.
+        AllowDrop = false;
         KeyPreview = true;
 
         // WebView2 chiếm toàn bộ vùng client, trừ thanh trạng thái cuối cửa sổ.
@@ -88,12 +92,22 @@ public sealed class MainForm : Form
         _host.PickFolders = BrowseForFolders;
         _host.PickToolFile = BrowseForToolFile;
 
-        DragEnter += OnDragEnter;
-        DragOver += OnDragOver;
-        DragLeave += OnDragLeave;
-        DragDrop += OnDragDrop;
+        // Việc bật DragAcceptFiles nằm trong OnHandleCreated.
         FormClosed += OnFormClosed;
         Shown += OnShown;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+
+        // Chỉ cửa sổ nào gọi DragAcceptFiles mới nhận WM_DROPFILES. Phải gọi sau khi có
+        // handle, và handle có thể được tạo lại nên đặt trong OnHandleCreated chứ không
+        // gọi một lần ở hàm khởi tạo.
+        if (!NativeMethods.DragAcceptFiles(Handle, true))
+        {
+            Diagnostic.Log("Không bật được DragAcceptFiles cho cửa sổ chính.");
+        }
     }
 
     /// <summary>Cho phép chạy thử mà không cần publish.</summary>
@@ -442,24 +456,45 @@ public sealed class MainForm : Form
         return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
     }
 
-    private void OnDragEnter(object? sender, System.Windows.Forms.DragEventArgs e)
+    /// <summary>
+    /// Kéo thả được xử lý bằng WM_DROPFILES, không dùng sự kiện Drag* của WinForms.
+    ///
+    /// Hai cách trước đều hỏng, và lý do khác nhau:
+    ///  - JavaScript trong trang không lấy được đường dẫn vì trang chạy trên https là
+    ///    ngữ cảnh an toàn nên Chromium không đưa đường dẫn tệp ra cho trang;
+    ///  - để WinForms nhận thả (AllowDrop) thì con trỏ hiện dấu cấm, vì nó đăng ký làm
+    ///    OLE drop target rồi nhận dữ liệu rỗng — WebView2 đã đăng ký trước và chặn.
+    ///
+    /// WM_DROPFILES là đường của riêng Windows: chỉ cửa sổ nào gọi DragAcceptFiles mới
+    /// nhận được, và thông điệp truyền ngược lên các cửa sổ cha. Vì vậy ta để
+    /// AllowDrop = false (không đăng ký OLE) và tự bắt thông điệp.
+    /// </summary>
+    protected override void WndProc(ref Message m)
     {
-        // Ch? nh?n th� m?c: k�o t?p l? l�n th? kh�ng b�o "sao ch�p" r?i l?i b? qua.
-        e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true
-            ? DragDropEffects.Copy
-            : DragDropEffects.None;
+        switch (m.Msg)
+        {
+            case NativeMethods.WM_DRAGENTER:
+                {
+                    var hasFiles = NativeMethods.DroppedCount(m.WParam) > 0;
+                    m.Result = hasFiles
+                        ? (IntPtr)NativeMethods.DRAGDROP_S_DROP   // chấp nhận: con trỏ "sao chép"
+                        : IntPtr.Zero;                          // từ chối: dấu cấm
+                    PushDropHover(hasFiles);
+                    return;
+                }
 
-        if (e.Effect == DragDropEffects.Copy) PushDropHover(true);
+            case NativeMethods.WM_DRAGLEAVE:
+                PushDropHover(false);
+                break;
+
+            case NativeMethods.WM_DROPFILES:
+                HandleShellDrop(m.WParam);
+                m.Result = IntPtr.Zero;
+                return;
+        }
+
+        base.WndProc(ref m);
     }
-
-    private void OnDragOver(object? sender, System.Windows.Forms.DragEventArgs e)
-    {
-        // Can ca DragOver: thieu no thi hieu ung "duoc tha" chi dung o khoanh khac dau,
-        // va con tro lai thanh vong cam ngay sau do.
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true) e.Effect = DragDropEffects.Copy;
-    }
-
-    private void OnDragLeave(object? sender, EventArgs e) => PushDropHover(false);
 
     /// <summary>Bật/tắt lớp phủ "Thả vào đây" từ phía cửa sổ.</summary>
     private void PushDropHover(bool active)
@@ -472,14 +507,37 @@ public sealed class MainForm : Form
         }));
     }
 
-    private void OnDragDrop(object? sender, System.Windows.Forms.DragEventArgs e)
+    private void HandleShellDrop(IntPtr hDrop)
     {
         PushDropHover(false);
 
-        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0) return;
+        try
+        {
+            var count = NativeMethods.DroppedCount(hDrop);
+            if (count == 0) return;
 
-        // Nhận cả thư mục lẫn tệp lẻ. Ứng dụng luôn làm việc theo thư mục nên tệp lẻ
-        // được gom về thư mục chứa nó; việc lọc định dạng để bộ quét lo.
+            var paths = new List<string>((int)count);
+            for (uint i = 0; i < count; i++)
+            {
+                if (NativeMethods.DroppedPath(hDrop, i) is { } path) paths.Add(path);
+            }
+
+            AcceptDroppedPaths(paths);
+        }
+        catch (Exception ex)
+        {
+            Diagnostic.Log($"Không xử lý được thả: {ex.Message}");
+        }
+        finally
+        {
+            // Bắt buộc, không thì Explorer giữ giữ nguồn của tệp vô thời hạn.
+            NativeMethods.DragFinish(hDrop);
+        }
+    }
+
+    /// <summary>Nhận thư mục; tệp lẻ được gom về thư mục chứa nó.</summary>
+    private void AcceptDroppedPaths(List<string> paths)
+    {
         var folders = new List<string>();
         var missing = 0;
 
@@ -502,6 +560,8 @@ public sealed class MainForm : Form
         }
 
         var unique = folders.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        Diagnostic.Log($"Thả {paths.Count} mục, nhận {unique.Length} thư mục.");
+
         if (unique.Length > 0)
         {
             _ = SendAsync(BridgeJson.Serialize(new BridgeMessage
@@ -518,7 +578,7 @@ public sealed class MainForm : Form
             {
                 Event = "notice",
                 Data = System.Text.Json.JsonSerializer.SerializeToNode(
-                    new { level = "warn", message = $"Bo qua {missing} muc khong ton tai tren dia." },
+                    new { level = "warn", message = $"Bỏ qua {missing} mục không tồn tại trên đĩa." },
                     BridgeJson.Options),
             }));
         }
@@ -541,6 +601,18 @@ public sealed class MainForm : Form
 
 internal static class NativeMethods
 {
+    /// <summary>Thông điệp kéo thả kiểu WM_DROPFILES (cũ) của Windows.</summary>
+    public const int WM_DROPFILES = 0x0233;
+
+    public const int WM_DRAGENTER = 0x02A7;
+    public const int WM_DRAGLEAVE = 0x02A3;
+
+    /// <summary>Giá trị wParam cho WM_DRAGENTER: chấp nhận thả.</summary>
+    public const int DRAGDROP_S_DROP = 1;
+
+    /// <summary>Truy vấn số mục trong một thao tác thả. Truyền -1 để chỉ lấy số đếm.</summary>
+    public const uint UINT_MAX = 0xFFFFFFFF;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
@@ -549,4 +621,25 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DragAcceptFiles(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool accept);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "DragQueryFileW")]
+    private static extern uint DragQueryFileW(IntPtr hDrop, uint iFile, char[]? lpszFile, uint cch);
+
+    /// <summary>Trả về đường dẫn thứ <paramref name="index"/>, hoặc null nếu hết danh sách.</summary>
+    internal static string? DroppedPath(IntPtr hDrop, uint index)
+    {
+        var buffer = new char[32768];
+        var length = DragQueryFileW(hDrop, index, buffer, (uint)buffer.Length);
+        return length == 0 ? null : new string(buffer, 0, (int)length);
+    }
+
+    /// <summary>Số mục trong thao tác thả hiện tại.</summary>
+    internal static uint DroppedCount(IntPtr hDrop) => DragQueryFileW(hDrop, NativeMethods.UINT_MAX, null, 0);
+
+    [DllImport("shell32.dll")]
+    public static extern void DragFinish(IntPtr hDrop);
 }

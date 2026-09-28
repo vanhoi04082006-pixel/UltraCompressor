@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Thiết lập .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Kiểm tra định dạng
+        run: dotnet format --verify-no-changes --verbosity quiet
+
+      - name: Build
+        run: dotnet build UltraCompressor.slnx -c Release --nologo
+
+      - name: Test
+        run: dotnet test tests\UltraCompressor.Core.Tests\UltraCompressor.Core.Tests.csproj -c Release --no-build --nologo
+
+      - name: Kiểm tra lỗi biên dịch ở mức Debug
+        # Build hiện đang ở mức phát hành với cảnh báo bị hạ cấp; kiểm tra Debug bắt được
+        # phần còn sót.
+        run: dotnet build UltraCompressor.slnx -c Debug --nologo -warnaserror

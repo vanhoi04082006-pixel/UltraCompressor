@@ -1036,14 +1036,20 @@ async function showGuide() {
       <p><b>Xuất kết quả ra thư mục khác</b>: giữ nguyên thư mục gốc, kết quả nằm ở
       thư mục đích với đúng cấu trúc thư mục con.</p>
 
-      <h3>Cách dùng</h3>
-      <ol>
-        <li>Bấm <b>Thêm thư mục</b> hoặc kéo thả thư mục vào cửa sổ. Thư mục con được quét tự động.</li>
-        <li>Chọn <b>mức nén</b> và <b>cách ghi</b>.</li>
-        <li>Bấm <b>Bắt đầu</b>. Xem kết quả ở cột <b>Tiết kiệm</b>.</li>
-        <li>Mở <b>Chi tiết</b> để xem từng tệp, tệp nào bị giữ nguyên và vì sao.</li>
-        <li>Bấm <b>Duyệt</b> để áp dụng, hoặc <b>Hoàn tác</b> để trả bản gốc về.</li>
-      </ol>
+        <h3>Cách dùng</h3>
+        <ol>
+          <li>Bấm <b>Thêm thư mục</b>, bấm <code>Ctrl+O</code>, hoặc <b>kéo thả</b> thư mục hay
+              tệp từ Explorer vào cửa sổ. Thư mục con được quét tự động; tệp lẻ được gom về
+              thư mục chứa nó.</li>
+          <li>Chọn <b>mức nén</b> và <b>cách ghi</b>.</li>
+          <li>Bấm <b>Bắt đầu</b>. Dòng thư mục cho biết đang nén tệp nào và tới đâu.</li>
+          <li>Mở <b>Chi tiết</b> để xem từng tệp, thanh tiến độ của từng tệp, tệp nào bị giữ
+              nguyên và vì sao.</li>
+          <li>Bấm <b>◫</b> trên một tệp để <b>so sánh song song</b> bản gốc với bản đã nén:
+              video và âm thanh phát thẳng trong ứng dụng, có thanh kéo giữa hai cột để
+              chia tỉ lệ.</li>
+          <li>Bấm <b>Duyệt</b> để áp dụng, hoặc <b>Hoàn tác</b> để trả bản gốc về.</li>
+        </ol>
 
       <h3>Vì sao tệp bị “Giữ nguyên”?</h3>
       <ul>

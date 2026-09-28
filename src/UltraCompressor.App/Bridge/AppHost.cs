@@ -22,7 +22,7 @@ public sealed class AppHost : IAsyncDisposable
     private readonly FileLogger _logger;
     private readonly SessionStore _session;
     private readonly CompressionEngine _engine;
-  private readonly CompareService _compare;
+    private readonly CompareService _compare;
 
     private Func<string, Task>? _send;
     private CancellationTokenSource? _pumpCts;
@@ -30,24 +30,24 @@ public sealed class AppHost : IAsyncDisposable
     private string? _openJobId;
     private bool _disposed;
 
-  public AppHost(AppConfig config, ToolChain tools, FileLogger logger, SessionStore session)
-{
-  _config = config;
-  _tools = tools;
-  _logger = logger;
-  _session = session;
-  _engine = new CompressionEngine(config, tools, session, new TempWorkspace(AppPaths.TempRoot), logger);
-  _engine.Changed += OnEngineChanged;
-  _compare = new CompareService(tools.Locator, _engine.Workspace, logger);
-}
+    public AppHost(AppConfig config, ToolChain tools, FileLogger logger, SessionStore session)
+    {
+        _config = config;
+        _tools = tools;
+        _logger = logger;
+        _session = session;
+        _engine = new CompressionEngine(config, tools, session, new TempWorkspace(AppPaths.TempRoot), logger);
+        _engine.Changed += OnEngineChanged;
+        _compare = new CompareService(tools.Locator, _engine.Workspace, logger);
+    }
 
     public CompressionEngine Engine => _engine;
 
     /// <summary>Mở hộp chọn thư mục của hệ điều hành. Gán từ cửa sổ chủ.</summary>
     public Func<IReadOnlyList<string>>? PickFolders { get; set; }
 
-  /// <summary>Đăng ký một tệp media và trả URL để giao diện nhúng trình phát.</summary>
-  public Func<string, string?>? RegisterMedia { get; set; }
+    /// <summary>Đăng ký một tệp media và trả URL để giao diện nhúng trình phát.</summary>
+    public Func<string, string?>? RegisterMedia { get; set; }
 
     /// <summary>Mở hộp chọn tệp thực thi. Gán từ cửa sổ chủ.</summary>
     public Func<string?>? PickToolFile { get; set; }
@@ -212,10 +212,10 @@ public sealed class AppHost : IAsyncDisposable
                 "openPath" => OpenFolder(SelectedFolderFrom(message)),
                 "openLogs" => OpenFolder(AppPaths.LogDirectory),
                 "openData" => OpenFolder(AppPaths.DataDirectory),
-        "logTail" => LogTail(message),
-        "log" => LogMessage(message),
-        "getCompare" => await GetCompareAsync(message),
-        "playFile" => PlayFile(message),
+                "logTail" => LogTail(message),
+                "log" => LogMessage(message),
+                "getCompare" => await GetCompareAsync(message),
+                "playFile" => PlayFile(message),
                 "guide" => ToNode(BuildGuide()),
                 _ => null,
             };
@@ -254,15 +254,15 @@ public sealed class AppHost : IAsyncDisposable
         var kindFilter = BridgeJson.GetString(message, "kind") ?? "all";
         var limit = Math.Clamp(BridgeJson.GetInt(message, "limit") ?? 2000, 1, 20000);
 
-          var job = _engine.Find(jobId);
-          if (job is null) return null;
+        var job = _engine.Find(jobId);
+        if (job is null) return null;
 
-          // Ghi nhớ job đang mở để các lần đẩy trạng thái về sau kèm luôn danh sách tệp.
-          // Không có dòng này thì bảng chi tiết chỉ hiện ảnh chụp tại lúc mở và tiến độ
-          // từng tệp không bao giờ chạy.
-          _openJobId = jobId;
+        // Ghi nhớ job đang mở để các lần đẩy trạng thái về sau kèm luôn danh sách tệp.
+        // Không có dòng này thì bảng chi tiết chỉ hiện ảnh chụp tại lúc mở và tiến độ
+        // từng tệp không bao giờ chạy.
+        _openJobId = jobId;
 
-          var items = job.Items.AsEnumerable();
+        var items = job.Items.AsEnumerable();
 
         if (!string.IsNullOrEmpty(search))
         {
@@ -569,16 +569,30 @@ public sealed class AppHost : IAsyncDisposable
             return ToNode(new { ok = false, error = "Chưa có ffplay.exe nên không xem trước được." });
         }
 
-        // -autoexit để cửa sổ tự đóng khi hết bài, tránh treo một cửa sổ vô hình.
+        // -autoexit để cửa sổ tự đóng khi hết bài. Không dùng -fs: phóng toàn màn hình
+        // thì không đóng hay thu nhỏ được, buộc phải nhấn Esc.
         var title = backup ? "BAN GOC" : "DA NEN";
-        var args = new List<string> { "-window_title", title, "-autoexit", target };
 
         try
         {
-            var result = await ProcessRunner.RunAsync(ffplay, args, timeout: TimeSpan.FromSeconds(3));
-            // ffplay chạy cho tới khi đóng cửa sổ, nên chỉ cần khởi động được là xong.
-            if (result.Cancelled || result.TimedOut) return ToNode(new { ok = true });
-            return ToNode(new { ok = true, exitCode = result.ExitCode });
+            // Phải khởi chạy tách rời, không chờ. Bản trước chờ ffplay với thời hạn 3 giây,
+            // mà hết thời hạn thì ProcessRunner giết cả cây tiến trình — cửa sổ xem trước
+            // vừa mở là biến mất.
+            var start = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffplay,
+                UseShellExecute = false,
+            };
+
+            start.ArgumentList.Add("-window_title");
+            start.ArgumentList.Add($"UltraCompressor — {title} — {Path.GetFileName(target)}");
+            start.ArgumentList.Add("-x"); start.ArgumentList.Add("960");
+            start.ArgumentList.Add("-y"); start.ArgumentList.Add("540");
+            start.ArgumentList.Add("-autoexit");
+            start.ArgumentList.Add(target);
+
+            System.Diagnostics.Process.Start(start);
+            return ToNode(new { ok = true });
         }
         catch (Exception ex)
         {

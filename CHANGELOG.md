@@ -84,9 +84,14 @@ Các lỗi dưới đây do bản viết lại này gây ra, phát hiện khi ch
 - **Kéo thả không lấy được đường dẫn.** Trang chạy trên `https://app.local` là ngữ cảnh
   an toàn nên Chromium không đưa đường dẫn tệp ra cho JavaScript, và `entry.fullPath`
   cũng không dựng được — kéo thư mục báo "Không đọc được đường dẫn", kéo tệp lẻ hỏng luôn.
-  Đã tắt `AllowExternalDrop` để thông điệp thả chạy ngược lên `Form`, và nhận đường dẫn
-  thật từ `MainForm.OnDragDrop` (cả thư mục lẫn tệp lẻ). Handler của Form vốn đã có sẵn
-  nhưng không bao giờ chạy vì WebView2 nuốt thả.
+- **Dấu cấm khi kéo vào.** Để WinForms nhận thả (`AllowDrop = true`) thì nó đăng ký cửa sổ
+  làm OLE drop target, đăng ký trước WebView2 nên nhận dữ liệu rỗng và từ chối. Đã bỏ hẳn
+  OLE: `AllowDrop = false` và tự bắt `WM_DROPFILES` trong `WndProc` (chỉ cửa sổ nào gọi
+  `DragAcceptFiles` mới nhận được, và thông điệp truyền ngược lên cửa sổ cha). Nhận được
+  cả thư mục lẫn tệp lẻ, và tệp lẻ gom về thư mục chứa nó.
+- **Cửa sổ xem trước biến mất sau 3 giây.** Lệnh `preview` chờ ffplay với thời hạn 3 giây,
+  mà hết thời hạn thì `ProcessRunner` giết cả cây tiến trình. Nay khởi chạy tách rời,
+  không chờ, không giết.
 - **Bấm phát mở trình phát toàn màn hình**, không đóng hay thu nhỏ được, buộc phải nhấn
   Esc. Bỏ cờ `-fs`, thêm tiêu đề và kích thước cửa sổ. Nay màn hình so sánh phát trực
   tiếp trong ứng dụng nên cửa sổ ngoài chỉ còn dùng khi thật cần.

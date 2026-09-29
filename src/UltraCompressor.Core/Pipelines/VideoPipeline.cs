@@ -2,6 +2,7 @@ using System.Globalization;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Planning;
+using UltraCompressor.Core.Processes;
 
 namespace UltraCompressor.Core.Pipelines;
 
@@ -32,7 +33,23 @@ public sealed class VideoPipeline : FFmpegPipelineBase
             context.Probe,
             context.Item.SourceWidth,
             context.Item.SourceBitrateKbps,
-            context.Item.HasAudio ?? true);
+            context.Item.HasAudio ?? true,
+            context.Config.VideoCodec.Equals("hevc", StringComparison.OrdinalIgnoreCase));
+
+        // Chỉ dùng HEVC khi bản dựng ffmpeg thực sự có libx265. Bản dựng không có thì
+        // lệnh sẽ chết ngay và không ra tệp, mà người dùng chỉ thấy job lỗi chung chung.
+        // Lùi về H.264 thì luôn chạy được.
+        if (plan.VideoEncoder == "libx265" && !await HasEncoderAsync(context, "libx265", token))
+        {
+            // Bù lại phần CRF đã cộng cho HEVC, và ghi rõ lý do vào kế hoạch để người
+            // dùng thấy — im lặng đổi codec thì họ tưởng đã nén bằng HEVC.
+            plan = plan with
+            {
+                VideoEncoder = "libx264",
+                Crf = Math.Max(0, plan.Crf - 2),
+                Reason = string.Join("; ", "bản ffmpeg này không có libx265 — dùng H.264", plan.Reason),
+            };
+        }
 
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
         args.AddRange(ProgressArgs);
@@ -42,7 +59,7 @@ public sealed class VideoPipeline : FFmpegPipelineBase
             "-map", "0:v:0?",
             "-map", "0:a:0?",
             "-map_metadata", "0",
-            "-c:v", "libx264",
+            "-c:v", plan.VideoEncoder,
             "-crf", plan.Crf.ToString(CultureInfo.InvariantCulture),
             "-preset", plan.Preset,
         ]);
@@ -77,6 +94,33 @@ public sealed class VideoPipeline : FFmpegPipelineBase
         var outcome = Interpret(result, duration, context.Item, temp);
         if (outcome.Success) onProgress(100);
         return outcome;
+    }
+
+    /// <summary>
+    /// Kiểm tra bản dựng ffmpeg có encoder không. Kết quả nhớ lại — hỏi lại cho từng tệp là
+    /// mỗi tệp lại mở một tiến trình chỉ để liệt kê encoder.
+    /// </summary>
+    private static readonly Dictionary<string, bool> EncoderCache = new(StringComparer.Ordinal);
+
+    private static async Task<bool> HasEncoderAsync(PipelineContext context, string encoder, CancellationToken token)
+    {
+        if (EncoderCache.TryGetValue(encoder, out var known)) return known;
+
+        var ffmpeg = context.Tools.FFmpeg;
+        if (ffmpeg is null) return false;
+
+        var result = await ProcessRunner.RunAsync(
+            ffmpeg,
+            ["-hide_banner", "-loglevel", "error", "-nostdin", "-encoders"],
+            TimeSpan.FromSeconds(20),
+            token);
+
+        var found = result.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => line.Contains(encoder, StringComparison.Ordinal));
+
+        EncoderCache[encoder] = found;
+        return found;
     }
 }
 

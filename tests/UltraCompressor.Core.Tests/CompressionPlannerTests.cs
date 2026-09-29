@@ -400,6 +400,30 @@ public class CompressionPlannerTests
     }
 
     [Fact]
+    public void Mac_dinh_dung_H264_khong_tu_bat_HEVC()
+    {
+        // HEVC tốn gấp 2-5 lần thời gian. Bản dựng không có libx265 thì lệnh chết và mất
+        // tệp, nên mặc định phải là codec luôn chạy được.
+        var plan = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000));
+
+        Assert.Equal("libx264", plan.VideoEncoder);
+    }
+
+    [Fact]
+    public void Chon_HEVC_thi_dung_libx265_va_bu_crf_cho_khong_bang_H264()
+    {
+        var h264 = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000));
+        var hevc = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000), preferHevc: true);
+
+        Assert.Equal("libx265", hevc.VideoEncoder);
+
+        // Thang CRF của HEVC khác H.264: cùng số thì HEVC cho tệp nhỏ hơn, nên phải cộng
+        // thêm để chất lượng ngang. Đo trên tệp anime cho mức cộng này.
+        Assert.Equal(h264.Crf + 2, hevc.Crf);
+        Assert.Contains("HEVC", hevc.Reason);
+    }
+
+    [Fact]
     public void Dung_che_do_dinh_dang_theo_thu_tu()
     {
         Assert.Equal(CompressionGoal.Quality, CompressionLevel.Light.ToGoal());

@@ -77,19 +77,40 @@ public sealed class MediaHost
         CoreWebView2WebResourceRequestedEventArgs args)
     {
         var path = Resolve(args.Request.Uri);
-        if (path is null || !File.Exists(path)) return null;
+
+        // Ghi lại MỌI yêu cầu media, kể cả yêu cầu không phục vụ được.
+        //
+        // Lý do: khi thẻ <video> không phát, Chromium không đưa lý do lên giao diện và cũng
+        // không ghi ra đâu. Một khung đen 0:00 không phân biệt được "tệp hỏng", "sai
+        // Content-Type", "tệp bị khoá" hay "lỗi trong code" — bốn nguyên nhân, một biểu
+        // hiện. Có dòng log thì lần sau mở nhật ký là biết ngay.
+        var header = RangeHeaderOf(args.Request.Headers);
+        var requested = args.Request.Uri ?? string.Empty;
+        var token = requested.Length > 0 ? requested[(requested.LastIndexOf('/') + 1)..] : requested;
+        Diagnostic.Log($"MediaHost: yêu cầu {token} | tệp {(path is null ? "KHÔNG CÓ" : Path.GetFileName(path))} | Range={header ?? "(không)"}");
+
+        if (path is null || !File.Exists(path))
+        {
+            Diagnostic.Log($"MediaHost: trả null (không phục vụ được) cho {token}.");
+            return null;
+        }
 
         try
         {
             var info = new FileInfo(path);
             var total = info.Length;
-            if (total == 0) return null;
+            if (total == 0)
+            {
+                Diagnostic.Log($"MediaHost: tệp rỗng, trả null cho {token}.");
+                return null;
+            }
 
             var range = ParseRange(args.Request.Headers, total);
 
             // Range không hợp lệ (vượt quá độ dài tệp) -> trả 416, đúng chuẩn HTTP.
             if (range is { Invalid: true })
             {
+                Diagnostic.Log($"MediaHost: Range không hợp lệ, trả 416 cho {token}.");
                 return environment.CreateWebResourceResponse(
                     Stream.Null,
                     416,
@@ -133,21 +154,42 @@ public sealed class MediaHost
                     .Append("\r\n");
             }
 
+            Diagnostic.Log(
+                $"MediaHost: trả {(range is null ? 200 : 206)} cho {token} | " +
+                $"{MimeTypeOf(path)} | {count}/{total} byte");
+
             return environment.CreateWebResourceResponse(
                 stream,
                 range is null ? 200 : 206,
                 range is null ? "OK" : "Partial Content",
                 headers.ToString());
         }
-        catch (IOException)
+        catch (IOException ex)
         {
-            // Tệp đang được ghi, hoặc đã bị khoá. Bỏ qua thay vì làm sập trang.
+            // Tệp đang được ghi, hoặc đã bị khoá. Bỏ qua thay vì làm sập trang — nhưng
+            // phải ghi lại, nếu không thì lại là một khung đen không giải thích.
+            Diagnostic.Log($"MediaHost: lỗi I/O khi phục vụ {token}: {ex.Message}");
             return null;
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException ex)
         {
+            Diagnostic.Log($"MediaHost: không có quyền đọc {token}: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>Lấy nguyên văn header <c>Range</c>, dùng để ghi nhật ký.</summary>
+    private static string? RangeHeaderOf(IEnumerable<KeyValuePair<string, string>> headers)
+    {
+        foreach (var header in headers)
+        {
+            if (string.Equals(header.Key, "Range", StringComparison.OrdinalIgnoreCase))
+            {
+                return header.Value;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Kết quả đọc header <c>Range</c>.</summary>

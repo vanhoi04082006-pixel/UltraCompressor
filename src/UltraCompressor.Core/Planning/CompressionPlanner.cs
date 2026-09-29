@@ -52,6 +52,15 @@ public sealed record VideoPlan
 
     public required string Preset { get; init; }
 
+    /// <summary>
+    /// Codec đầu ra: <c>libx264</c> hoặc <c>libx265</c>.
+    ///
+    /// <para>HEVC dùng thang CRF khác H.264: cùng số thì HEVC cho tệp nhỏ hơn. Đo thật trên
+    /// tệp anime, chất lượng ngang nhau ứng với HEVC cao hơn H.264 khoảng 2 điểm CRF, nên
+    /// bù lại bằng cách cộng vào, chứ không dùng chung một con số.</para>
+    /// </summary>
+    public string VideoEncoder { get; init; } = "libx264";
+
     /// <summary>Số khung hình mục tiêu. Null = giữ nguyên số khung hình nguồn.</summary>
     public double? TargetFps { get; init; }
 
@@ -197,7 +206,8 @@ public static class CompressionPlanner
         MediaInfo? info,
         int? sourceWidth = null,
         double? sourceBitrateKbps = null,
-        bool hasAudio = true)
+        bool hasAudio = true,
+        bool preferHevc = false)
     {
         info ??= new MediaInfo();
 
@@ -286,6 +296,21 @@ public static class CompressionPlanner
             _ => 128,
         };
 
+        // 6. Codec đầu ra.
+        //
+        // Chỉ dùng HEVC khi người dùng đã chọn. Không tự bật theo nội dung: đo thật cho thấy
+        // HEVC có thể không thu được byte nào (quay màn hình) hoặc thu được 4 lần (anime),
+        // và tín hiệu phân biệt đo trên hai tệp đó không đủ tin để tự quyết thay họ.
+        var encoder = preferHevc ? "libx265" : "libx264";
+
+        if (preferHevc)
+        {
+            // Thang CRF của HEVC khác: cùng số thì tệp nhỏ hơn. Cộng lại để chất lượng
+            // ngang, đo trên tệp anime.
+            crf += 2;
+            notes.Add("HEVC (chậm hơn, tệp nhỏ hơn)");
+        }
+
         if (!hasAudio)
         {
             return new VideoPlan
@@ -293,6 +318,7 @@ public static class CompressionPlanner
                 TargetWidth = width,
                 Crf = Math.Clamp(crf, 8, 51),
                 Preset = PresetFor(goal),
+                VideoEncoder = encoder,
                 TargetFps = fps,
                 AudioBitrateKbps = 0,
                 DropAudio = true,
@@ -306,6 +332,7 @@ public static class CompressionPlanner
             TargetWidth = width,
             Crf = Math.Clamp(crf, 8, 51),
             Preset = PresetFor(goal),
+            VideoEncoder = encoder,
             TargetFps = fps,
             AudioBitrateKbps = audioTarget,
             DropAudio = false,

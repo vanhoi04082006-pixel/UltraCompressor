@@ -22,11 +22,101 @@ public sealed class ProcessResult
     public bool Succeeded => ExitCode == 0 && !TimedOut && !Cancelled;
 }
 
+/// <summary>Kết quả chạy tiến trình mà stdout là dữ liệu nhị phân.</summary>
+public sealed class BinaryProcessResult
+{
+    public required int ExitCode { get; init; }
+
+    /// <summary>Toàn bộ stdout dạng byte thô.</summary>
+    public byte[] StandardOutput { get; init; } = [];
+
+    public IReadOnlyList<string> StandardErrorTail { get; init; } = [];
+
+    public bool TimedOut { get; init; }
+
+    public bool Succeeded => ExitCode == 0 && !TimedOut;
+}
+
 /// <summary>Chạy tiến trình ngoài, đọc output theo dòng, không bao giờ treo.</summary>
 public static class ProcessRunner
 {
     /// <summary>Số dòng stderr giữ lại để chẩn đoán.</summary>
     private const int StderrTailLines = 60;
+
+    /// <summary>
+    /// Chạy tiến trình và đọc stdout dạng byte thô.
+    ///
+    /// <para>Tách riêng <see cref="RunAsync(string, IReadOnlyList{string}, Action{string}?, Action{string}?, CancellationToken)"/>
+    /// vì hàm đó đọc stdout theo DÒNG và nối vào chuỗi. Dữ liệu nhị phân — như khung hình
+    /// thô từ ffmpeg — bị hỏng ngay ở bước tách dòng, và UTF-8 lại thay byte 0x80+ bằng ký
+    /// tự thay thế, nên kết quả sai mà không báo lỗi.</para>
+    /// </summary>
+    public static async Task<BinaryProcessResult> RunBinaryAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        CancellationToken token = default)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+
+        using var process = new System.Diagnostics.Process { StartInfo = startInfo };
+
+        try
+        {
+            if (!process.Start()) return new BinaryProcessResult { ExitCode = -1 };
+        }
+        catch (Exception ex)
+        {
+            return new BinaryProcessResult { ExitCode = -1, StandardErrorTail = [ex.Message] };
+        }
+
+        // ffmpeg có thể treo nếu để mở stdin và không ai đóng.
+        try { process.StandardInput.Close(); } catch { }
+
+        using var buffer = new MemoryStream();
+        var copy = process.StandardOutput.BaseStream.CopyToAsync(buffer, 81920, token);
+
+        var stderr = new List<string>();
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            stderr.Add(e.Data);
+            if (stderr.Count > StderrTailLines) stderr.RemoveAt(0);
+        };
+
+        process.BeginErrorReadLine();
+
+        var timedOut = false;
+        try
+        {
+            await process.WaitForExitAsync(token);
+            await copy;
+        }
+        catch (OperationCanceledException)
+        {
+            timedOut = true;
+        }
+
+        if (timedOut) TryKillTree(process);
+
+        return new BinaryProcessResult
+        {
+            ExitCode = timedOut || !process.HasExited ? -1 : process.ExitCode,
+            StandardOutput = buffer.ToArray(),
+            StandardErrorTail = [.. stderr],
+            TimedOut = timedOut,
+        };
+    }
 
     /// <summary>
     /// Chạy tiến trình ngoài. Không đặt timeout toàn cục có chủ ý: nén một video 2 GB có thể

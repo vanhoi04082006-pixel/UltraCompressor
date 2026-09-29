@@ -81,6 +81,19 @@ public sealed record JobDto
 
     public bool CanReview { get; init; }
 
+    /// <summary>
+    /// Job đang chờ người dùng bấm "Duyệt": còn tệp nào đã thay thế bản gốc, hoặc đang ở
+    /// chế độ thử nên chưa nén thật.
+    ///
+    /// <para><b>Do engine tính, không phải giao diện đoán.</b> Trước đây giao diện hiện nút
+    /// khi <c>pendingBackups &gt; 0</c>, hoặc khi <c>dryRun &amp;&amp; bytesSaved &gt; 0</c> —
+    /// hai điều kiện độc lập, chỉ cần một cái sai là mất nút mà không có lý do để báo.
+    /// Người dùng thấy job "nén xong" mà không có nút Duyệt, tưởng ứng dụng treo.</para>
+    ///
+    /// <para>Job xuất ra thư mục khác thì không đụng tệp gốc, nên không cần duyệt gì.</para>
+    /// </summary>
+    public bool NeedsApprove { get; init; }
+
     public long PendingBackups { get; init; }
 
     /// <summary>Tệp đang được nén, để dòng job hiện tiến độ tới từng tệp chứ không chỉ tổng.</summary>
@@ -100,7 +113,7 @@ public sealed record JobDto
             .ToDictionary(g => g.Key, g => g.Count()),
         FolderPath = job.FolderPath,
         Status = job.Status.ToString(),
-        StatusText = JobStatusLabel(job.Status),
+        StatusText = JobStatusLabel(job),
         Level = CompressionProfileText(job.Level),
         LevelDiffersFromCurrent = currentLevel is { } current && current != job.Level,
         DryRun = job.DryRun,
@@ -121,6 +134,7 @@ public sealed record JobDto
         CanPause = job.Status is JobStatus.Running,
         CanCancel = job.Status is JobStatus.Running or JobStatus.Paused,
         CanReview = job.Status is JobStatus.PendingReview or JobStatus.Committed or JobStatus.Cancelled,
+        NeedsApprove = job.Status == JobStatus.PendingReview && job.Items.Any(i => i.IsApplied || i.IsPredicted),
         PendingBackups = pendingBackups >= 0 ? pendingBackups : UndoService.PendingBackups(job).Count,
         ActiveFileName = ActiveItemOf(job)?.FileName,
         ActivePercent = ActiveItemOf(job)?.Percent ?? -1,
@@ -141,17 +155,28 @@ public sealed record JobDto
         return best;
     }
 
-    private static string JobStatusLabel(JobStatus status) => status switch
+    /// <summary>
+    /// Nhãn trạng thái, đã tính tới chế độ chạy của job.
+    ///
+    /// <para>Job xuất ra thư mục khác không đụng tệp gốc nên không có gì để duyệt, nhưng vẫn
+    /// mang trạng thái <c>PendingReview</c> như mọi job khác — dòng bảng ghi "Chờ duyệt"
+    /// trong khi không hề có nút Duyệt để bấm.</para>
+    /// </summary>
+    private static string JobStatusLabel(Job job) => job.Status switch
     {
         JobStatus.Waiting => "Hàng chờ",
         JobStatus.Running => "Đang chạy",
         JobStatus.Paused => "Tạm dừng",
-        JobStatus.PendingReview => "Chờ duyệt",
+        JobStatus.PendingReview => IsExportOnly(job) ? "Đã xuất" : "Chờ duyệt",
         JobStatus.Committed => "Đã duyệt",
         JobStatus.Failed => "Lỗi",
         JobStatus.Cancelled => "Đã hủy",
-        _ => status.ToString(),
+        _ => job.Status.ToString(),
     };
+
+    /// <summary>Job chỉ ghi kết quả ra nơi khác, không thay thế tệp gốc nào.</summary>
+    private static bool IsExportOnly(Job job) =>
+        !string.IsNullOrEmpty(job.OutputFolder) && job.Items.All(i => !i.IsApplied && !i.IsPredicted);
 
     private static string CompressionProfileText(CompressionLevel level) => level switch
     {

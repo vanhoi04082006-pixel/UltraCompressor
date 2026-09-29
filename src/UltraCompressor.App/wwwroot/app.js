@@ -323,12 +323,16 @@ function jobRow(job) {
       }
     }, 'danger'));
   }
-  if (job.canReview && job.pendingBackups > 0) {
-    actions.appendChild(iconButton('✓', 'Duyệt — xoá bản sao lưu', () => reviewJob(job), 'ok'));
-  } else if (job.canReview && job.dryRun && job.bytesSaved > 0) {
-    actions.appendChild(iconButton('✓', 'Duyệt — nén thật và thay thế tệp gốc', () => reviewJob(job), 'ok'));
+  // Nút Duyệt do engine quyết định (needsApprove), không tự đoán từ pendingBackups hay
+  // dryRun. Đoán ở đây thì chỉ cần một điều kiện lệch là mất nút, và người dùng thấy job
+  // "nén xong" mà không có nút nào để bấm.
+  if (job.needsApprove) {
+    const n = job.pendingBackups > 0
+      ? 'Duyệt — dọn bản sao lưu'
+      : 'Duyệt — nén thật và thay thế tệp gốc';
+    actions.appendChild(iconButton('✓', n, () => reviewJob(job), 'ok'));
   }
-  if (job.canReview) {
+  if (job.canReview && job.pendingBackups > 0) {
     actions.appendChild(iconButton('↩', 'Hoàn tác — khôi phục bản gốc', () => undoJob(job), 'danger'));
   }
   actions.appendChild(iconButton('🗑', 'Bỏ khỏi danh sách', () => removeJob(job), 'danger'));
@@ -993,6 +997,7 @@ function openSettings() {
   const c = state.config;
 
   $('cfgMinSaving').value = c.minSavingPercent;
+  $('cfgVideoCodec').value = c.videoCodec || 'h264';
   $('cfgMinSize').value = Math.round((c.minFileSizeBytes || 0) / (1024 * 1024));
   $('cfgSubfolders').checked = c.includeSubfolders;
   $('cfgFreeSpace').checked = c.checkFreeSpace;
@@ -1055,6 +1060,7 @@ async function saveConfig() {
 
   c.level = $('selLevel').value;
   c.minSavingPercent = Number($('cfgMinSaving').value) || 0;
+  c.videoCodec = $('cfgVideoCodec').value;
   c.minFileSizeBytes = Math.round((Number($('cfgMinSize').value) || 0) * 1024 * 1024);
   c.includeSubfolders = $('cfgSubfolders').checked;
   c.checkFreeSpace = $('cfgFreeSpace').checked;

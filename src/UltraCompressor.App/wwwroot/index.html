@@ -216,8 +216,22 @@
       <section class="fieldset">
         <h3>Nén</h3>
         <p class="hint hint-lead">
-          Mức nén là <b>một con số dùng chung</b> cho mọi loại media, nhưng mỗi loại đọc tham số
-          riêng từ nó. Xem bảng đầy đủ ở mục <b>Tham số nén</b> trong Hướng dẫn.
+          Mức nén là <b>mức mục tiêu</b>, không phải bộ tham số cố định. Cùng một mức nhưng mỗi
+          tệp ra tham số khác nhau, tuỳ đặc tính của chính nó. Tham số thật đã dùng hiện ở
+          dòng chi tiết.
+        </p>
+        <label class="row">
+          <span>Codec video đầu ra</span>
+          <select id="cfgVideoCodec">
+            <option value="h264">H.264 — nhanh, phát được ở mọi nơi</option>
+            <option value="hevc">HEVC — tệp nhỏ hơn nhiều, nén chậm hơn 2–5 lần</option>
+          </select>
+        </label>
+        <p class="hint">
+          Đo thật trên máy này: với video anime, HEVC cho tệp nhỏ hơn <b>4,1 lần</b> ở chất
+          lượng ngang nhau. Nhưng với video quay màn hình, HEVC chỉ bằng H.264 về dung
+          lượng mà mất thêm 5 lần thời gian. HEVC không phải lúc nào cũng đáng, nên bật
+          khi bạn biết nội dung của mình hợp với nó.
         </p>
         <label class="row">
           <span>Tiết kiệm tối thiểu để chấp nhận</span>

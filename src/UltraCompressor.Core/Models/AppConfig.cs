@@ -47,4 +47,24 @@ public sealed class AppConfig
 
     /// <summary>Chủ đề giao diện: <c>system</c>, <c>light</c>, <c>dark</c>.</summary>
     public string Theme { get; set; } = "system";
+
+    /// <summary>
+    /// Codec video đầu ra: <c>h264</c> (mặc định) hoặc <c>hevc</c>.
+    ///
+    /// <para><b>Vì sao mặc định là H.264, không tự chọn theo nội dung.</b> Đo thật trên hai
+    /// tệp cùng codec nguồn, cùng độ phân giải, trên cùng một máy cho kết quả ngược nhau:</para>
+    ///
+    /// <list type="bullet">
+    /// <item>Quay màn hình: x264 CRF 28 → 0,650 MB; x265 CRF 30 → 0,652 MB. Cùng dung
+    /// lượng, SSIM còn thấp hơn — HEVC tốn gấp 5,3 lần thời gian mà không thu được byte
+    /// nào.</item>
+    /// <item>Anime: x264 CRF 28 → 6,962 MB; x265 CRF 32 → 1,706 MB. Nhỏ hơn 4,1 lần, SSIM
+    /// chỉ giảm 0,003.</item>
+    /// </list>
+    ///
+    /// <para>HEVC đáng dùng hay không phụ thuộc nội dung, mà tín hiệu phân biệt được đo trên
+    /// hai tệp thì không đủ tin để tự bật. Tự bật là tự quyết thay người dùng rồi đoán
+    /// sai — nên để họ chọn, và nói rõ cái giá.</para>
+    /// </summary>
+    public string VideoCodec { get; set; } = "h264";
 }

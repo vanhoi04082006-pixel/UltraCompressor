@@ -1009,19 +1009,32 @@ public sealed class AppHost : IAsyncDisposable
 
             // Nối stdout của ffmpeg sang stdin của ffplay. CopyToAsync chạy nền, nếu chạy
             // tuần tự thì ffmpeg sẽ kẹt khi pipe đầy trong lúc chờ ta đọc.
-            encoder.StandardOutput.BaseStream
-                .CopyToAsync(player.StandardInput.BaseStream)
-                .ContinueWith(
-                    _ =>
+            //
+            // Bọc trong Drain vì đây là việc nền: gọi thẳng CopyToAsync rồi bỏ kết quả
+            // sẽ bị CS4014 khi build -warnaserror (mà CI đang bật).
+            _ = Task.Run(
+                () =>
+                {
+                    try
                     {
-                        try { player.StandardInput.Close(); } catch { /* ignore */ }
-                    },
-                    CancellationToken.None);
+                        encoder.StandardOutput.BaseStream.CopyToAsync(player.StandardInput.BaseStream)
+                            .GetAwaiter().GetResult();
+
+                        // ffplay chỉ đóng khi pipe hết dữ liệu, nên đóng stdin ở đây là
+                        // điều kiện cần để nó biết đã xem xong.
+                        player.StandardInput.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug("compare", $"Nối pipe ffmpeg -> ffplay hỏng: {ex.Message}");
+                    }
+                },
+                CancellationToken.None);
 
             // Đọc lỗi của cả hai về sau, để khi có hỏng thì biết hỏng ở đâu thay vì chỉ
             // thấy cửa sổ không mở. Không chặn ở đây.
-            _ = DrainAsync(encoder, "ffmpeg");
-            _ = DrainAsync(player, "ffplay");
+            Drain(encoder, "ffmpeg");
+            Drain(player, "ffplay");
 
             _logger.LogInfo("compare", $"Mở so sánh cạnh nhau: {command.Display()}");
             return ToNode(new { ok = true, player = "ffplay", command = command.Display() });
@@ -1033,27 +1046,39 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    /// <summary>Đọc stderr của một tiến trình con về nhật ký rồi bỏ, không chặn người dùng.</summary>
-    private async Task DrainAsync(System.Diagnostics.Process process, string label)
+    /// <summary>
+    /// Doc stderr cua mot tien trinh con ve nhat ky roi bo, khong chan nguoi dung.
+    ///
+    /// <para>Coi y khong await: viec nay bat buoc phai chay nen, va ta tra ve ngay cho
+    /// giao dien biet cua so da mo. Goi mot ham <c>async</c> ma khong await se bi
+    /// CS4014 khi build <c>-warnaserror</c> â€” ma CI co bat. Nen ham nay khong phai
+    /// <c>async</c>: no boc cong viec do vao <c>Task.Run</c> roi tra ve ngay.</para>
+    /// </summary>
+    private void Drain(System.Diagnostics.Process process, string label)
     {
-        try
-        {
-            var text = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-            var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines.Take(20))
+        _ = Task.Run(
+            async () =>
             {
-                _logger.LogDebug("compare", $"{label}: {line.Trim()}");
-            }
+                try
+                {
+                    var text = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+                    var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines.Take(20))
+                    {
+                        _logger.LogDebug("compare", $"{label}: {line.Trim()}");
+                    }
 
-            if (lines.Length > 0)
-            {
-                _logger.LogInfo("compare", $"{label} kết thúc với mã {process.ExitCode}: {lines[0].Trim()}");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug("compare", $"Không đọc được stderr của {label}: {ex.Message}");
-        }
+                    if (lines.Length > 0)
+                    {
+                        _logger.LogInfo("compare", $"{label} ket thuc voi ma {process.ExitCode}: {lines[0].Trim()}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("compare", $"Khong doc duoc stderr cua {label}: {ex.Message}");
+                }
+            },
+            CancellationToken.None);
     }
 
 

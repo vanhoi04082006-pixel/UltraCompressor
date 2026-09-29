@@ -44,7 +44,13 @@ Step 'Kiem tra dinh dang' { dotnet format --verify-no-changes --verbosity quiet 
 Step 'Build Release' { dotnet build UltraCompressor.slnx -c Release --nologo }
 Step 'Test' { dotnet test tests\UltraCompressor.Core.Tests\UltraCompressor.Core.Tests.csproj -c Release --no-build --nologo }
 # Build phat hanh ha cap canh bao, nen phai kiem tra Debug de bat phan con sot.
-Step 'Build Debug (coi canh bao la loi)' { dotnet build UltraCompressor.slnx -c Debug --nologo -warnaserror }
+Step 'Build Debug (coi canh bao la loi)' { dotnet build UltraCompressor.slnx -c Debug --nologo --no-incremental -warnaserror }
+
+# --no-incremental bat buoc, khong phai cho nhanh.
+#
+# Build tang di khong chay lai analyzer cho file da bien dich, nen mot loi analyzer
+# (vi du CS4014) co the xanh o may nhung do CI build sach lai bat. Da gap dung truong
+# hop: local OK, CI fail. Rebuild lai moi la cach tin chuong trinh nay co that khong.
 
 Pop-Location
 

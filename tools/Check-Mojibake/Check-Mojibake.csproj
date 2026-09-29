@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cong cu kiem tra chu tieng Viet co bi giai ma sai hay khong. Duoc check.ps1 va CI goi.
+
+    Khong phai mot phan cua ung dung, nen no khong duoc gan vao solution — neu gan,
+    `dotnet test` cua solution se bien dich va chay no nhu mot project binh thuong.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Check-Mojibake</AssemblyName>
+    <RootNamespace>CheckMojibake</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

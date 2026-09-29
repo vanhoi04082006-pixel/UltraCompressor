@@ -1102,8 +1102,8 @@ async function preview(item, backup) {
 async function purgeBackups() {
   const data = await call('purgeBackups');
   toast(data.removed > 0
-    ? `Đã dọn ${data.removed} tệp sao lưu quá hạn.`
-    : 'Không có tệp sao lưu nào quá hạn.', 'ok');
+    ? `Đã dọn ${data.removed} tệp .bak rơi vãi.`
+    : 'Không có tệp .bak rơi vãi nào.', 'ok');
 }
 
 // ============================================================ cài đặt
@@ -1118,7 +1118,6 @@ function openSettings() {
   $('cfgFreeSpace').checked = c.checkFreeSpace;
   $('cfgMeasureQuality').checked = c.measureQuality;
   $('cfgConcurrency').value = c.maxConcurrent;
-  $('cfgKeepDays').value = c.keepBackupDays;
   $('cfgExclude').value = (c.excludePatterns || []).join(', ');
   $('cfgLogLevel').value = c.logLevel;
   $('selLevel').value = c.level;
@@ -1181,7 +1180,6 @@ async function saveConfig() {
   c.checkFreeSpace = $('cfgFreeSpace').checked;
   c.measureQuality = $('cfgMeasureQuality').checked;
   c.maxConcurrent = Number($('cfgConcurrency').value) || 0;
-  c.keepBackupDays = Number($('cfgKeepDays').value) || 0;
   c.excludePatterns = $('cfgExclude').value.split(',').map((s) => s.trim()).filter(Boolean);
   c.logLevel = $('cfgLogLevel').value;
 
@@ -1419,7 +1417,7 @@ function wire() {
     if (!jobId || !filePath) return;
 
     const result = await call('playBothExternal', { jobId, filePath });
-    if (!result?.ok) toast(result?.error || 'KhĂ´ng má»Ÿ Ä‘Æ°á»£c ffplay.', 'warn');
+    if (!result?.ok) toast(result?.error || 'Không mở được ffplay.', 'warn');
   });
   $('btnPauseBoth').addEventListener('click', pauseBoth);
   for (const [button, key] of [['btnOpenOriginal', 'original'], ['btnOpenCompressed', 'compressed']]) {

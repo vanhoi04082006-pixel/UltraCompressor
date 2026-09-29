@@ -351,39 +351,78 @@ public class UndoServiceTests : IDisposable
             Items = [AppliedItem("a.bin", "goc", "nen")],
         };
 
-        var result = UndoService.DiscardBackups(job, keepDays: 0);
+        var result = UndoService.ReleaseBackups(job);
 
-        Assert.Equal(1, result.Restored);
+        Assert.Equal(1, result.Released);
         Assert.Equal(0, result.Failed);
         Assert.False(File.Exists(Path.Combine(_dir, "a.bin.bak")));
         Assert.Equal(JobStatus.Committed, job.Status);
     }
 
+    /// <summary>
+    /// Phản hồi của người dùng: duyệt xong mà bản gốc vẫn còn nằm đó chiếm chỗ.
+    ///
+    /// <para>Trước đây hàm này nhận <c>keepDays</c> và mặc định cấu hình là 30 ngày, nên
+    /// nhánh "còn trẻ hơn 30 ngày thì giữ" luôn đúng và duyệt xong KHÔNG xoá gì. Người
+    /// dùng phải đợi 30 ngày mới được giải phóng dung lượng — trong khi ý khi bấm Duyệt
+    /// là kết thúc luôn.</para>
+    ///
+    /// <para>Giờ Duyệt là Duyệt: xoá hẳn bản gốc.</para>
+    /// </summary>
     [Fact]
-    public void Duyet_giu_luu_vai_ngay()
+    public void Duyet_luon_xoa_ban_goc_khong_giu_lai_so_ngay_nao()
+    {
+        var job = new Job
+        {
+            FolderPath = _dir,
+            Items = [AppliedItem("moi.bak.bin", "goc", "nen")],
+        };
+
+        // Tệp .bak vừa tạo, tuổi 0 ngày — trước đây đây chính là điều kiện khiến hàm
+        // bỏ qua và giữ lại.
+        var backup = Path.Combine(_dir, "moi.bak.bin.bak");
+        Assert.True(File.Exists(backup));
+
+        var result = UndoService.ReleaseBackups(job);
+
+        Assert.Equal(1, result.Released);
+        Assert.False(File.Exists(backup), "duyệt xong phải xoá bản gốc, không giữ lại 30 ngày");
+    }
+
+    /// <summary>
+    /// Duyệt xong thì không còn lối quay lui cho tệp đó, nên phải ghi lại đúng sự thật
+    /// thay vì để trỏ vào một đường dẫn <c>.bak</c> đã không tồn tại. Nếu không,
+    /// <c>UndoService.PendingBackups</c> và nút "Hoàn tác" sẽ báo nhầm là còn hoàn tác
+    /// được.
+    /// </summary>
+    [Fact]
+    public void Duyet_xoa_xong_thi_bo_dung_duong_dan_ban_luu()
     {
         var item = AppliedItem("a.bin", "goc", "nen");
         var job = new Job { FolderPath = _dir, Items = [item] };
 
-        var result = UndoService.DiscardBackups(job, keepDays: 30);
+        // Thực tế engine ghi BackupPath lúc nén. Test này đặt tường minh để kiểm đúng
+        // điều cần kiểm: sau khi duyệt, con trỏ phải được dọn khỏi đường dẫn .bak đã
+        // không còn tồn tại, để nút "Hoàn tác" không báo nhầm là còn quay lui được.
+        item.BackupPath = FileTransaction.BackupPathFor(item.FilePath);
+        Assert.NotNull(item.BackupPath);
 
-        Assert.Equal(0, result.Restored);
-        Assert.True(File.Exists(Path.Combine(_dir, "a.bin.bak")));
+        UndoService.ReleaseBackups(job);
+
+        Assert.Null(item.BackupPath);
+        Assert.Empty(UndoService.PendingBackups(job));
     }
 
     /// <summary>
     /// Bug thật: bấm "Duyệt" xong, bản gốc đã bị thay thế và báo "Đã duyệt", nhưng job
     /// vẫn hiện "Chờ duyệt" và đếm 0 tệp — người dùng tưởng thao tác chưa xong.
     ///
-    /// <para>Nguyên nhân: điều kiện chuyển trạng thái là <c>keepDays == 0</c>, trong khi
-    /// mặc định giữ backup là 30 ngày. Nhánh đó không bao giờ chạy với cấu hình mặc
-    /// định.</para>
-    ///
-    /// <para>Giữ backup lâu và "đã duyệt" là hai việc khác nhau: keepDays quyết định lúc
-    /// nào xoá tệp .bak, không quyết định duyệt có thành công hay không.</para>
+    /// <para>Nguyên nhân: điều kiện chuyển trạng thái là <c>errors.Count == 0 &amp;&amp;
+    /// keepDays == 0</c>, trong khi mặc định giữ backup là 30 ngày. Nhánh đó không bao
+    /// giờ chạy với cấu hình mặc định.</para>
     /// </summary>
     [Fact]
-    public void Duyet_thanh_cong_thi_job_sang_da_ghi_du_giu_luu_backup()
+    public void Duyet_thanh_cong_thi_job_sang_da_ghi()
     {
         var item = AppliedItem("a.bin", "goc", "nen");
         var job = new Job
@@ -393,11 +432,10 @@ public class UndoServiceTests : IDisposable
             Items = [item],
         };
 
-        UndoService.DiscardBackups(job, keepDays: 30);
+        UndoService.ReleaseBackups(job);
 
         Assert.Equal(JobStatus.Committed, job.Status);
         Assert.True(job.Committed);
-        Assert.True(File.Exists(Path.Combine(_dir, "a.bin.bak")));
     }
 
     [Fact]
@@ -416,7 +454,7 @@ public class UndoServiceTests : IDisposable
 
         var job = new Job { FolderPath = _dir, Status = JobStatus.PendingReview, Items = [item] };
 
-        var result = UndoService.DiscardBackups(job, keepDays: 0);
+        var result = UndoService.ReleaseBackups(job);
 
         Assert.Equal(0, result.Failed);
         Assert.Empty(result.Errors);

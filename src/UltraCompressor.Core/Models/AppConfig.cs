@@ -30,8 +30,11 @@ public sealed class AppConfig
     /// <summary>Danh sách mẫu tên tệp cần bỏ qua, không phân biệt hoa thường. Ví dụ: <c>*.bak</c>, <c>Thumbs.db</c>.</summary>
     public List<string> ExcludePatterns { get; set; } = ["*.bak", "*.tmp", "Thumbs.db", ".DS_Store", "*~"];
 
-    /// <summary>Số ngày giữ tệp <c>.bak</c> sau khi duyệt. 0 = giữ vĩnh viễn.</summary>
-    public int KeepBackupDays { get; set; } = 30;
+    // KHONG con truong "so ngay giu tep .bak" nua. Truoc day mac dinh la 30 ngay, nen
+    // nhanh "Duyet" chi bao duyet chu khong xoa gi - dung nguon y cua nguoi dung: duyet
+    // xong la xoa han goc de giai phong dung luong, con "Hoan tac" dung khi chua duyet.
+    // Tieu chuc giu lai da duoc bo khoi Cai dat; muc 30 ngay cho phep don tep .bak roi
+    // vai nam dinh ngay trong AppHost, khong phai thong so cau hinh.
 
     /// <summary>Chạy đo chất lượng VMAF trên vài frame mẫu trước khi áp dụng kết quả.</summary>
     public bool MeasureQuality { get; set; }

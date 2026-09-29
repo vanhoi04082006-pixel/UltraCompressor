@@ -850,19 +850,23 @@ public sealed class CompressionEngine : IAsyncDisposable
 
     // ---------------------------------------------------------------- duyệt / hoàn tác
 
-    public async Task<UndoService.BatchResult> CommitAsync(string jobId, int keepBackupDays)
+    public async Task<UndoService.CommitResult> CommitAsync(string jobId)
     {
         var job = Find(jobId);
-        if (job is null) return new UndoService.BatchResult(0, 0, ["Không tìm thấy job."]);
+        if (job is null) return new UndoService.CommitResult(0, 0, 0, ["Không tìm thấy job."]);
 
         // Job chạy ở chế độ thử: kết quả nén đã nằm sẵn trên đĩa, chỉ chưa thay thế tệp
-        // gốc. "Duyệt" nghĩa là dùng đúng tệp đó — sao bản gốc ra .bak rồi đặt bản nén
-        // vào chỗ. KHÔNG nén lại: nén lại thì kết quả có thể khác, và người dùng vừa xem
-        // so sánh xong lại bị thay bằng thứ khác.
+        // gốc. "Duyệt" nghĩa là dùng đúng tệp đó — KHÔNG nén lại, vì nén lại thì kết quả
+        // có thể khác và người dùng vừa xem so sánh xong lại bị thay bằng thứ khác.
+        //
+        // Ở chế độ thử thì bản gốc còn nguyên và chưa từng bị thay thế, nên duyệt xong
+        // KHÔNG để lại .bak nào: thay tệp rồi xoá bản gốc luôn. Người dùng đã xem kết quả
+        // ở hộp so sánh rồi mới bấm Duyệt, nên giữ lại 526 MB là tốn chỗ vô ích.
         if (job.DryRun)
         {
             var applied = 0;
             var errors = new List<string>();
+            var notReleased = 0;
             var stale = 0;
 
             foreach (var item in job.Items.Where(i => i.IsPredicted))
@@ -879,17 +883,28 @@ public sealed class CompressionEngine : IAsyncDisposable
                     continue;
                 }
 
-                var error = FileTransaction.Commit(item.FilePath, staged);
-                if (error is null)
+                var swap = FileTransaction.CommitAndRelease(item.FilePath, staged);
+
+                if (swap.Error is not null)
                 {
-                    applied++;
-                    item.IsApplied = true;
-                    item.IsPredicted = false;
-                    item.BackupPath = FileTransaction.BackupPathFor(item.FilePath);
+                    errors.Add($"{item.FileName}: {swap.Error}");
+                    continue;
                 }
-                else
+
+                applied++;
+                item.IsApplied = true;
+                item.IsPredicted = false;
+
+                // Bản gốc đã đi vào .bak rồi bị xoá, nên không còn lối quay lui cho tệp
+                // này. Ghi lại đúng sự thật thay vì để mặc định trỏ vào .bak đã không có.
+                item.BackupPath = null;
+
+                // Thay thế được nhưng xoá bản gốc hỏng (tệp đang mở). Bản nén đã ở chỗ,
+                // nên không tính là duyệt hỏng — nhưng phải nói rõ vì chỗ chưa giải phóng.
+                if (swap.ReleaseError is not null)
                 {
-                    errors.Add($"{item.FileName}: {error}");
+                    notReleased++;
+                    errors.Add($"{item.FileName}: đã duyệt nhưng chưa xoá được bản gốc ({swap.ReleaseError})");
                 }
             }
 
@@ -902,13 +917,17 @@ public sealed class CompressionEngine : IAsyncDisposable
                 item.StagedPath = null;
             }
 
-            job.Status = errors.Count == 0 ? JobStatus.Committed : JobStatus.PendingReview;
-            if (errors.Count == 0) job.Committed = true;
+            // Chỉ giữ "Chờ duyệt" khi thật sự có tệp chưa duyệt được. Lỗi xoá bản gốc
+            // không làm nghẽn việc duyệt — bản nén vẫn nằm đúng chỗ.
+            var failed = stale + errors.Count - notReleased;
+            job.Status = failed == 0 ? JobStatus.Committed : JobStatus.PendingReview;
+            if (failed == 0) job.Committed = true;
 
             Raise(ChangeReason.JobStatus, jobId);
             await SaveSessionAsync();
 
-            _log.LogInfo("commit", $"Duyệt {applied}/{applied + stale + errors.Count} tệp ở chế độ thử.");
+            var releasedNote = notReleased > 0 ? $", {notReleased} tệp chưa xoá được bản gốc" : "";
+            _log.LogInfo("commit", $"Duyệt {applied}/{applied + stale + errors.Count - notReleased} tệp ở chế độ thử{releasedNote}.");
 
             // Tệp nào mất rồi thì chạy lại thật, nếu không job sẽ đứng ở "Chờ duyệt" mãi
             // với một tệp không bao giờ duyệt được.
@@ -925,10 +944,13 @@ public sealed class CompressionEngine : IAsyncDisposable
                 _ = Task.Run(() => StartAsync([jobId]));
             }
 
-            return new UndoService.BatchResult(applied, errors.Count, errors);
+            return new UndoService.CommitResult(applied, applied - notReleased, stale + errors.Count - notReleased, errors);
         }
 
-        var result = UndoService.DiscardBackups(job, keepBackupDays);
+        // Job nén thật: bản nén đã nằm ở chỗ từ lúc chạy, bản gốc nằm trong .bak để
+        // người dùng còn so sánh và còn hoàn tác được. Bấm Duyệt nghĩa là họ đã xem và
+        // chấp nhận, nên xoá bản gốc ngay để giải phóng dung lượng.
+        var result = UndoService.ReleaseBackups(job);
         Raise(ChangeReason.JobStatus, jobId);
         await SaveSessionAsync();
         return result;

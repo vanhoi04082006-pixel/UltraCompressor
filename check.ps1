@@ -41,6 +41,7 @@ if ($Fix) {
 }
 
 Step 'Kiem tra dinh dang' { dotnet format --verify-no-changes --verbosity quiet }
+Step 'Chu tieng Viet' { dotnet run --project tools\Check-Mojibake\Check-Mojibake.csproj -c Release --no-build -- src tests docs check.ps1 setup.ps1 }
 Step 'Build Release' { dotnet build UltraCompressor.slnx -c Release --nologo }
 Step 'Test' { dotnet test tests\UltraCompressor.Core.Tests\UltraCompressor.Core.Tests.csproj -c Release --no-build --nologo }
 # Build phat hanh ha cap canh bao, nen phai kiem tra Debug de bat phan con sot.

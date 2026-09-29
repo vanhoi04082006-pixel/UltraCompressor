@@ -18,6 +18,16 @@ public sealed class AppHost : IAsyncDisposable
 {
     private static readonly TimeSpan PushInterval = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// Tệp <c>.bak</c> cũ hơn ngần này thì coi là rơi vãi và dọn được.
+    ///
+    /// <para>Không cấu hình được, cố ý. Ngưỡng này chỉ dùng cho nút "Dọn tệp .bak rơi
+    /// vãi" — dọn những tệp sót lại do ứng dụng bị tắt giữa chừng. Nếu để người dùng
+    /// đặt ngưỡng quá nhỏ thì nút này sẽ xoá luôn bản gốc của những tệp **đang chờ
+    /// duyệt**, tức là mất dữ liệu thật chứ không phải dọn rác.</para>
+    /// </summary>
+    private const int StrayBackupDays = 30;
+
     private readonly AppConfig _config;
     private readonly ToolChain _tools;
     private readonly FileLogger _logger;
@@ -590,8 +600,8 @@ public sealed class AppHost : IAsyncDisposable
         if (jobId is null) return null;
 
         ForgetBackupCounts();
-        var result = await _engine.CommitAsync(jobId, _config.KeepBackupDays);
-        return ToNode(new { result.Restored, result.Failed, result.Errors });
+        var result = await _engine.CommitAsync(jobId);
+        return ToNode(new { result.Applied, result.Released, result.Failed, result.Errors });
     }
 
     private async Task<System.Text.Json.Nodes.JsonNode?> UndoAsync(BridgeMessage message)
@@ -643,7 +653,6 @@ public sealed class AppHost : IAsyncDisposable
         to.MinFileSizeBytes = from.MinFileSizeBytes;
         to.IncludeSubfolders = from.IncludeSubfolders;
         to.ExcludePatterns = from.ExcludePatterns;
-        to.KeepBackupDays = from.KeepBackupDays;
         to.MeasureQuality = from.MeasureQuality;
         to.CheckFreeSpace = from.CheckFreeSpace;
         to.ConcurrencyScale = from.ConcurrencyScale;
@@ -696,7 +705,16 @@ public sealed class AppHost : IAsyncDisposable
     private System.Text.Json.Nodes.JsonNode? PurgeBackups()
     {
         ForgetBackupCounts();
-        var removed = UndoService.PurgeExpiredBackups(_engine.Jobs.Select(j => j.FolderPath), _config.KeepBackupDays);
+
+        // Ngưỡng cố định, không cấu hình được. Nút này dọn tệp .bak RƠI VÃI — tức là
+        // những tệp mà ứng dụng quên dọn do treo máy hoặc bị tắt giữa chừng — chứ
+        // không phải bản sao lưu đang chờ người dùng duyệt. Duyệt xong thì .bak đã bị
+        // xoá ngay, nên ở đây chỉ còn tệp sót.
+        //
+        // Trước đây lấy ngưỡng từ KeepBackupDays, mà ngưỡng đó vốn quyết định việc duyệt
+        // có xoá .bak hay không. Sau khi bỏ tuỳ chọn đó, dùng chung một hằng số sẽ khiến
+        // nút này âm thầm xoá bản sao lưu còn đang chờ duyệt.
+        var removed = UndoService.PurgeExpiredBackups(_engine.Jobs.Select(j => j.FolderPath), StrayBackupDays);
         return ToNode(new { removed });
     }
 
@@ -896,30 +914,6 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Má»Ÿ báº£n gá»‘c vĂ  báº£n Ä‘Ă£ nĂ©n cáº¡nh nhau trong Má»˜T cá»­a sá»• ffplay, dĂ¹ng bá»™ lá»c
-    /// <c>hstack</c>.
-    ///
-    /// <para>VĂ¬ sao má»™t tiáº¿n trĂ¬nh chá»© khĂ´ng pháº£i hai cá»­a sá»•:</para>
-    /// <list type="bullet">
-    /// <item>Äá»“ng bá»™ tuyá»‡t Ä‘á»‘i theo cáº¥u táº¡o â€” má»™t tiáº¿n trĂ¬nh, má»™t Ä‘á»“ng há»“. Hai cá»­a sá»•
-    /// thĂ¬ pháº£i canh báº±ng tay vĂ  luĂ´n trĂ´i.</item>
-    /// <item>KhĂ´ng tranh CPU vá»›i á»©ng dá»¥ng. Sá»± kiá»‡n <c>WebResourceRequested</c> cá»§a
-    /// WebView2 cháº¡y trĂªn UI thread, nĂªn phĂ¡t hai video trong á»©ng dá»¥ng khi Ä‘ang nĂ©n lĂ 
-    /// nguyĂªn nhĂ¢n cá»­a sá»• Ä‘á»©ng hĂ¬nh. ffplay cháº¡y ngoĂ i tiáº¿n trĂ¬nh nĂªn khĂ´ng dĂ­nh.</item>
-    /// <item>CĂ³ thá»ƒ xáº¿p cáº¡nh nhau tháº­t sá»±. ffplay cĂ³ <c>-x/-y</c> cho kĂ­ch thÆ°á»›c nhÆ°ng
-    /// KHĂ”NG cĂ³ tuá»³ chá»n vá»‹ trĂ­ cá»­a sá»•, nĂªn hai cá»­a sá»• ffplay sáº½ chá»“ng lĂªn nhau; VLC thĂ¬
-    /// Ä‘á»‹nh vá»‹ Ä‘Æ°á»£c nhÆ°ng khĂ´ng Ä‘á»“ng bá»™ vá»›i ffplay. Má»™t cá»­a sá»• ghĂ©p lĂ  lá»±a chá»n duy
-    /// nháº¥t vá»«a cáº¡nh nhau vá»«a Ä‘á»“ng bá»™.</item>
-    /// </list>
-    /// </summary>
-    /// <summary>
-    /// Mở bản gốc và bản đã nén cạnh nhau trong MỘT cửa sổ ffplay.
-    ///
-    /// <para>Phần dựng lệnh nằm ở <see cref="FfplayCommand"/> trong tầng Core để test được;
-    /// hàm này chỉ lo phần tìm tệp và khởi chạy. Xem lý do chọn một tiến trình thay vì hai
-    /// cửa sổ ở đó.</para>
-    /// </summary>
-    /// <summary>
     /// Mở bản gốc và bản đã nén cạnh nhau trong MỘT cửa sổ.
     ///
     /// <para>Dựng lệnh nằm ở <see cref="SideBySidePlayer"/> trong tầng Core để test được;
@@ -1010,7 +1004,7 @@ public sealed class AppHost : IAsyncDisposable
             // Nối stdout của ffmpeg sang stdin của ffplay. CopyToAsync chạy nền, nếu chạy
             // tuần tự thì ffmpeg sẽ kẹt khi pipe đầy trong lúc chờ ta đọc.
             //
-            // Bọc trong Drain vì đây là việc nền: gọi thẳng CopyToAsync rồi bỏ kết quả
+            // Bọc trong Task.Run vì đây là việc nền: gọi thẳng CopyToAsync rồi bỏ kết quả
             // sẽ bị CS4014 khi build -warnaserror (mà CI đang bật).
             _ = Task.Run(
                 () =>
@@ -1047,12 +1041,12 @@ public sealed class AppHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Doc stderr cua mot tien trinh con ve nhat ky roi bo, khong chan nguoi dung.
+    /// Đọc stderr của một tiến trình con về nhật ký rồi bỏ, không chặn người dùng.
     ///
-    /// <para>Coi y khong await: viec nay bat buoc phai chay nen, va ta tra ve ngay cho
-    /// giao dien biet cua so da mo. Goi mot ham <c>async</c> ma khong await se bi
-    /// CS4014 khi build <c>-warnaserror</c> â€” ma CI co bat. Nen ham nay khong phai
-    /// <c>async</c>: no boc cong viec do vao <c>Task.Run</c> roi tra ve ngay.</para>
+    /// <para>Cố ý không await: việc này bắt buộc phải chạy nền, và ta trả về ngay cho
+    /// giao diện biết cửa sổ đã mở. Gọi một hàm <c>async</c> mà không await sẽ bị
+    /// CS4014 khi build <c>-warnaserror</c> — mà CI có bật. Nên hàm này không phải
+    /// <c>async</c>: nó bọc công việc đó vào <c>Task.Run</c> rồi trả về ngay.</para>
     /// </summary>
     private void Drain(System.Diagnostics.Process process, string label)
     {
@@ -1070,19 +1064,16 @@ public sealed class AppHost : IAsyncDisposable
 
                     if (lines.Length > 0)
                     {
-                        _logger.LogInfo("compare", $"{label} ket thuc voi ma {process.ExitCode}: {lines[0].Trim()}");
+                        _logger.LogInfo("compare", $"{label} kết thúc với mã {process.ExitCode}: {lines[0].Trim()}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug("compare", $"Khong doc duoc stderr cua {label}: {ex.Message}");
+                    _logger.LogDebug("compare", $"Không đọc được stderr của {label}: {ex.Message}");
                 }
             },
             CancellationToken.None);
     }
-
-
-
 
     private static System.Text.Json.Nodes.JsonNode? BuildGuide() => ToNode(new
     {

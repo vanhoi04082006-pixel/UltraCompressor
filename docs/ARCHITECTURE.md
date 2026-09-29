@@ -283,3 +283,74 @@ Hai điều kiện dễ sai đã ghi thành test:
 không làm được gì. Nay `ffplay.exe` nằm cạnh `ffmpeg.exe` (cùng bản build 8.0.1 full
 static, SHA256 của ffmpeg hai bên trùng nhau) nên `ToolLocator` tự tìm thấy. Người dùng
 vẫn có thể ghi đè bằng bản khác ở Cài đặt → Công cụ ngoài.
+
+## Duyệt là xoá bản gốc — và "Hoàn tác" dùng trước khi duyệt
+
+Trước đây bấm "Duyệt" **không bao giờ xoá gì**. Nguyên nhân nằm ở `UndoService.DiscardBackups(job, keepDays)`:
+mặc định cấu hình giữ `.bak` là 30 ngày, nên nhánh
+
+```csharp
+if (keepDays > 0)
+{
+    if (age.TotalDays < keepDays) continue;   // <-- luôn đúng
+}
+```
+
+**bỏ qua mọi tệp**. Người dùng bấm Duyệt, ứng dụng báo thành công, còn bản gốc nằm đó
+chiếm chỗ. Với một tệp 526 MB thì phải đợi 30 ngày, hoặc bấm tay "Dọn bản sao lưu quá hạn",
+mới giải phóng được. Đó không phải ý nghĩa của nút Duyệt.
+
+### Ngữ nghĩa mới
+
+| Thời điểm | Chế độ chạy thử | Chế độ nén thật |
+|---|---|---|
+| Sau khi nén | gốc nguyên trên đĩa, bản nén nằm trong `data\tmp` | bản nén đè lên gốc, gốc nằm ở `.bak` |
+| Xem so sánh | hai bản cùng tồn tại | hai bản cùng tồn tại |
+| **Hoàn tác** | bỏ bản nén tạm, gốc không đổi | khôi phục gốc từ `.bak`, xoá bản nén |
+| **Duyệt** | thế bản nén vào chỗ, **xoá bản gốc** | **xoá `.bak`** |
+
+Duyệt là chốt. Sau đó không còn lối quay lui, và đó là điều người dùng chọn khi bấm Duyệt —
+họ đã xem kết quả ở hộp so sánh rồi. Muốn giữ lại thì bấm Hoàn tác **trước**, lúc đó cả
+hai bản còn đầy đủ.
+
+### Không còn `File.Copy` 526 MB
+
+Ở chế độ chạy thử, bản trước tạo `.bak` bằng `File.Copy` — tức là tốn thêm một bản 526 MB
+chỉ để giữ trong khoảng thời gian giữa lúc duyệt và lúc xoá. Nay `FileTransaction.CommitAndRelease`:
+
+1. `File.Move(goc, goc + ".bak")` — trên cùng ổ đĩa đây là **đổi tên**: tức thì, 0 byte.
+   Khác ổ đĩa thì mới rơi về `File.Copy`.
+2. `File.Move(ketQua, goc, overwrite: true)`.
+3. `File.Delete(goc + ".bak")` — giải phóng chỗ.
+
+Bản gốc chỉ tồn tại giữa bước 1 và bước 3. Nếu bước 2 hỏng thì bản gốc được đưa về đúng
+chỗ cũ, nên không mất gì cả.
+
+`CommitAndRelease` cố tình **từ chối** khi đã có `.bak`: đó là lối quay lui duy nhất còn
+lại, ghi đè nghĩa là mất khả năng hoàn tác về bản thật (bug B7).
+
+### Lỗi xoá không tính là lỗi duyệt
+
+Tệp đang được trình phát giữ thì `File.Delete` hỏng. Khi đó bản nén vẫn nằm đúng chỗ, nên
+`CommitResult` tách `Applied` / `Released` / `Failed`: báo "đã duyệt nhưng chưa xoá được bản
+gốc", chứ không phải "duyệt thất bại". Job vẫn sang `Committed`, và `.bak` còn đó nên vẫn
+hoàn tác được — chỉ là chưa giải phóng được chỗ.
+
+Sau khi xoá, `item.BackupPath` được đặt về `null`. Nếu không, nó trỏ vào một đường dẫn
+không còn tồn tại và nút "Hoàn tác" báo nhầm là còn quay lui được. `HasBackup` và
+`PendingBackups` đều tính trực tiếp từ đĩa nên nút tự ẩn theo.
+
+### Đã bỏ tuỳ chọn "Giữ tệp .bak sau khi duyệt"
+
+Không còn gì để giữ: Duyệt luôn xoá. Ngưỡng 30 ngày chuyển thành hằng số riêng cho nút
+"Dọn tệp `.bak` rơi vãi" (`AppHost.StrayBackupDays`), và **cố ý không cho cấu hình** — nếu
+để người dùng đặt ngưỡng nhỏ, nút dọn sẽ xoá luôn bản gốc của những tệp **đang chờ duyệt**,
+tức là mất dữ liệu thật chứ không phải dọn rác.
+
+Kiểm chứng trên clip cắt từ tệp thật:
+
+```
+1. CHAY THU + DUYET   goc 2,0 MB -> 0,9 MB, .bak khong con, thu muc chi con video.mp4
+2. NEN THAT + HOAN TAC  .bak = goc 2,0 MB, hoan tac khoi phuc khop tuyet doi
+3. NEN THAT + DUYET    .bak chiem 2,0 MB -> xoa sach, giai phong 2,0 MB
+```

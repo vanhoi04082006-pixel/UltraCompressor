@@ -5,7 +5,21 @@ namespace UltraCompressor.Core.Storage;
 /// <summary>Hoàn tác / duyệt / dọn bản sao lưu trên cả job.</summary>
 public static class UndoService
 {
+    /// <summary>
+    /// Kết quả hoàn tác: đã khôi phục bao nhiêu bản gốc, hỏng bao nhiêu.
+    /// </summary>
     public sealed record BatchResult(int Restored, int Failed, IReadOnlyList<string> Errors);
+
+    /// <summary>
+    /// Kết quả duyệt. Tách khỏi <see cref="BatchResult"/> vì hai việc đếm khác nhau:
+    /// hoàn tác thì <b>khôi phục</b> bản gốc, duyệt thì <b>xoá</b> bản gốc.
+    ///
+    /// <para><see cref="Applied"/> là số tệp đã đưa bản nén vào chỗ;
+    /// <see cref="Released"/> là số tệp đã xoá bản gốc, tức là số chỗ đã giải phóng. Hai số
+    /// này lệch nhau khi tệp đang được trình phát giữ nên xoá không được — đó là lý do
+    /// phải báo riêng thay vì gộp vào "lỗi".</para>
+    /// </summary>
+    public sealed record CommitResult(int Applied, int Released, int Failed, IReadOnlyList<string> Errors);
 
     /// <summary>Khôi phục mọi tệp đã bị thay thế trong job về bản gốc.</summary>
     public static BatchResult RestoreAll(Job job)
@@ -63,58 +77,55 @@ public static class UndoService
     }
 
     /// <summary>
-    /// Duyệt kết quả: xoá bản sao lưu vì người dùng đã chấp nhận.
-    /// Trả về các lỗi để báo — thường là tệp đang được mở bởi trình phát.
+    /// Duyệt xong: xoá bản gốc vì người dùng đã xem kết quả và chấp nhận.
+    ///
+    /// <para>Trước đây có tham số <c>keepDays</c> và mặc định cấu hình là 30, nên nhánh
+    /// "còn trẻ hơn 30 ngày thì giữ" luôn đúng và hàm này **không bao giờ xoá gì**. Bấm
+    /// Duyệt xong bản gốc vẫn nằm đó chiếm dung lượng, đúng như phản hồi của người dùng.
+    /// Nay Duyệt là Duyệt: xoá hẳn, giải phóng chỗ.</para>
+    ///
+    /// <para>Trả về các lỗi để báo — thường là tệp đang được trình phát giữ. Lỗi xoá KHÔNG
+    /// làm hỏng việc duyệt: bản đã nén vẫn ở chỗ, và bản gốc còn nằm trong
+    /// <c>.bak</c> nên vẫn hoàn tác được.</para>
     /// </summary>
-    public static BatchResult DiscardBackups(Job job, int keepDays)
+    public static CommitResult ReleaseBackups(Job job)
     {
-        var discarded = 0;
+        var released = 0;
         var errors = new List<string>();
+        var applied = 0;
 
         foreach (var item in job.Items)
         {
             if (!item.IsApplied) continue;
 
+            applied++;
+
             var backup = item.BackupPath ?? FileTransaction.BackupPathFor(item.FilePath);
             if (!File.Exists(backup)) continue;
 
-            if (keepDays > 0)
-            {
-                // Giữ thêm keepDays ngày rồi dọn sau — để người dùng kịp hối tiếc.
-                try
-                {
-                    var age = DateTime.Now - File.GetLastWriteTime(backup);
-                    if (age.TotalDays < keepDays) continue;
-                }
-                catch
-                {
-                    // Không đọc được ngày sửa — coi như còn giữ.
-                    continue;
-                }
-            }
-
             var error = FileTransaction.DiscardBackup(item.FilePath);
-            if (error is null) discarded++;
-            else errors.Add($"{item.FileName}: {error}");
+            if (error is null)
+            {
+                released++;
+                // Không còn lối quay lui cho tệp này. Ghi lại đúng sự thật thay vì để
+                // trỏ vào một .bak đã không tồn tại.
+                item.BackupPath = null;
+            }
+            else
+            {
+                errors.Add($"{item.FileName}: {error}");
+            }
         }
 
-        // Đã duyệt xong thì job phải sang trạng thái "đã ghi", bất kể còn giữ backup hay
-        // không.
-        //
-        // Trước đây điều kiện là `errors.Count == 0 && keepDays == 0`. Nhưng keepDays mặc
-        // định là 30, nên nhánh này không bao giờ chạy: bấm "Duyệt" xong, bản gốc đã bị
-        // thay thế thật, báo "Đã duyệt" — mà job vẫn hiện "Chờ duyệt" và đếm 0 tệp.
-        // Người dùng tưởng thao tác chưa xong, bấm lại nhiều lần.
-        //
-        // keepDays quyết định thời điểm XOÁ file .bak, không quyết định việc duyệt có
-        // thành công hay không. Hai việc đó tách bạch: giữ backup lâu vẫn là đã duyệt.
-        if (errors.Count == 0)
-        {
-            job.Status = JobStatus.Committed;
-            job.Committed = true;
-        }
+        // Đã duyệt xong thì job phải sang trạng thái "đã ghi", bất kể có xoá được .bak hay
+        // không. Trước đây điều kiện là `errors.Count == 0 && keepDays == 0`; với
+        // keepDays mặc định 30 thì nhánh này không bao giờ chạy, nên bấm Duyệt xong job
+        // vẫn hiện "Chờ duyệt" và đếm 0 tệp — người dùng tưởng thao tác chưa xong và bấm
+        // lại nhiều lần.
+        job.Status = JobStatus.Committed;
+        job.Committed = true;
 
-        return new BatchResult(discarded, errors.Count, errors);
+        return new CommitResult(applied, released, errors.Count, errors);
     }
 
     /// <summary>Xoá các tệp <c>.bak</c> quá hạn rải rác trong các thư mục đã từng nén.</summary>

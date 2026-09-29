@@ -124,6 +124,87 @@ public class FileTransactionTests : IDisposable
         // Xoá lần hai không phải lỗi.
         Assert.Null(FileTransaction.DiscardBackup(original));
     }
+
+    // ---------------------------------------------------------------- duyệt = xoá bản gốc
+
+    /// <summary>
+    /// Ý của người dùng khi bấm Duyệt: kết thúc luôn, giải phóng chỗ.
+    ///
+    /// <para>Ở chế độ chạy thử thì bản gốc **chưa từng bị thay thế** — nó vẫn nằm nguyên
+    /// trên đĩa, còn bản nén nằm riêng. Nên duyệt xong phải xoá bản gốc, không để lại
+    /// <c>.bak</c> nào. Bản trước tạo <c>.bak</c> rồi giữ lại, tức là tốn thêm một bản
+    /// 526 MB cho tới khi bấm duyệt.</para>
+    /// </summary>
+    [Fact]
+    public void Commit_va_xoa_ban_goc_khong_de_lai_bak_nao()
+    {
+        var original = Write("a.txt", "ban goc rat lon");
+        var temp = Write("tmp.txt", "ban nen");
+
+        var result = FileTransaction.CommitAndRelease(original, temp);
+
+        Assert.Null(result.Error);
+        Assert.Null(result.ReleaseError);
+        Assert.True(result.Released);
+
+        Assert.Equal("ban nen", File.ReadAllText(original));
+        Assert.False(File.Exists(original + ".bak"), "duyệt xong phải xoá bản gốc");
+        Assert.False(File.Exists(temp));
+    }
+
+    [Fact]
+    public void Khong_ghi_de_ban_luu_da_co()
+    {
+        // .bak sẵn có là lối quay lui duy nhất còn lại (bug B7). Ghi đè nó nghĩa là mất
+        // khả năng hoàn tác về bản thật, nên phải từ chối thay vì làm thì.
+        var original = Write("a.txt", "ban goc moi nhat");
+        var temp = Write("tmp.txt", "ban nen");
+        File.WriteAllText(original + ".bak", "ban goc rat cu");
+
+        var result = FileTransaction.CommitAndRelease(original, temp);
+
+        Assert.NotNull(result.Error);
+        Assert.False(result.Released);
+        Assert.Equal("ban goc moi nhat", File.ReadAllText(original));
+        Assert.Equal("ban goc rat cu", File.ReadAllText(original + ".bak"));
+    }
+
+    [Fact]
+    public void Ket_qua_rong_thi_tieu_dinh_va_khong_du_go()
+    {
+        var original = Write("a.txt", "ban goc");
+        var temp = Path.Combine(_dir, "rong.txt");
+        File.WriteAllText(temp, "");
+
+        var result = FileTransaction.CommitAndRelease(original, temp);
+
+        Assert.NotNull(result.Error);
+        Assert.Equal("ban goc", File.ReadAllText(original));
+    }
+
+    [Fact]
+    public void Thieu_tep_ket_qua_thi_khong_du_go()
+    {
+        var original = Write("a.txt", "ban goc");
+
+        var result = FileTransaction.CommitAndRelease(original, Path.Combine(_dir, "khong-co.txt"));
+
+        Assert.NotNull(result.Error);
+        Assert.Equal("ban goc", File.ReadAllText(original));
+    }
+
+    [Fact]
+    public void Khong_du_go_thi_ban_goc_van_nguyen_ven()
+    {
+        // Bảo toàn dữ liệu là bắt buộc: thao tác hỏng giữa chừng không được làm mất bản gốc.
+        var original = Write("a.txt", "ban goc");
+        File.WriteAllText(original + ".bak", "ban goc");
+
+        var result = FileTransaction.CommitAndRelease(original, original);
+
+        Assert.NotNull(result.Error);
+        Assert.Equal("ban goc", File.ReadAllText(original));
+    }
 }
 
 public class FolderScannerTests : IDisposable

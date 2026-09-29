@@ -262,18 +262,14 @@
       </section>
 
       <section class="fieldset">
-        <h3>Bộ lọc và bản sao lưu</h3>
-        <label class="row">
-          <span>Giữ tệp <code>.bak</code> sau khi duyệt</span>
-          <input type="number" id="cfgKeepDays" min="0" max="3650" class="input-num">
-          <em class="unit">ngày · 0 = vĩnh viễn</em>
-        </label>
+        <h3>Bộ lọc</h3>
         <label class="row">
           <span>Không nén các tệp khớp</span>
           <input type="text" id="cfgExclude" spellcheck="false" placeholder="*.bak, *.tmp, Thumbs.db">
         </label>
         <p class="hint">Bản cũ không lọc gì, nên chạy lần hai sẽ nén tiếp chính tệp <code>.bak</code> mà nó vừa tạo ra.</p>
-        <button class="btn btn-ghost btn-sm" id="btnPurge">Dọn bản sao lưu quá hạn ngay</button>
+        <p class="hint"><b>Duyệt là xoá bản gốc.</b> Tới lúc bấm Duyệt thì bản gốc nằm trong <code>.bak</code> cùng bản nén; bấm Duyệt là xoá <code>.bak</code> để giải phóng chỗ. Muốn giữ lại thì bấm <b>Hoàn tác</b> trước, lúc đó cả hai bản còn đầy đủ.</p>
+        <button class="btn btn-ghost btn-sm" id="btnPurge">Dọn tệp <code>.bak</code> rơi vãi</button>
       </section>
 
       <section class="fieldset">

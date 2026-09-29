@@ -21,6 +21,11 @@ jobs:
       - name: Kiểm tra định dạng
         run: dotnet format --verify-no-changes --verbosity quiet
 
+      - name: Kiểm tra chữ tiếng Việt
+        # Đã có lần 65 dòng trong MediaHost.cs và AppHost.cs bị hỏng chữ vì bị đọc
+        # sai bằng ANSI rồi ghi lại, và đã push lên. Bước này chặn tái diễn.
+        run: dotnet run --project tools\Check-Mojibake\Check-Mojibake.csproj -c Release -- src tests docs check.ps1 setup.ps1
+
       - name: Build
         run: dotnet build UltraCompressor.slnx -c Release --nologo
 

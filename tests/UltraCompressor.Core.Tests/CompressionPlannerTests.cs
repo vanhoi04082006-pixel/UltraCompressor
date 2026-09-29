@@ -400,17 +400,17 @@ public class CompressionPlannerTests
     }
 
     [Fact]
-    public void Mac_dinh_dung_H264_khong_tu_bat_HEVC()
+    public void Khong_bat_HEVC_vao_thi_luon_dung_H264()
     {
-        // HEVC tốn gấp 2-5 lần thời gian. Bản dựng không có libx265 thì lệnh chết và mất
-        // tệp, nên mặc định phải là codec luôn chạy được.
+        // Cờ trong kế hoạch: chỉ khi người dùng yêu cầu mới dùng HEVC. Tên hàm nói rõ điều
+        // này vì nhầm hai chiều là lỗi âm thầm — mất 5 lần thời gian mà không ai biết.
         var plan = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000));
 
         Assert.Equal("libx264", plan.VideoEncoder);
     }
 
     [Fact]
-    public void Chon_HEVC_thi_dung_libx265_va_bu_crf_cho_khong_bang_H264()
+    public void Bat_HEVC_thi_dung_libx265_va_bu_crf_cho_khong_bang_H264()
     {
         var h264 = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000));
         var hevc = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000), preferHevc: true);
@@ -418,9 +418,84 @@ public class CompressionPlannerTests
         Assert.Equal("libx265", hevc.VideoEncoder);
 
         // Thang CRF của HEVC khác H.264: cùng số thì HEVC cho tệp nhỏ hơn, nên phải cộng
-        // thêm để chất lượng ngang. Đo trên tệp anime cho mức cộng này.
-        Assert.Equal(h264.Crf + 2, hevc.Crf);
+        // thêm để chất lượng ngang. Mức cộng đo trên tệp anime, không phải ước lượng.
+        Assert.Equal(h264.Crf + 5, hevc.Crf);
         Assert.Contains("HEVC", hevc.Reason);
+    }
+
+    [Fact]
+    public void Bu_crf_HEVC_phai_khop_thang_mac_dinh_cua_hai_bien_so()
+    {
+        // x264 mặc định 23, x265 mặc định 28. Hai thang đó được thiết kế để cho cùng chất
+        // lượng, nên đây là mốc lệch tối thiểu phải bù. Ghi test để con số trong planner
+        // không bị đổi vì tưởng là "chỉnh cho hợp lý".
+        Assert.Equal(5, CompressionPlanner.HevcCrfOffsetForH264);
+    }
+
+    // ---------------------------------------------------------------- chọn codec theo nội dung
+
+    private static MediaInfo VideoWithProfile(ContentProfile profile, double si, double ti) =>
+        Video(1920, 1080, 30, 6000) with
+        {
+            Complexity = new ContentComplexity { SpatialDetail = si, TemporalActivity = ti, Samples = 3 },
+        };
+
+    [Fact]
+    public void Noi_dung_man_hinh_dung_H264_du_nguoi_dung_bat_HEVC()
+    {
+        // Đo thật: HEVC to hơn 2% VÀ SSIM kém hơn so với H.264 trên tệp quay màn hình.
+        // Ở đây bật HEVC thì phải bỏ qua lựa chọn đó, vì mục tiêu của người dùng là tệp nhỏ.
+        var plan = CompressionPlanner.PlanVideo(
+            CompressionGoal.Balanced,
+            VideoWithProfile(ContentProfile.ScreenContent, si: 122.5, ti: 0.02),
+            preferHevc: true);
+
+        Assert.Equal("libx264", plan.VideoEncoder);
+
+        // Và không cộng thêm lệch thang CRF của HEVC, vì kết quả không phải HEVC.
+        var h264 = CompressionPlanner.PlanVideo(CompressionGoal.Balanced, Video(1920, 1080, 30, 6000));
+        Assert.Equal(h264.Crf, plan.Crf);
+        Assert.Contains("màn hình", plan.Reason);
+    }
+
+    [Theory]
+    [InlineData(ContentProfile.ModerateMotion)]
+    [InlineData(ContentProfile.BusyMotion)]
+    [InlineData(ContentProfile.FlatMotionless)]
+    [InlineData(ContentProfile.Unknown)]
+    public void Cac_nhom_noi_dung_khac_van_dung_HEVC(ContentProfile profile)
+    {
+        // Ngoài nội dung màn hình ra thì đo thật cho thấy HEVC thắng (anime nhỏ hơn 52-62%),
+        // nên không có lý do phải tự từ chối lựa chọn của người dùng.
+        var plan = CompressionPlanner.PlanVideo(
+            CompressionGoal.Balanced,
+            VideoWithProfile(profile, si: 90, ti: 6),
+            preferHevc: true);
+
+        Assert.Equal("libx265", plan.VideoEncoder);
+    }
+
+    [Fact]
+    public void Khong_bat_HEVC_thi_khong_bao_gi_dung_HEVC_du_noi_dung_ho_gi_H264()
+    {
+        var plan = CompressionPlanner.PlanVideo(
+            CompressionGoal.Balanced,
+            VideoWithProfile(ContentProfile.ModerateMotion, si: 90, ti: 6),
+            preferHevc: false);
+
+        Assert.Equal("libx264", plan.VideoEncoder);
+    }
+
+    [Fact]
+    public void Khong_do_duoc_noi_dung_thi_theo_lua_chon_cua_nguoi_dung()
+    {
+        // Probe hỏng thì vẫn nén được, chỉ mất khả năng chọn codec theo nội dung.
+        var plan = CompressionPlanner.PlanVideo(
+            CompressionGoal.Balanced,
+            Video(1920, 1080, 30, 6000) with { Complexity = null },
+            preferHevc: true);
+
+        Assert.Equal("libx265", plan.VideoEncoder);
     }
 
     [Fact]

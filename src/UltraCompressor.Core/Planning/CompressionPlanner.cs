@@ -55,9 +55,10 @@ public sealed record VideoPlan
     /// <summary>
     /// Codec đầu ra: <c>libx264</c> hoặc <c>libx265</c>.
     ///
-    /// <para>HEVC dùng thang CRF khác H.264: cùng số thì HEVC cho tệp nhỏ hơn. Đo thật trên
-    /// tệp anime, chất lượng ngang nhau ứng với HEVC cao hơn H.264 khoảng 2 điểm CRF, nên
-    /// bù lại bằng cách cộng vào, chứ không dùng chung một con số.</para>
+    /// <para>HEVC dùng thang CRF khác H.264: cùng số thì HEVC cho tệp nhỏ hơn. Thang mặc
+    /// định của x265 (28) tương đương thang mặc định của x264 (23), tức lệch 5 điểm. Đo thật
+    /// trên anime xác nhận: ở CRF 33 cho HEVC và 28 cho H.264, HEVC nhỏ hơn 52–62% mà
+    /// SSIM chỉ lệch khoảng 0.003.</para>
     /// </summary>
     public string VideoEncoder { get; init; } = "libx264";
 
@@ -166,6 +167,29 @@ public static class CompressionPlanner
     private const double BitsPerPixelNearlyDepleted = 0.08;
     private const double BitsPerPixelComfortable = 0.25;
     private const double BitsPerPixelVeryComfortable = 0.50;
+
+    /// <summary>
+    /// Cộng vào CRF khi chuyển từ H.264 sang HEVC, để hai thang CRF cho ra cùng chất lượng.
+    ///
+    /// <para><b>Đây là hằng số đo được, không phải ước lượng.</b> Thang mặc định của x265 là
+    /// 28 và của x264 là 23, nên HEVC cần cao hơn 5 điểm. Đo thật trên 6 tệp anime của
+    /// người dùng:</para>
+    ///
+    /// <list type="table">
+    /// <item><term>offset +2 (sai)</term><description>HEVC nhỏ hơn 34–50%</description></item>
+    /// <item><term>offset +5 (đúng)</term><description>HEVC nhỏ hơn <b>52–62%</b>, SSIM lệch ~0.003</description></item>
+    /// </list>
+    ///
+    /// <para>Con số 2 ở bản đầu là do đoán, và nó làm HEVC <i>nén quá tay</i>: cùng dung
+    /// lượng nhưng SSIM thấp hơn H.264 ở mọi tệp đo.</para>
+    /// </summary>
+    private const int HevcCrfOffset = 5;
+
+    /// <summary>
+    /// Cùng hằng số <see cref="HevcCrfOffset"/>, để pipeline bù lại khi phải lùi về H.264
+    /// không phải tự nhớ là bao nhiêu.
+    /// </summary>
+    public const int HevcCrfOffsetForH264 = HevcCrfOffset;
 
     /// <summary>Trần bề rộng theo mức mục tiêu. Không bao giờ phóng to — chỉ thu nhỏ.</summary>
     private static int WidthCap(CompressionGoal goal, MediaKind kind) => goal switch
@@ -296,19 +320,26 @@ public static class CompressionPlanner
             _ => 128,
         };
 
-        // 6. Codec đầu ra.
+        // 6. Codec đầu ra — bảng quyết định theo NHÓM NỘI DUNG.
         //
-        // Chỉ dùng HEVC khi người dùng đã chọn. Không tự bật theo nội dung: đo thật cho thấy
-        // HEVC có thể không thu được byte nào (quay màn hình) hoặc thu được 4 lần (anime),
-        // và tín hiệu phân biệt đo trên hai tệp đó không đủ tin để tự quyết thay họ.
-        var encoder = preferHevc ? "libx265" : "libx264";
+        // Đây là chỗ một bảng preset cố định hỏng: hiệu quả HEVC phụ thuộc mạnh vào loại
+        // nội dung, và ở một nhóm nó thua rõ ràng. Đo thật trên cùng một tệp quay màn hình
+        // (1918x1078, 30 fps):
+        //
+        //   H.264 CRF 28 : 563.609 byte, SSIM 0.99459
+        //   HEVC CRF 33  : 574.949 byte, SSIM 0.98998   <- to hơn VÀ kém hơn
+        //
+        // Cùng phép đo đó trên anime thì ngược lại hẳn: HEVC nhỏ hơn 52-62%. Không có
+        // tín hiệu phân biệt thì chọn codec nào cũng sai với một trong hai nhóm, nên ở đây
+        // ta dùng SI/TI của ITU-T P.910 để tách.
+        var profile = info.Complexity?.Profile ?? ContentProfile.Unknown;
+        var useHevc = ChooseEncoder(profile, preferHevc, notes);
+        var encoder = useHevc ? "libx265" : "libx264";
 
-        if (preferHevc)
+        if (useHevc)
         {
-            // Thang CRF của HEVC khác: cùng số thì tệp nhỏ hơn. Cộng lại để chất lượng
-            // ngang, đo trên tệp anime.
-            crf += 2;
-            notes.Add("HEVC (chậm hơn, tệp nhỏ hơn)");
+            // Bù lệch thang CRF giữa hai codec. Không có bước này thì HEVC bị nén quá tay.
+            crf += HevcCrfOffset;
         }
 
         if (!hasAudio)
@@ -339,6 +370,41 @@ public static class CompressionPlanner
             Delta = delta,
             Reason = string.Join("; ", notes),
         };
+    }
+
+    /// <summary>
+    /// Bảng quyết định codec: <b>nhóm nội dung × người dùng có bật HEVC không</b>.
+    ///
+    /// <para>Hàng duy nhất hiện còn cần đo riêng là nội dung màn hình, vì đó là chỗ HEVC
+    /// thua đo được chứ không phải suy luận. Các nhóm còn lại cùng hành xử: HEVC thắng
+    /// mạnh trên anime (52–62%) và phim truyện, nên không có lý do phải phân biệt.</para>
+    ///
+    /// <para>Khi probe hỏng (<see cref="ContentProfile.Unknown"/>) thì theo ý người dùng
+    /// đã chọn, vì đó là hành vi trung lập và không thay đổi kết quả so với bản cũ.</para>
+    /// </summary>
+    private static bool ChooseEncoder(ContentProfile profile, bool preferHevc, List<string> notes)
+    {
+        if (!preferHevc)
+        {
+            // Không ghi chú gì ở nhánh này. "Đang dùng H.264" không phải tin gì đáng báo cho
+            // người dùng khi đó chính là chế độ họ đã chọn — và có chú thích thì lý do của
+            // tệp không còn sạch sẽ nữa.
+            return false;
+        }
+
+        switch (profile)
+        {
+            case ContentProfile.ScreenContent:
+                // Đo thật: HEVC to hơn 2% và SSIM kém hơn 0.005 so với H.264 trên cùng tệp.
+                // Dùng H.264 dù người dùng bật HEVC — mục tiêu của họ là tệp nhỏ, và đây là
+                // trường hợp HEVC không phục vụ được mục tiêu đó.
+                notes.Add("nội dung màn hình (SI cao, không chuyển động) — H.264 nhỏ hơn và đẹp hơn");
+                return false;
+
+            default:
+                notes.Add("HEVC (nhỏ hơn H.264 ở cùng chất lượng)");
+                return true;
+        }
     }
 
     private static double? EstimateDensity(double? kbps, int? width, int? height, double? fps)

@@ -53,6 +53,14 @@ public sealed record MediaInfo
     public bool IsStillImage { get; init; }
 
     /// <summary>
+    /// Đặc trưng nội dung theo ITU-T P.910. Null = chưa đo, hoặc đo hỏng.
+    ///
+    /// <para>Tách khỏi probe chuẩn vì tốn thời gian hơn: probe này phải giải mã vài khung
+    /// hình, còn probe trên chỉ đọc header. Chỉ pipeline video cần tới.</para>
+    /// </summary>
+    public ContentComplexity? Complexity { get; init; }
+
+    /// <summary>
     /// Mật độ bit của nguồn, theo **bit trên mỗi pixel trên mỗi khung**. Đây là con số
     /// quan trọng nhất khi quyết định có nén lại hay không.
     ///

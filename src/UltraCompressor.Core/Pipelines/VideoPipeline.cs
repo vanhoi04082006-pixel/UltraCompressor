@@ -23,14 +23,29 @@ public sealed class VideoPipeline : FFmpegPipelineBase
 {
     public override MediaKind Kind => MediaKind.Video;
 
+    /// <summary>
+    /// Bộ đo SI/TI dùng chung cho mọi tệp. Cùng lý do như <see cref="EncoderCache"/>: mỗi tệp
+    /// một tiến trình ffmpeg là lãng phí, và tệp nhỏ thì việc khởi tạo còn nặng hơn cả việc đo.
+    /// </summary>
+    private static ContentComplexityProbe? _complexityProbe;
+    private static readonly Lock ProbeLock = new();
+
     public override async Task<PipelineResult> RunAsync(
         PipelineContext context, Action<int> onProgress, CancellationToken token)
     {
         var temp = context.TempPath;
+        var probe = context.Probe ?? new MediaInfo();
+
+        // Đo SI/TI trước khi lập kế hoạch: nhóm nội dung quyết định codec, mà codec quyết
+        // định CRF. Đo sau thì phải tính lại kế hoạch lần hai.
+        //
+        // Bọc trong thử: đây là tối ưu, không phải điều kiện để nén. Không có nó thì vẫn nén
+        // được bằng đường lùi.
+        probe = await WithComplexityAsync(context, probe, token).ConfigureAwait(false);
 
         var plan = CompressionPlanner.PlanVideo(
             context.Level.ToGoal(),
-            context.Probe,
+            probe,
             context.Item.SourceWidth,
             context.Item.SourceBitrateKbps,
             context.Item.HasAudio ?? true,
@@ -46,7 +61,7 @@ public sealed class VideoPipeline : FFmpegPipelineBase
             plan = plan with
             {
                 VideoEncoder = "libx264",
-                Crf = Math.Max(0, plan.Crf - 2),
+                Crf = Math.Max(0, plan.Crf - HevcCrfOffset),
                 Reason = string.Join("; ", "bản ffmpeg này không có libx265 — dùng H.264", plan.Reason),
             };
         }
@@ -94,6 +109,46 @@ public sealed class VideoPipeline : FFmpegPipelineBase
         var outcome = Interpret(result, duration, context.Item, temp);
         if (outcome.Success) onProgress(100);
         return outcome;
+    }
+
+    /// <summary>
+    /// Lệch thang CRF giữa H.264 và HEVC. Tái số từ planner để nhánh fallback về H.264 bù
+    /// đúng bằng thứ đã cộng — để một hằng số ở hai nơi là cách chắc chắn nhất để chúng lệch.
+    /// </summary>
+    private const int HevcCrfOffset = CompressionPlanner.HevcCrfOffsetForH264;
+
+    /// <summary>
+    /// Bổ sung đặc trưng nội dung vào kết quả probe. Không ném lỗi ra ngoài: mất đo được
+    /// thì vẫn nén, chỉ là không có tín hiệu để chọn codec.
+    /// </summary>
+    private static async Task<MediaInfo> WithComplexityAsync(
+        PipelineContext context, MediaInfo probe, CancellationToken token)
+    {
+        if (probe.Complexity is not null) return probe;
+        if (!probe.HasVideo) return probe;
+
+        var ffmpeg = context.Tools.FFmpeg;
+        if (ffmpeg is null) return probe;
+
+        ContentComplexityProbe tool;
+        lock (ProbeLock)
+        {
+            _complexityProbe ??= new ContentComplexityProbe(ffmpeg);
+            tool = _complexityProbe;
+        }
+
+        try
+        {
+            return probe with { Complexity = await tool.ProbeAsync(context.SourcePath, probe.Duration, token) };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return probe;
+        }
     }
 
     /// <summary>

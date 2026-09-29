@@ -61,7 +61,46 @@ start(dryRun, outputFolder)
             └─ _limiter.Release()
 ```
 
-## Ba quyết định đáng ghi
+## Bốn quyết định đáng ghi
+
+**Codec đầu ra phải theo nội dung, không theo mặc định.** Đây là chỗ một bảng thông số
+cố định hỏng nặng nhất. Đo thật trên cùng một tệp quay màn hình (1918×1078, 30 fps):
+
+| Tham số | Dung lượng | SSIM |
+|---|---|---|
+| H.264 CRF 28 | 563.609 byte | 0.99459 |
+| HEVC CRF 33 | 574.949 byte | 0.98998 |
+
+HEVC **to hơn 2% và kém hơn**. Đúng là HEVC gốc không sinh ra cho nội dung màn hình —
+HEVC có phần mở rộng riêng cho loại đó (HEVC Screen Content Coding), vì khối 64×64 và
+biến đổi dài của nó làm hỏng cạnh chữ sắc. Cùng phép đo trên anime thì ngược lại hẳn:
+HEVC nhỏ hơn **52–62%**.
+
+Vậy nên `CompressionPlanner` có trục thứ hai bên cạnh mức mục tiêu: **nhóm nội dung**,
+lấy từ SI/TI của ITU-T P.910 (`ContentComplexityProbe`). Ba điểm lấy mẫu, mỗi điểm hai
+khung liên tiếp ở 320×180 thang xám — tốn ~0.5 giây với tệp 24 phút, không cần giải mã
+toàn bộ. Đo được: quay màn hình SI 122.8 / TI 0.02; anime SI 89–92 / TI 0–6.5. Ngưỡng
+SI 110 nằm giữa, mỗi bên lệch hơn 10 điểm. Cần **cả hai** điều kiện mới gọi là màn hình,
+vì anime hạn chế chuyển động cũng ra TI ~ 0.
+
+**Lệch thang CRF giữa H.264 và HEVC là 5, và con số này từng sai.** Thang mặc định của
+x265 là 28, của x264 là 23 — hai thang được thiết kế để cho cùng chất lượng. Bản đầu
+đặt là `+2` do đoán, và nó làm HEVC **nén quá tay**: cùng dung lượng nhưng SSIM thấp hơn
+H.264 ở mọi tệp đo. Đo lại: offset `+5` cho HEVC nhỏ hơn 52–62% với SSIM chỉ lệch ~0.003.
+
+Kết quả ba mức sau khi sửa, chạy đúng lệnh mà planner sinh ra:
+
+| Tệp | Nhóm | Codec | Nhẹ | Cân bằng | Mạnh |
+|---|---|---|---|---|---|
+| Quay màn hình | ScreenContent | `libx264` | 7.8% | 6.0% | 3.9% |
+| Anime | FlatMotionless | `libx265` | 46.0% | 28.1% | 20.6% |
+| Anime | FlatMotionless | `libx265` | 46.7% | 29.8% | 20.6% |
+
+So với bản có offset sai: mức "Nhẹ" 9% → **46%**, mức "Mạnh" 63.5% → **20.6%**.
+
+`ContentComplexity` có một cái bẫy đáng ghi lại: SI là **độ lệch chuẩn** của độ lớn
+Sobel, nên một trường cạnh đều đặn (sọc 2px) cho SI = 0, y hệt ảnh phẳng. Ảnh thật không
+bao giờ đều tăm tắp như thế, nhưng đó là lý do không được dùng SI một mình.
 
 **Một mức nén, nhưng thông số thì tách theo loại media.** Vẫn chỉ có ba mức
 (Light / Balanced / Strong) và một dropdown, nhưng `CompressionProfile` mang tham số

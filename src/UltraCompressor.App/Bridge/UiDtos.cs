@@ -238,6 +238,16 @@ public sealed record ItemDto
 
     public bool CanPreview { get; init; }
 
+    /// <summary>
+    /// Có bản nén trên đĩa để so sánh chưa — hoặc đang chờ duyệt (chế độ thử đã nén và giữ
+    /// lại tệp), hoặc đã ghi đè và còn bản sao lưu.
+    ///
+    /// <para>Trước đây nút so sánh chỉ mở khi có <c>.bak</c>, tức chỉ sau khi nén thật ghi
+    /// đè. Ở chế độ thử thì không bao giờ mở, dù người dùng vừa nén xong và muốn xem kết
+    /// quả — đúng cái việc mà bước "Duyệt" sinh ra là để làm.</para>
+    /// </summary>
+    public bool HasCompressed { get; init; }
+
     /// <summary>Thời gian đã dùng để nén tệp này, dạng "m:ss". Rỗng khi chưa xong lần nào.</summary>
     public string ElapsedText { get; init; } = string.Empty;
 
@@ -271,6 +281,8 @@ public sealed record ItemDto
         IsApplied = item.IsApplied,
         IsPredicted = item.IsPredicted,
         HasBackup = item.IsApplied && File.Exists(FileTransaction.BackupPathFor(item.FilePath)),
+        HasCompressed = (item.IsPredicted && item.StagedPath is { } staged && File.Exists(staged))
+            || (item.IsApplied && File.Exists(FileTransaction.BackupPathFor(item.FilePath))),
         CanPreview = item.Kind is MediaKind.Video or MediaKind.Audio,
         ElapsedText = item.ElapsedSeconds > 0 ? Format.Time(item.ElapsedSeconds) : string.Empty,
         QualityScore = item.QualityScore,
@@ -300,7 +312,7 @@ public sealed record ItemDto
     {
         { IsComplete: false, IsProcessing: true } => "Đang xử lý",
         { IsComplete: false } => "Chờ",
-        { IsPredicted: true } => "Dự kiến",
+        { IsPredicted: true } => "Chờ duyệt",
         { Succeeded: true } => "Thành công",
         { Skip: SkipReason.NoSizeGain } => "Giữ nguyên",
         { Skip: SkipReason.BelowMinSaving } => "Tiết kiệm ít",

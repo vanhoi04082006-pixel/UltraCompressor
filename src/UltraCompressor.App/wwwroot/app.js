@@ -588,17 +588,41 @@ function renderCompareSide(prefix, side) {
   }
 }
 
-/* Phát cả hai cùng lúc. Không kéo được hai trình phát về đúng thời điểm tuyệt đối vì
-   tải giải mã mỗi bên một tốc độ, nhưng chơi cùng lệnh là đủ để so sánh trực quan. */
+/* Phát cả hai cùng lúc, và GIỮ cho chúng ở cùng thời điểm.
+
+   Chỉ gọi play() trên cả hai là chưa đủ: hai tệp có độ dài và tốc độ giải mã khác nhau,
+   chúng sẽ trôi dần ra khỏi nhau, và lúc đó bạn đang so hai khoảnh thời gian KHÁC NHAU —
+   tức so sánh sai. Người dùng tua một bên thì bên kia phải nhảy theo. */
+let compareSyncTimer = null;
+
 function playBoth() {
-  for (const p of Object.values(comparePlayers)) {
-    if (!p) continue;
+  const players = Object.values(comparePlayers).filter(Boolean);
+  if (players.length === 0) return;
+
+  for (const p of players) {
     p.currentTime = 0;
-    p.play().catch(() => {});
+    p.muted = true;
   }
+
+  for (const p of players) p.play().catch(() => {});
+
+  const [first, ...rest] = players;
+  if (!first || rest.length === 0) return;
+
+  if (compareSyncTimer) clearInterval(compareSyncTimer);
+
+  compareSyncTimer = setInterval(() => {
+    if (first.paused) return;
+    for (const p of rest) {
+      if (Math.abs(p.currentTime - first.currentTime) > 0.15) {
+        p.currentTime = first.currentTime;
+      }
+    }
+  }, 100);
 }
 
 function pauseBoth() {
+  if (compareSyncTimer) { clearInterval(compareSyncTimer); compareSyncTimer = null; }
   for (const p of Object.values(comparePlayers)) {
     if (p) p.pause();
   }
@@ -796,7 +820,7 @@ function updateItemRow(item) {
     row.state.appendChild(planEl);
   }
 
-  row.previewBtn.hidden = !(item.canPreview && item.hasBackup);
+  row.previewBtn.hidden = !(item.canPreview && item.hasCompressed);
   row.undoBtn.hidden = !(item.isApplied && item.hasBackup);
 }
 

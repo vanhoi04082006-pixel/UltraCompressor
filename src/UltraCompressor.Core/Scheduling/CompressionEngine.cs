@@ -208,6 +208,11 @@ public sealed class CompressionEngine : IAsyncDisposable
     {
         lock (_jobsGate)
         {
+            foreach (var job in _jobs.Where(j => j.Id == jobId))
+            {
+                ReleaseStagedFiles(job);
+            }
+
             _jobs.RemoveAll(j => j.Id == jobId);
             _jobCts.Remove(jobId);
             _jobGates.Remove(jobId);
@@ -217,10 +222,27 @@ public sealed class CompressionEngine : IAsyncDisposable
         _ = SaveSessionAsync();
     }
 
+    /// <summary>
+    /// Xoá các tệp nén đang chờ duyệt.
+    ///
+    /// Bản chế độ thử giữ tệp nén lại để so sánh, nên job bị bỏ đi thì tệp đó phải đi theo
+    /// — còn lại thì mỗi lần xoá job là thêm vài trăm MB rác trong thư mục tạm.
+    /// </summary>
+    private void ReleaseStagedFiles(Job job)
+    {
+        foreach (var item in job.Items)
+        {
+            if (item.StagedPath is not { } staged) continue;
+            _workspace.Release(staged);
+            item.StagedPath = null;
+        }
+    }
+
     public void ClearAll()
     {
         lock (_jobsGate)
         {
+            foreach (var job in _jobs) ReleaseStagedFiles(job);
             _jobs.Clear();
             _jobCts.Clear();
             _jobGates.Clear();
@@ -632,10 +654,14 @@ public sealed class CompressionEngine : IAsyncDisposable
 
             if (job.DryRun && string.IsNullOrEmpty(job.OutputFolder))
             {
-                // Chế độ thử: chỉ đo kết quả rồi bỏ đi, không giữ tệp và không đụng tệp gốc.
-                // Người dùng thấy chính xác sẽ tiết kiệm bao nhiêu, rồi mới quyết định có
-                // nén thật hay không. Bỏ tệp tạm ngay để không phí ổ đĩa vô ích.
-                _workspace.Release(temp);
+                // Chế độ thử: GIỮ tệp nén lại để người dùng mở so sánh và phát cả hai
+                // bản, rồi mới bấm "Duyệt".
+                //
+                // Bản trước xoá tệp ngay (`_workspace.Release(temp)`), nên không còn gì
+                // để so sánh: hộp so sánh báo "chưa có bản nén", và bấm "Duyệt" phải nén
+                // lại từ đầu. Người dùng phải xem kết quả rồi mới quyết định — bỏ qua bước
+                // xem đó thì "duyệt" chỉ là một nút mù.
+                item.StagedPath = temp;
                 item.IsApplied = false;
                 item.IsPredicted = true;
                 item.IsComplete = true;
@@ -829,26 +855,77 @@ public sealed class CompressionEngine : IAsyncDisposable
         var job = Find(jobId);
         if (job is null) return new UndoService.BatchResult(0, 0, ["Không tìm thấy job."]);
 
-        // Job chạy ở chế độ thử: chưa có gì được ghi đè, nên "Duyệt" nghĩa là chạy lại
-        // thật rồi mới thay thế tệp gốc.
+        // Job chạy ở chế độ thử: kết quả nén đã nằm sẵn trên đĩa, chỉ chưa thay thế tệp
+        // gốc. "Duyệt" nghĩa là dùng đúng tệp đó — sao bản gốc ra .bak rồi đặt bản nén
+        // vào chỗ. KHÔNG nén lại: nén lại thì kết quả có thể khác, và người dùng vừa xem
+        // so sánh xong lại bị thay bằng thứ khác.
         if (job.DryRun)
         {
+            var applied = 0;
+            var errors = new List<string>();
+            var stale = 0;
+
             foreach (var item in job.Items.Where(i => i.IsPredicted))
             {
-                item.IsComplete = false;
-                item.IsPredicted = false;
-                item.Percent = 0;
-                item.NewSize = 0;
+                var staged = item.StagedPath;
+
+                if (staged is null || !File.Exists(staged))
+                {
+                    // Tệp kết quả biến mất (dọn tệp tạm, đổi máy, phiên cũ). Nói rõ
+                    // thay vì âm thầm bỏ qua, để người dùng biết vì sao tệp này chưa
+                    // được duyệt.
+                    errors.Add($"{item.FileName}: không còn tệp nén đã so sánh, cần nén lại.");
+                    stale++;
+                    continue;
+                }
+
+                var error = FileTransaction.Commit(item.FilePath, staged);
+                if (error is null)
+                {
+                    applied++;
+                    item.IsApplied = true;
+                    item.IsPredicted = false;
+                    item.BackupPath = FileTransaction.BackupPathFor(item.FilePath);
+                }
+                else
+                {
+                    errors.Add($"{item.FileName}: {error}");
+                }
             }
 
             job.DryRun = false;
-            job.OutputFolder = null;
-            job.Status = JobStatus.Waiting;
+
+            // Tệp nào còn giữ lại thì phải dọn, không để rác trong thư mục tạm.
+            foreach (var item in job.Items)
+            {
+                if (item.StagedPath is { } left && File.Exists(left)) _workspace.Release(left);
+                item.StagedPath = null;
+            }
+
+            job.Status = errors.Count == 0 ? JobStatus.Committed : JobStatus.PendingReview;
+            if (errors.Count == 0) job.Committed = true;
+
             Raise(ChangeReason.JobStatus, jobId);
             await SaveSessionAsync();
 
-            _ = Task.Run(() => StartAsync([jobId]));
-            return new UndoService.BatchResult(0, 0, []);
+            _log.LogInfo("commit", $"Duyệt {applied}/{applied + stale + errors.Count} tệp ở chế độ thử.");
+
+            // Tệp nào mất rồi thì chạy lại thật, nếu không job sẽ đứng ở "Chờ duyệt" mãi
+            // với một tệp không bao giờ duyệt được.
+            if (stale > 0)
+            {
+                foreach (var item in job.Items.Where(i => i.Skip == SkipReason.None && !i.IsApplied && i.IsComplete))
+                {
+                    item.IsComplete = false;
+                    item.NewSize = 0;
+                }
+
+                job.Status = JobStatus.Waiting;
+                Raise(ChangeReason.JobStatus, jobId);
+                _ = Task.Run(() => StartAsync([jobId]));
+            }
+
+            return new UndoService.BatchResult(applied, errors.Count, errors);
         }
 
         var result = UndoService.DiscardBackups(job, keepBackupDays);
@@ -863,6 +940,10 @@ public sealed class CompressionEngine : IAsyncDisposable
         if (job is null) return new UndoService.BatchResult(0, 0, ["Không tìm thấy job."]);
 
         var result = UndoService.RestoreAll(job);
+
+        // Bản nén đang chờ duyệt không còn ý nghĩa gì sau khi hoàn tác bản gốc.
+        ReleaseStagedFiles(job);
+
         Raise(ChangeReason.JobStatus, jobId);
         await SaveSessionAsync();
         return result;

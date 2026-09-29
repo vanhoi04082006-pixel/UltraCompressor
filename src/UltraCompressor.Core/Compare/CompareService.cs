@@ -114,6 +114,11 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         var backup = FileTransaction.BackupPathFor(item.FilePath);
         var backupExists = File.Exists(backup);
 
+        // Bản nén đang chờ duyệt, do chế độ thử nén sẵn và giữ lại. Không có nó thì hộp so
+        // sánh báo "chưa có bản nén" dù người dùng vừa xem nén xong.
+        var staged = item.StagedPath;
+        var stagedExists = staged is not null && File.Exists(staged);
+
         string? originalPath;
         string? compressedPath;
         string note;
@@ -122,6 +127,13 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         {
             originalPath = backup;
             compressedPath = item.FilePath;
+            note = string.Empty;
+        }
+        else if (stagedExists)
+        {
+            // Chế độ thử: tệp gốc còn nguyên, kết quả nén nằm riêng.
+            originalPath = item.FilePath;
+            compressedPath = staged;
             note = string.Empty;
         }
         else if (!string.IsNullOrEmpty(outputFolder) && item.OutputPath is { } exported && File.Exists(exported))
@@ -136,7 +148,7 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
             compressedPath = null;
             note = item.IsApplied
                 ? string.Empty
-                : "Chưa có bản nén trên đĩa. Chạy thử chỉ đo, không ghi tệp — bấm Duyệt hoặc dùng Nén thật.";
+                : "Chưa có bản nén trên đĩa. Chạy thử sẽ giữ lại tệp nén để so sánh; nếu không còn, hãy nén lại.";
         }
 
         var original = await DescribeAsync(originalPath, item.Kind, token);

@@ -26,8 +26,8 @@ public sealed class JobItem
     public bool IsApplied { get; set; }
 
     /// <summary>
-    /// Kết quả chỉ là dự đoán ở chế độ thử: đã nén thật để đo nhưng đã xoá kết quả và
-    /// chưa đụng vào tệp gốc. Bấm “Duyệt” sẽ nén lại và mới ghi đè.
+    /// Kết quả đã nén xong và đang chờ người dùng duyệt, tệp kết quả vẫn còn trên đĩa.
+    /// Bấm “Duyệt” sẽ thay thế tệp gốc bằng tệp này, không nén lại.
     /// </summary>
     public bool IsPredicted { get; set; }
 
@@ -35,6 +35,19 @@ public sealed class JobItem
 
     /// <summary>Bản sao lưu của tệp gốc, dùng để hoàn tác.</summary>
     public string? BackupPath { get; set; }
+
+    /// <summary>
+    /// Kết quả nén ở chế độ thử: đã nén thật và <b>đang giữ tệp đó trên đĩa</b> để người
+    /// dùng mở so sánh, phát cả hai bản, rồi mới bấm “Duyệt”.
+    ///
+    /// <para>Trước đây chế độ thử nén xong là xoá tệp ngay, nên không còn gì để so sánh —
+    /// hộp so sánh báo “chưa có bản nén”, và bấm “Duyệt” phải nén lại từ đầu. Đúng cái
+    /// người dùng cần là: nén xong thấy kết quả ngay, so sánh thấy ưng thì mới duyệt.</para>
+    ///
+    /// <para>Tệp nằm trong thư mục tạm nên không lẫn vào thư mục nguồn, và được dọn khi
+    /// đóng ứng dụng, xoá job, hoặc quét tệp tạm cũ lúc khởi động.</para>
+    /// </summary>
+    public string? StagedPath { get; set; }
 
     /// <summary>Đường dẫn tệp kết quả khi chạy chế độ xuất ra thư mục khác.</summary>
     public string? OutputPath { get; set; }

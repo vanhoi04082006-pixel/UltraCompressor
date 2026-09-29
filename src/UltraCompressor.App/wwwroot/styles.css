@@ -929,6 +929,99 @@ td.col-pct.is-done { color: var(--ok); }
   flex-wrap: wrap;
 }
 
+/* ====================================================== đang xử lý / chạy tiếp */
+
+/* Trường "đang xử lý" đặt ngay dưới thanh công cụ: khi nhiều job chạy song song,
+   tên tệp nằm rải ở từng dòng bảng thì phải săn tìm, ở đây luôn thấy ngay. */
+.nowbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  min-height: 30px;
+}
+
+.nowbar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  animation: nowbar-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes nowbar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nowbar-dot { animation: none; }
+}
+
+.nowbar-label {
+  color: var(--text-muted);
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.nowbar-files {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.nowbar-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nowbar-job {
+  color: var(--text-muted);
+  flex: none;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nowbar-file {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nowbar-pct {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.resumebar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.resumebar-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .tool-chip {
   display: inline-flex;
   align-items: center;

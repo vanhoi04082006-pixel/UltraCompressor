@@ -167,6 +167,8 @@ function renderAll() {
   renderAlerts();
   renderToolbarState();
   renderStatusbar();
+  renderNowBar();
+  renderResumeBar();
 
   if (openJobId) renderItems();
 }
@@ -390,6 +392,53 @@ function renderAlerts() {
   }
 
   box.hidden = false;
+}
+
+// Tệp nằm trong dòng bảng thì khi nhiều job chạy song song phải săn từng dòng. Ở đây
+// gom tất cả tệp đang chạy về một chỗ, tên tệp phía sau là tên job cho khỏi lẫn.
+function renderNowBar() {
+  const bar = $('nowBar');
+  const box = $('nowFiles');
+  const active = state.jobs.filter((j) => j.activeFileName);
+
+  if (active.length === 0) {
+    bar.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+
+  bar.hidden = false;
+  box.innerHTML = '';
+  for (const job of active) {
+    const item = el('div', 'nowbar-item');
+    const jobName = el('span', 'nowbar-job', job.displayName);
+    jobName.title = job.displayName;
+    const file = el('span', 'nowbar-file', job.activeFileName);
+    file.title = job.activeFileName;
+    item.appendChild(jobName);
+    item.appendChild(file);
+    item.appendChild(el('span', 'nowbar-pct', `${Math.max(0, job.activePercent)}%`));
+    box.appendChild(item);
+  }
+}
+
+// Job nạp từ phiên lần trước còn chờ. Không tự chạy: người dùng vừa mở app lên, bấm
+// nhầm là chạy tiếp cả mấy chục tệp rồi xoá bản gốc trước khi kịp nhìn.
+function renderResumeBar() {
+  const bar = $('resumeBar');
+  const restored = state.jobs.filter((j) => j.wasRestored && j.status === 'Waiting');
+
+  if (restored.length === 0) {
+    bar.hidden = true;
+    return;
+  }
+
+  bar.hidden = false;
+  const files = restored.reduce((n, j) => n + (j.totalFiles - j.processedCount), 0);
+  $('resumeText').innerHTML =
+    `Có <b>${restored.length}</b> job chưa nén xong từ lần chạy trước `
+    + `(${files} tệp). Bấm <b>Tiếp tục</b> để nén nốt, hoặc <b>Bỏ qua</b> để dọn khỏi danh sách.`;
+  $('btnResume').dataset.jobs = restored.map((j) => j.id).join(',');
 }
 
 function renderToolbarState() {
@@ -963,6 +1012,35 @@ async function browse(folderPicker) {
   reportAdded(result);
 }
 
+// Chạy tiếp đúng việc đang dở: mỗi job giữ chế độ đã lưu, không lấy chế độ trên
+// thanh công cụ. Gọi "start" ở đây sẽ đổi luôn DryRun của job đã nén dở.
+async function resumeJobs() {
+  const ids = ($('btnResume').dataset.jobs || '').split(',').filter(Boolean);
+  if (ids.length === 0) return;
+
+  const result = await call('resumeJobs', { jobIds: ids });
+  if (result?.blocked?.length) {
+    await confirmDialog({
+      title: 'Chưa thể chạy tiếp',
+      text: 'Một công cụ cần thiết đang thiếu hoặc hỏng. Job chứa các loại media này sẽ bị bỏ qua cho tới khi bạn sửa.',
+      items: result.blocked,
+      okText: 'Mở cài đặt',
+    });
+    openSettings();
+    renderToolList();
+    return;
+  }
+
+  toast(`Đang chạy tiếp ${ids.length} job.`, 'info');
+}
+
+// Bỏ khỏi danh sách: xoá hẳn khỏi phiên, không đụng tệp trên đĩa.
+async function dismissResume() {
+  const ids = ($('btnResume').dataset.jobs || '').split(',').filter(Boolean);
+  for (const id of ids) await call('removeJob', { jobId: id });
+  toast('Đã bỏ các job cũ khỏi danh sách. Tệp trên đĩa giữ nguyên.', 'info');
+}
+
 async function start() {
   const mode = $('selMode').value;
   const args = { dryRun: mode === 'dry' };
@@ -1330,6 +1408,8 @@ function wire() {
   });
 
   $('btnStart').addEventListener('click', start);
+$('btnResume').addEventListener('click', resumeJobs);
+$('btnDismissResume').addEventListener('click', dismissResume);
 
   $('btnPause').addEventListener('click', () => {
     call(state.isPaused ? 'resumeAll' : 'pauseAll');

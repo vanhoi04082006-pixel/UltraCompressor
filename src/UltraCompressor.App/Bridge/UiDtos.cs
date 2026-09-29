@@ -102,7 +102,10 @@ public sealed record JobDto
     /// <summary>Phần trăm của tệp đang nén, -1 khi không có tệp nào đang chạy.</summary>
     public int ActivePercent { get; init; } = -1;
 
-    public static JobDto From(Job job, long pendingBackups = -1, CompressionLevel? currentLevel = null) => new()
+    /// <summary>Job nạp từ phiên lần trước và còn chờ — giao diện hiện lời mời "Tiếp tục".</summary>
+    public bool WasRestored { get; init; }
+
+    public static JobDto From(Job job, long pendingBackups = -1, CompressionLevel? currentLevel = null, bool wasRestored = false) => new()
     {
         Id = job.Id,
         FolderName = job.FolderName,
@@ -138,6 +141,7 @@ public sealed record JobDto
         PendingBackups = pendingBackups >= 0 ? pendingBackups : UndoService.PendingBackups(job).Count,
         ActiveFileName = ActiveItemOf(job)?.FileName,
         ActivePercent = ActiveItemOf(job)?.Percent ?? -1,
+        WasRestored = wasRestored,
     };
 
     /// <summary>

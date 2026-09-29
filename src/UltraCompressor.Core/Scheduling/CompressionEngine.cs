@@ -81,6 +81,12 @@ public sealed class CompressionEngine : IAsyncDisposable
 
     public bool IsRunning => _runTask is { IsCompleted: false };
 
+    /// <summary>
+    /// Khi bật, job nén thật kết thúc sẽ <b>không</b> tự xoá bản gốc, dù đã chạy xong.
+    /// Cửa sổ bật lúc chuẩn bị hỏi người dùng đóng hay không, rồi tắt lại nếu họ ở lại.
+    /// </summary>
+    public bool DeferAutoApprove { get; set; }
+
     public AppConfig Config => _config;
 
     public ToolChain Tools => _tools;
@@ -781,6 +787,16 @@ public sealed class CompressionEngine : IAsyncDisposable
     private async Task AutoApproveRealJobAsync(Job job)
     {
         if (job.DryRun) return;
+
+        // Đang trong lúc chuẩn bị đóng cửa sổ. Job sẽ chạy nốt tệp đang dở rồi kết thúc,
+        // và nếu tự duyệt ở đây thì .bak bị xoá mất trước khi người dùng kịp bấm
+        // "Hoàn tác rồi thoát" — hộp thoại lúc ấy chỉ còn bày ra lựa chọn đã không còn
+        // gì để chọn. Giữ lại .bak cho tới khi người dùng quyết.
+        if (DeferAutoApprove)
+        {
+            _log.LogInfo("apply", $"Giữ bản gốc của '{job.FolderName}' lại để người dùng chọn khi thoát.");
+            return;
+        }
 
         if (!string.IsNullOrEmpty(job.OutputFolder))
         {

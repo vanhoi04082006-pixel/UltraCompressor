@@ -73,6 +73,169 @@ public sealed class AppHost : IAsyncDisposable
     /// <summary>Mở hộp chọn tệp thực thi. Gán từ cửa sổ chủ.</summary>
     public Func<string?>? PickToolFile { get; set; }
 
+    // ---------------------------------------------------------------- đóng cửa sổ
+
+    /// <summary>Người dùng chọn gì khi bấm đóng cửa sổ đang xử lý dở.</summary>
+    public enum ExitChoice
+    {
+        /// <summary>Không thoát.</summary>
+        Stay,
+
+        /// <summary>Khôi phục bản gốc mọi tệp đã nén xong, rồi thoát.</summary>
+        UndoAndExit,
+
+        /// <summary>Giữ nguyên kết quả và ghi phiên, để lần sau bấm "Tiếp tục".</summary>
+        SaveAndExit,
+    }
+
+    /// <summary>Tình trạng lúc đóng, đủ để dựng nội dung hộp thoại.</summary>
+    public sealed record ExitPlan(
+        bool IsBusy,
+        int RunningJobs,
+        int ActiveFiles,
+        int AppliedFiles,
+        IReadOnlyList<string> RunningJobNames,
+        IReadOnlyList<string> AppliedJobNames);
+
+    /// <summary>Chụp tình trạng hiện tại. Không khóa lâu, gọi được từ luồng đóng cửa sổ.</summary>
+    public ExitPlan PlanExit()
+    {
+        var jobs = _engine.Jobs;
+        var running = jobs.Where(j => j.Status is JobStatus.Running or JobStatus.Paused).ToList();
+
+        return new ExitPlan(
+            IsBusy: _engine.IsRunning || running.Count > 0,
+            RunningJobs: running.Count,
+            ActiveFiles: jobs.Sum(j => j.Items.Count(i => i.IsProcessing)),
+            AppliedFiles: (int)jobs.Sum(j => PendingBackupCount(j)),
+            RunningJobNames: [.. running.Select(j => j.FolderName)],
+            AppliedJobNames: [.. jobs.Where(j => PendingBackupCount(j) > 0).Select(j => j.FolderName)]);
+    }
+
+    /// <summary>
+    /// Khôi phục bản gốc mọi tệp đã nén xong. Dừng nén trước, không nén tiếp trong lúc
+    /// khôi phục — nếu không sẽ tranh nhau trên cùng một tệp.
+    /// </summary>
+    public async Task<(int Restored, int Failed, IReadOnlyList<string> Errors)> UndoEverythingAsync()
+    {
+        await StopForExitAsync();
+
+        var restored = 0;
+        var failed = 0;
+        var errors = new List<string>();
+
+        foreach (var job in _engine.Jobs)
+        {
+            var result = UndoService.RestoreAll(job);
+            restored += result.Restored;
+            failed += result.Failed;
+            errors.AddRange(result.Errors);
+        }
+
+        ForgetBackupCounts();
+        _logger.LogInfo("exit", $"Đóng khi đang xử lý: khôi phục {restored} bản gốc, {failed} lỗi.");
+        await SaveSessionAsync();
+        return (restored, failed, errors);
+    }
+
+    /// <summary>
+    /// Dừng ở chỗ có thể nối tiếp: tạm dừng các job đang chạy rồi đợi tệp đang xử lý chạy
+    /// nốt. Không huỷ, vì huỷ giữa lúc ffmpeg đang chạy thì lần sau phải nén lại từ đầu và
+    /// dễ dính nén hai lần lên cùng một tệp.
+    /// </summary>
+    public async Task<bool> SaveForResumeAsync()
+    {
+        await StopForExitAsync();
+
+        _logger.LogInfo("exit", "Đóng khi đang xử lý: lưu phiên để chạy tiếp lần sau.");
+        await SaveSessionAsync();
+        return true;
+    }
+
+    /// <summary>Tạm dừng và chờ tới khi không còn tệp nào đang xử lý.</summary>
+    private async Task StopForExitAsync()
+    {
+        // Bật TRƯỚC khi tạm dừng: tệp đang chạy sẽ nốt rồi job kết thúc, và nếu lúc đó
+        // tự duyệt thì .bak bị xoá mất trước khi người dùng kịp bấm "Hoàn tác".
+        _engine.DeferAutoApprove = true;
+        _engine.PauseAll();
+
+        var deadline = DateTimeOffset.Now.AddSeconds(90);
+        while (DateTimeOffset.Now < deadline)
+        {
+            if (!_engine.IsRunning && !_engine.Jobs.Any(j => j.Items.Any(i => i.IsProcessing))) break;
+            await Task.Delay(200);
+        }
+
+        if (DateTimeOffset.Now >= deadline)
+        {
+            // Quá hạn: huỷ để không treo cửa sổ đang thoát. Tệp đang chạy bị bỏ dở sẽ nén
+            // lại lần sau — thà mất một tệp còn hơn không đóng được.
+            _logger.LogWarning("exit", "Tạm dừng quá 90 giây, chuyển sang huỷ để đóng.");
+            _engine.CancelAll();
+            await Task.Delay(500);
+        }
+
+        MakeResumable();
+    }
+
+    /// <summary>
+    /// Đưa job về trạng thái "chờ" để lần sau bấm "Tiếp tục" là chạy được. Job nén thật
+    /// đã giữ <c>.bak</c> thì nó đang ở "Chờ duyệt", mà engine chỉ nhận "Chờ"/"Tạm dừng".
+    /// </summary>
+    private void MakeResumable()
+    {
+        foreach (var job in _engine.Jobs)
+        {
+            if (job.Status is JobStatus.Running or JobStatus.PendingReview or JobStatus.Cancelled)
+                job.Status = JobStatus.Waiting;
+        }
+    }
+
+    /// <summary>Người dùng chọn ở lại: bỏ chế độ chờ duyệt, job trở lại tự duyệt bình thường.</summary>
+    public void AbandonExitPreparation() => _engine.DeferAutoApprove = false;
+
+
+    private async Task SaveSessionAsync() => await _session.SaveAsync(_engine.Jobs);
+
+    // ---------------------------------------------------------------- khôi phục phiên
+
+    private readonly HashSet<string> _restoredJobIds = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Nạp phiên lưu lần trước. Engine đã tự hạ trạng thái "đang chạy" về "chờ" và xoá cờ
+    /// đang-xử-lý, nên job nạp vào đều có thể bấm chạy tiếp.
+    /// </summary>
+    public async Task<int> RestoreSessionAsync()
+    {
+        var (jobs, error) = await _engine.LoadSessionAsync();
+        if (error is not null) _logger.LogWarning("session", $"Không đọc được phiên: {error}");
+
+        lock (_restoredJobIds)
+        {
+            foreach (var job in jobs.Where(j => j.Status == JobStatus.Waiting)) _restoredJobIds.Add(job.Id);
+        }
+
+        if (jobs.Count > 0)
+            _logger.LogInfo("session", $"Khôi phục {jobs.Count} job từ lần chạy trước.");
+
+        return jobs.Count;
+    }
+
+    /// <summary>Job nạp từ phiên còn đang chờ thì bỏ cờ "khôi phục" khi người dùng bắt đầu.</summary>
+    public void MarkResumed(IEnumerable<string> jobIds)
+    {
+        lock (_restoredJobIds)
+        {
+            foreach (var id in jobIds) _restoredJobIds.Remove(id);
+        }
+    }
+
+    private bool WasRestored(Job job)
+    {
+        lock (_restoredJobIds) return _restoredJobIds.Contains(job.Id);
+    }
+
     public void Attach(Func<string, Task> send)
     {
         _send = send;
@@ -174,7 +337,7 @@ public sealed class AppHost : IAsyncDisposable
 
         return new UiState
         {
-            Jobs = [.. jobs.Select(j => JobDto.From(j, PendingBackupCount(j), _config.Level))],
+            Jobs = [.. jobs.Select(j => JobDto.From(j, PendingBackupCount(j), _config.Level, WasRestored(j)))],
 
             TotalBytesSaved = saved,
             TotalSavedText = Format.Size(saved),
@@ -228,6 +391,7 @@ public sealed class AppHost : IAsyncDisposable
                 "removeJob" => RemoveJob(message),
                 "clearAll" => ClearAll(),
                 "start" => await StartAsync(message),
+                "resumeJobs" => ResumeJobs(message),
                 "pauseAll" => PauseAll(),
                 "resumeAll" => ResumeAll(),
                 "cancelAll" => CancelAll(),
@@ -474,14 +638,11 @@ public sealed class AppHost : IAsyncDisposable
         return null;
     }
 
-
-    private async Task<System.Text.Json.Nodes.JsonNode?> StartAsync(BridgeMessage message)
+    /// <summary>Các công cụ thiếu/hỏng chặn được các job này, theo loại media của chúng.</summary>
+    private List<string> BlockingToolsFor(IReadOnlyCollection<string> jobIds)
     {
-        var jobIds = BridgeJson.GetObject<List<string>>(message, "jobIds");
-        var ids = jobIds is { Count: > 0 } ? jobIds : _engine.Jobs.Select(j => j.Id).ToList();
-
         var blocked = new List<string>();
-        foreach (var job in _engine.Jobs.Where(j => ids.Contains(j.Id)))
+        foreach (var job in _engine.Jobs.Where(j => jobIds.Contains(j.Id)))
         {
             var kinds = job.Items.Select(i => i.Kind).Distinct().ToList();
             foreach (var report in _tools.BlockingProblemsFor(kinds))
@@ -490,6 +651,37 @@ public sealed class AppHost : IAsyncDisposable
             }
         }
 
+        return blocked;
+    }
+
+    /// <summary>
+    /// Chạy tiếp các job nạp từ phiên. Không đụng vào <c>DryRun</c>/<c>OutputFolder</c>:
+    /// mỗi job giữ đúng chế độ đã lưu, vì nút "Tiếp tục" nghĩa là làm tiếp việc đang dở,
+    /// không phải bắt đầu lại bằng chế độ đang chọn trên thanh công cụ.
+    /// </summary>
+    private System.Text.Json.Nodes.JsonNode? ResumeJobs(BridgeMessage message)
+    {
+        var jobIds = BridgeJson.GetObject<List<string>>(message, "jobIds");
+        var ids = jobIds is { Count: > 0 } ? jobIds : _engine.Jobs.Select(j => j.Id).ToList();
+
+        var blocked = BlockingToolsFor(ids);
+        if (blocked.Count > 0)
+        {
+            return ToNode(new { started = false, blocked = blocked.Distinct().ToList() });
+        }
+
+        MarkResumed(ids);
+        _ = Task.Run(() => _engine.StartAsync(ids));
+        return ToNode(new { started = true, blocked = Array.Empty<string>() });
+    }
+
+
+    private async Task<System.Text.Json.Nodes.JsonNode?> StartAsync(BridgeMessage message)
+    {
+        var jobIds = BridgeJson.GetObject<List<string>>(message, "jobIds");
+        var ids = jobIds is { Count: > 0 } ? jobIds : _engine.Jobs.Select(j => j.Id).ToList();
+
+        var blocked = BlockingToolsFor(ids);
         if (blocked.Count > 0)
         {
             return ToNode(new { started = false, blocked = blocked.Distinct().ToList() });
@@ -519,6 +711,10 @@ public sealed class AppHost : IAsyncDisposable
             job.DryRun = dryRun;
             job.OutputFolder = string.IsNullOrEmpty(outputFolder) ? null : outputFolder;
         }
+
+        // Người dùng đã bấm chạy: các job nạp từ phiên lần trước không còn là "chờ
+        // khôi phục" nữa, nên gỡ cờ để lời mời "Tiếp tục" biến mất.
+        MarkResumed(ids);
 
         // Không chặn: trả về ngay, trạng thái đẩy lên sau.
         _ = Task.Run(() => _engine.StartAsync(ids));

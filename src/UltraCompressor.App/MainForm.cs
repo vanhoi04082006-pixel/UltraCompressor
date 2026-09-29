@@ -22,6 +22,8 @@ public sealed class MainForm : Form
     private readonly Label _status = new();
     private readonly Label _version = new();
     private string? _webRoot;
+    private bool _allowClose;
+    private bool _closing;
 
     public MainForm(AppHost host)
     {
@@ -100,6 +102,7 @@ public sealed class MainForm : Form
         _host.PickToolFile = BrowseForToolFile;
 
         FormClosed += OnFormClosed;
+        FormClosing += OnFormClosing;
         Shown += OnShown;
     }
 
@@ -116,6 +119,18 @@ public sealed class MainForm : Form
     {
         // Đặt kích thước sau khi đã có handle, khi đó DPI mới đúng.
         FitToWorkArea();
+
+        // Nạp phiên lần trước trước khi giao diện vẽ lần đầu, để lời mời "Tiếp tục"
+        // hiện ngay thay vì phải chờ tới lần đẩy trạng thái kế tiếp.
+        try
+        {
+            var restored = await _host.RestoreSessionAsync();
+            if (restored > 0) _status.Text = $"Đã khôi phục {restored} job từ lần chạy trước.";
+        }
+        catch (Exception ex)
+        {
+            Diagnostic.Log($"Khôi phục phiên lỗi: {ex.Message}");
+        }
 
         await InitializeBrowserAsync();
     }
@@ -511,6 +526,110 @@ public sealed class MainForm : Form
         };
 
         return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+    }
+
+    // ---------------------------------------------------------------- đóng cửa sổ
+
+    /// <summary>
+    /// Chặn đóng cửa sổ, rồi mới hỏi. Không hỏi ngay trong sự kiện này vì việc hoàn tác
+    /// hoặc lưu phiên mất vài giây — làm trong <c>FormClosing</c> sẽ treo cửa sổ trông
+    /// như treo máy.
+    /// </summary>
+    private void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_allowClose) return;
+
+        e.Cancel = true;
+        if (_closing) return;
+        _closing = true;
+
+        _ = ShutdownAsync(e.CloseReason);
+    }
+
+    private async Task ShutdownAsync(CloseReason reason)
+    {
+        try
+        {
+            var plan = _host.PlanExit();
+
+            // Rảnh thì thoát luôn, không vướng người dùng bằng câu hỏi.
+            if (!plan.IsBusy && plan.AppliedFiles == 0)
+            {
+                FinishClose();
+                return;
+            }
+
+            var choice = await AskOnUiThreadAsync(plan);
+            if (choice == AppHost.ExitChoice.Stay)
+            {
+                _host.AbandonExitPreparation();
+                _status.Text = "Đã huỷ đóng.";
+                return;
+            }
+
+            _status.Text = choice == AppHost.ExitChoice.UndoAndExit
+                ? "Đang khôi phục bản gốc…"
+                : "Đang lưu phiên để chạy tiếp…";
+
+            if (choice == AppHost.ExitChoice.UndoAndExit)
+            {
+                var result = await Task.Run(() => _host.UndoEverythingAsync());
+                Diagnostic.Log($"Thoát sau khi hoàn tác: {result.Restored} tệp, {result.Failed} lỗi.");
+            }
+            else
+            {
+                await Task.Run(() => _host.SaveForResumeAsync());
+            }
+        }
+        catch (Exception ex)
+        {
+            // Hỏng thì cứ thoát, không giữ người dùng ở cửa sổ không đóng được.
+            Diagnostic.Log($"Lỗi khi đóng ({reason}): {ex.Message}");
+        }
+        finally
+        {
+            FinishClose();
+        }
+    }
+
+    private void FinishClose()
+    {
+        void Done()
+        {
+            if (IsDisposed) return;
+            _allowClose = true;
+            _closing = false;
+            Close();
+        }
+
+        if (InvokeRequired) BeginInvoke(Done);
+        else Done();
+    }
+
+    /// <summary>Hiện hộp thoại trên luồng giao diện rồi chờ người dùng chọn.</summary>
+    private Task<AppHost.ExitChoice> AskOnUiThreadAsync(AppHost.ExitPlan plan)
+    {
+        var tcs = new TaskCompletionSource<AppHost.ExitChoice>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void Show()
+        {
+            try
+            {
+                using var dialog = new ExitConfirmForm(plan);
+                dialog.ShowDialog(this);
+                tcs.TrySetResult(dialog.Choice);
+            }
+            catch (Exception ex)
+            {
+                Diagnostic.Log($"Hộp thoại đóng cửa sổ lỗi: {ex.Message}");
+                tcs.TrySetResult(AppHost.ExitChoice.Stay);
+            }
+        }
+
+        if (InvokeRequired) BeginInvoke(Show);
+        else Show();
+
+        return tcs.Task;
     }
 
     private void OnFormClosed(object? sender, FormClosedEventArgs e)

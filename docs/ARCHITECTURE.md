@@ -400,3 +400,71 @@ Kiểm chứng trên clip cắt từ tệp thật, chạy cả engine lẫn ffmp
 2. CHAY THU          PendingReview         goc nguyen ven, khong .bak, con ban nen tam
 3. XUAT THU MUC KHAC Committed             goc nguyen ven, khong .bak, co tep o thu muc dich
 ```
+
+## Đóng cửa sổ khi đang xử lý — ba lựa chọn, và một lỗi tự duyệt lừa
+
+Trước đây `MainForm` **không hề có `FormClosing`**. Bấm X là thoát thẳng, giữa lúc
+ffmpeg đang chạy, không hỏi gì.
+
+Nay bấm X khi đang xử lý sẽ hỏi:
+
+| Lựa chọn | Hành vi |
+|---|---|
+| **Ở lại** | không thoát |
+| **Hoàn tác rồi thoát** | khôi phục bản gốc mọi tệp đã nén xong, rồi thoát |
+| **Lưu lại để chạy tiếp** | giữ kết quả, ghi phiên; lần sau có nút **Tiếp tục** |
+
+Rảnh thì thoát luôn, không hỏi. Dùng form riêng (`ExitConfirmForm`) thay vì
+`MessageBox` vì MessageBox chỉ có ba nút Yes/No/Cancel — đúng số lựa chọn nhưng nhãn
+không nói được gì, và bấm "Yes" mà không biết mình vừa chọn xoá bản gốc.
+
+### Lỗi nghiêm trọng: tự duyệt chạy đè lên hộp thoại
+
+Hai chức năng này đụng nhau, và cái đặt sau phá cái đặt trước. Khi thoát, ta tạm dừng job
+rồi chờ tệp đang chạy nốt — rồi job đó **kết thúc**, và `AutoApproveRealJobAsync` xoá sạch
+`.bak`. Việc này xảy ra **trước khi người dùng kịp bấm chọn**. Hộp thoại lúc ấy bày ra
+một lựa chọn đã không còn gì để chọn: bấm "Hoàn tác" thì báo 0 tệp.
+
+Kiểm chứng bắt được đúng lỗi này — lần chạy đầu cho `khoi phuc 0 tep, 2 loi`, và kiểm
+"còn .bak để hoàn tác" đỏ.
+
+Cách sửa: `CompressionEngine.DeferAutoApprove`. Cửa sổ bật cờ **trước khi** tạm dừng;
+job vẫn chạy nốt và kết thúc nhưng không tự duyệt, giữ `.bak` cho tới khi người dùng quyết.
+Nếu họ chọn "Ở lại" thì `AbandonExitPreparation()` tắt cờ lại — nếu quên, cả phiên đó sẽ
+không còn tự duyệt nữa.
+
+Hệ quả phụ phải xử: job nén thật giữ `.bak` thì kết thúc ở "Chờ duyệt", mà engine chỉ
+nhận "Chờ"/"Tạm dừng" khi bấm chạy. `MakeResumable()` đưa chúng về "Chờ", nên lần sau bấm
+**Tiếp tục** là chạy được.
+
+### Nút "Tiếp tục" dùng lệnh riêng, không dùng lệnh `start`
+
+`start` ghi đè `DryRun` và `OutputFolder` của mọi job theo ô chế độ trên thanh công cụ.
+Dùng nó để "Tiếp tục" thì một job đang chạy thử bị đổi sang ghi đè, và ngược lại. Nên có
+`resumeJobs`: giữ nguyên chế độ đã lưu của từng job.
+
+Phiên lưu sau **mỗi tệp**, nên ngay cả tắt máy cưỡng ép cũ còn dữ liệu để chạy tiếp.
+`SessionStore.LoadAsync` đã tự hạ "Đang chạy"/"Tạm dừng" về "Chờ" và xoá cờ đang-xử-lý;
+thiếu duy nhất là `AppHost.RestoreSessionAsync` gọi `LoadSessionAsync` — trước đó hàm này
+**có sẵn mà chưa ai gọi**, tức là app ghi phiên ra đĩa rồi không bao giờ đọc lại.
+
+Không tự chạy tiếp khi mở app: người dùng vừa mở app, bấm nhầm là chạy tiếp cả mấy chục
+tệp rồi xoá bản gốc trước khi kịp nhìn. Nút "Bỏ qua" chỉ gỡ khỏi danh sách, không đụng
+tệp trên đĩa.
+
+### Trường "Đang xử lý"
+
+Tên tệp đang nén đã có sẵn ở từng dòng bảng, nhưng khi nhiều job chạy song song thì phải
+săn từng dòng. `.nowbar` gom tất cả tệp đang chạy về một thanh dưới thanh công cụ, mỗi tệp
+kèm tên job để khỏi lẫn. Chấm nhấp nháy có `@media (prefers-reduced-motion)` tắt.
+
+Kiểm chứng bằng engine + ffmpeg thật trên clip cắt từ tệp thật:
+
+```
+1. DONG GIUA CHUNG -> HOAN TAC
+   1 tep xong, 1 tep dang chay -> giu duoc 2 tep .bak -> khoi phuc 2/2, 0 loi
+   ca hai tep khop dung luong goc, khong con .bak
+2. DONG GIUA CHUNG -> LUU LAI -> MO LAI -> CHAY TIEP
+   giu ket qua, 2 tep .bak -> nap tu dia ra trang thai "Cho" -> chay tiep toi het
+   het .bak sau khi tu duyet
+```

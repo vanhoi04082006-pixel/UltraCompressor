@@ -399,6 +399,13 @@ public sealed class CompressionEngine : IAsyncDisposable
                 await SaveSessionAsync();
             }
 
+            // Nén thật thì tự duyệt. Bản nén đã thay gốc ngay lúc nén xong, bản gốc
+            // nằm trong .bak chỉ để có đường lui tạm thời; người dùng đã quyết định ở
+            // lúc bấm "Nén thật" rồi, không cần bấm Duyệt thêm lần nữa — mà bấm cũng
+            // chẳng còn gì để xem, vì bản gốc đã bị dùng làm .bak. Chạy thử thì giữ
+            // nguyên việc duyệt tay: đó mới là chỗ xem bằng mắt trước khi mất gốc.
+            await AutoApproveRealJobAsync(job);
+
             job.Status = job.Committed ? JobStatus.Committed : JobStatus.PendingReview;
             job.CompletedAt = DateTimeOffset.Now;
             job.EtaSeconds = 0;
@@ -757,6 +764,56 @@ public sealed class CompressionEngine : IAsyncDisposable
 
         var relative = Path.GetRelativePath(job.FolderPath, item.FilePath);
         return Path.Combine(job.OutputFolder, relative);
+    }
+
+    // ---------------------------------------------------------------- tự duyệt
+
+    /// <summary>
+    /// Duyệt tự động cho job nén thật: xoá bản gốc đã nằm trong <c>.bak</c> khi tệp nén
+    /// đã thay xong. Job chạy thử và job xuất sang thư mục khác không đi qua đây.
+    /// </summary>
+    /// <remarks>
+    /// Cố ý chỉ xoá khi job chạy tới cuối bình thường, không xoá trong vòng lặp từng tệp:
+    /// bấm Huỷ giữa chừng thì những tệp đã thay vẫn còn <c>.bak</c> để hoàn tác. Đổi lại
+    /// trong lúc chạy vẫn phải chịu dung lượng tạm — đúng bằng tình huống có nút Duyệt
+    /// tay trước đây, chỉ khác là không còn phải bấm nữa.
+    /// </remarks>
+    private async Task AutoApproveRealJobAsync(Job job)
+    {
+        if (job.DryRun) return;
+
+        if (!string.IsNullOrEmpty(job.OutputFolder))
+        {
+            // Xuất sang thư mục khác: bản gốc nằm nguyên ở chỗ cũ, không sinh .bak, không
+            // có gì để duyệt. Trước đây job này vẫn dừng ở "Chờ duyệt" với 0 tệp chờ,
+            // bấm Duyệt thì không làm gì cả.
+            job.Committed = true;
+            return;
+        }
+
+        // Không tệp nào được thay thế — hết lỗi, hoặc bị huỷ. Không được báo "Đã ghi":
+        // sẽ giống hệt lúc bấm Duyệt trên một job không có gì để duyệt.
+        if (!job.Items.Any(i => i.IsApplied)) return;
+
+        var result = UndoService.ReleaseBackups(job);
+
+        if (result.Errors.Count > 0)
+        {
+            _log.LogWarning(
+                "apply",
+                $"Tự động duyệt: xoá bản gốc {result.Released}/{result.Applied} tệp, "
+                + $"{result.Failed} tệp xoá chưa được ({string.Join("; ", result.Errors)}).");
+            job.ErrorMessage = string.Join("; ", result.Errors);
+        }
+        else
+        {
+            _log.LogInfo(
+                "apply",
+                $"Tự động duyệt: xoá bản gốc của {result.Released} tệp, không hoàn tác được nữa. "
+                + "Muốn xem trước khi mất bản gốc thì bật chế độ Chạy thử.");
+        }
+
+        await SaveSessionAsync();
     }
 
     // ---------------------------------------------------------------- tạm dừng / hủy

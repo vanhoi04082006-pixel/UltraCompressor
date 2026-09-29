@@ -1010,7 +1010,7 @@ async function removeJob(job) {
   if (job.pendingBackups > 0) {
     const ok = await confirmDialog({
       title: 'Bỏ khỏi danh sách',
-      text: `Job “${job.displayName}” đã ghi đè ${job.pendingBackups} tệp. Bỏ khỏi danh sách không hoàn tác — bản gốc vẫn nằm trong các tệp .bak.`,
+      text: `Job “${job.displayName}” còn ${job.pendingBackups} tệp đã nén xong nhưng bản gốc vẫn nằm trong <code>.bak</code> (thường là job bị Huỷ giữa chừng). Bỏ khỏi danh sách không hoàn tác — bản gốc vẫn còn, nhưng sẽ không còn nút Hoàn tác để bấm.`,
       okText: 'Bỏ khỏi danh sách',
     });
     if (!ok) return;

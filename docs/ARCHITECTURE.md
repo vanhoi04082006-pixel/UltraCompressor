@@ -354,3 +354,49 @@ Kiểm chứng trên clip cắt từ tệp thật:
 2. NEN THAT + HOAN TAC  .bak = goc 2,0 MB, hoan tac khoi phuc khop tuyet doi
 3. NEN THAT + DUYET    .bak chiem 2,0 MB -> xoa sach, giai phong 2,0 MB
 ```
+
+## Nén thật tự duyệt, không còn bước bấm "Duyệt"
+
+Sau khi sửa nghĩa của nút Duyệt, còn một bước vô nghĩa nữa: ở chế độ nén thật, bản nén đã
+thay bản gốc ngay lúc nén xong, bản gốc nằm trong `.bak` — nhưng người dùng phải bấm thêm
+một cái nữa thì `.bak` mới bị xoá. Bấm cũng chẳng xem được gì, vì bản gốc đã bị dùng làm
+`.bak` từ trước; mất đường lui rồi mới báo.
+
+Nay `AutoApproveRealJobAsync` chạy khi job đi tới cuối bình thường:
+
+| Chế độ | Kết thúc job | `.bak` |
+|---|---|---|
+| Nén thật, ghi tại chỗ | `Committed` | **xoá luôn, không cần bấm** |
+| Chạy thử | `PendingReview` | không sinh `.bak`; giữ bản nén tạm để duyệt tay |
+| Xuất thư mục khác | `Committted` | không sinh `.bak`; bản gốc nguyên vẹn |
+
+Chạy thử giữ nguyên bước duyệt tay, vì đó mới là chỗ xem bằng mắt trước khi mất bản gốc.
+Chế độ xuất trước đây cũng dừng ở "Chờ duyệt" với **0 tệp chờ** — bấm Duyệt không làm gì cả;
+nay đánh dấu xong luôn.
+
+### Cố ý xoá ở cuối job, không xoá trong vòng lặp từng tệp
+
+Xoá ngay sau mỗi tệp thì sớm hơn, nhưng bấm Huỷ giữa chừng sẽ mất sạch đường lui: những tệp
+đã nén xong rồi cũng không còn gốc để quay về. Xoá ở cuối job thì đường lui giữ nguyên suốt
+lúc chạy, kể cả sau khi Huỷ. Đổi lại trong lúc chạy vẫn phải chịu dung lượng tạm — **đúng bằng
+tình huống có nút Duyệt tay trước đây**, chỉ khác là không còn phải bấm nữa. Nếu việc giải
+phóng chỗ sớm quan trọng hơn, đổi sang xoá trong vòng lặp là một dòng.
+
+Điều kiện chặn: chỉ tự duyệt khi **thật sự có tệp nào đã thay thế** (`Items.Any(i => i.IsApplied)`).
+Job nén thật mà hỏng hết thì không được báo "Đã ghi" — nó sẽ giống hệt lúc bấm Duyệt trên
+một job không có gì để duyệt.
+
+`CommitResult` tách `Applied` / `Released` / `Failed` nên nhật ký ghi rõ:
+
+```
+Tự động duyệt: xoá bản gốc của 37 tệp, không hoàn tác được nữa.
+Muốn xem trước khi mất bản gốc thì bật chế độ Chạy thử.
+```
+
+Kiểm chứng trên clip cắt từ tệp thật, chạy cả engine lẫn ffmpeg thật:
+
+```
+1. NEN THAT          1,45 MB -> 0,43 MB  Committed  khong .bak  khong con tieu muc tam
+2. CHAY THU          PendingReview         goc nguyen ven, khong .bak, con ban nen tam
+3. XUAT THU MUC KHAC Committed             goc nguyen ven, khong .bak, co tep o thu muc dich
+```

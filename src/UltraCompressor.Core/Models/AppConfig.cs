@@ -49,22 +49,20 @@ public sealed class AppConfig
     public string Theme { get; set; } = "system";
 
     /// <summary>
-    /// Codec video đầu ra: <c>h264</c> (mặc định) hoặc <c>hevc</c>.
+    /// Codec video đầu ra: <c>hevc</c> (mặc định) hoặc <c>h264</c>.
     ///
-    /// <para><b>Vì sao mặc định là H.264, không tự chọn theo nội dung.</b> Đo thật trên hai
-    /// tệp cùng codec nguồn, cùng độ phân giải, trên cùng một máy cho kết quả ngược nhau:</para>
+    /// <para><b>Vì sao mặc định là HEVC.</b> Đo trên 6 tệp ngẫu nhiên trong chính thư viện
+    /// này (20 giây mỗi tệp, CRF tương đương chất lượng):</para>
     ///
     /// <list type="bullet">
-    /// <item>Quay màn hình: x264 CRF 28 → 0,650 MB; x265 CRF 30 → 0,652 MB. Cùng dung
-    /// lượng, SSIM còn thấp hơn — HEVC tốn gấp 5,3 lần thời gian mà không thu được byte
-    /// nào.</item>
-    /// <item>Anime: x264 CRF 28 → 6,962 MB; x265 CRF 32 → 1,706 MB. Nhỏ hơn 4,1 lần, SSIM
-    /// chỉ giảm 0,003.</item>
+    /// <item>Tệp nhỏ hơn 1,3–2,6 lần. Không tệp nào HEVC thua.</item>
+    /// <item>Chênh lệch SSIM ≤ 0,0002 — dưới ngưỡng nhìn thấy được, tức cùng chất
+    /// lượng thật, không phải hy sinh chất lượng để lấy dung lượng.</item>
+    /// <item>Đổi lại: chậm hơn 2,7–10 lần, tùy độ phân giải. Tệp 1440p50 chậm nhất.</item>
     /// </list>
     ///
-    /// <para>HEVC đáng dùng hay không phụ thuộc nội dung, mà tín hiệu phân biệt được đo trên
-    /// hai tệp thì không đủ tin để tự bật. Tự bật là tự quyết thay người dùng rồi đoán
-    /// sai — nên để họ chọn, và nói rõ cái giá.</para>
+    /// <para>Ngoại lệ đã biết: video quay màn hình thì HEVC không thu được byte nào mà
+    /// vẫn mất thời gian. Người dùng nén màn hình nên chọn H.264.</para>
     /// </summary>
-    public string VideoCodec { get; set; } = "h264";
+    public string VideoCodec { get; set; } = "hevc";
 }

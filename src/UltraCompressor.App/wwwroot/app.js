@@ -1021,7 +1021,7 @@ function openSettings() {
   const c = state.config;
 
   $('cfgMinSaving').value = c.minSavingPercent;
-  $('cfgVideoCodec').value = c.videoCodec || 'h264';
+  $('cfgVideoCodec').value = c.videoCodec || 'hevc';
   $('cfgMinSize').value = Math.round((c.minFileSizeBytes || 0) / (1024 * 1024));
   $('cfgSubfolders').checked = c.includeSubfolders;
   $('cfgFreeSpace').checked = c.checkFreeSpace;

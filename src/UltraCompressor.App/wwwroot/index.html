@@ -223,15 +223,15 @@
         <label class="row">
           <span>Codec video đầu ra</span>
           <select id="cfgVideoCodec">
-            <option value="h264">H.264 — nhanh, phát được ở mọi nơi</option>
-            <option value="hevc">HEVC — tệp nhỏ hơn nhiều, nén chậm hơn 2–5 lần</option>
+            <option value="hevc">HEVC — nhỏ hơn nhiều, chậm hơn 3–10 lần</option>
+            <option value="h264">H.264 — nhanh nhất, phát được ở mọi nơi</option>
           </select>
         </label>
         <p class="hint">
-          Đo thật trên máy này: với video anime, HEVC cho tệp nhỏ hơn <b>4,1 lần</b> ở chất
-          lượng ngang nhau. Nhưng với video quay màn hình, HEVC chỉ bằng H.264 về dung
-          lượng mà mất thêm 5 lần thời gian. HEVC không phải lúc nào cũng đáng, nên bật
-          khi bạn biết nội dung của mình hợp với nó.
+          Mặc định là HEVC, dựa trên đo thật 6 tệp ngẫu nhiên trong thư viện này: tệp nhỏ
+          hơn <b>1,3–2,6 lần</b> và không tệp nào thua, chênh lệch chất lượng ≤ 0,0002 — tức
+          không hy sinh chất lượng. Cái giá là thời gian: chậm hơn 2,7–10 lần, tệp 1440p50
+          chậm nhất. Nếu bạn nén video quay màn hình thì HEVC không giúp gì, hãy chọn H.264.
         </p>
         <label class="row">
           <span>Tiết kiệm tối thiểu để chấp nhận</span>

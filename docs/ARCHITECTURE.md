@@ -208,3 +208,78 @@ Hai điều cần biết về `UC_EVAL_JS`, cả hai đều đã tốn thời gi
 
 Chụp dùng `CapturePreviewAsync` của WebView2 chứ không chụp màn hình từ PowerShell, vì
 cách sau bị Windows ảo hoá theo DPI và chỉ lấy được một phần cửa sổ.
+
+## Cửa sổ so sánh đứng hình — bốn nguyên nhân, đều đã sửa
+
+Bấm "Phát cả hai" làm treo cửa sổ. Bằng chứng trong nhật ký:
+
+```
+12:09:44  MediaHost: trả 206 | 552110592/552110592 byte
+12:09:44  MediaHost: trả 206 | 174081325/174081325 byte
+```
+
+Bốn nguyên nhân, tìm ra từ log rồi mới sửa:
+
+1. **Range mở trả cả tệp.** Chromium hỏi `Range: bytes=0-` nghĩa là "cho tôi từ đầu",
+   bản cũ hiểu thành "tới hết tệp". Nay `ByteRangeParser` cắt khối 2 MB, hợp lệ theo
+   RFC 9110 (206 được phép trả hẹp hơn client yêu cầu, client media sẽ tự xin tiếp).
+   Đo trên đúng cặp tệp đó: **726 MB → 4,2 MB, giảm 99,42%** byte đi qua UI thread.
+   Range đóng không đổi một byte nào, nên không mất chất lượng phát.
+
+2. **`WebResourceRequested` chạy trên UI thread** (`MainForm.cs`). Mọi yêu cầu byte-range
+   đều mở file ngay tại đó, nên chỉ cần đẩy đủ nhiều byte là nghẽn hẳn. Sửa (1) làm cho
+   lượng đẩy trên UI thread không còn đáng kể.
+
+3. **Vòng tua không có hạn chót.** `setInterval` 100 ms, lệch > 0,15 s là tua, không bao
+   giờ dừng. Khi ffmpeg đang chiếm CPU thì hai bên không bao giờ hội tụ, nên nó tua vô hạn
+   — mỗi lần tua lại là một yêu cầu media mới trên UI thread. Nay giới hạn 8 lần, giãn
+   dần 100 → 1800 ms, chỉ tua khi `readyState >= 2` và không đang tua, rồi báo rõ thay
+   vì cứ tua tiếp.
+
+4. **Đóng modal không dọn dẹp.** `closeModal` chỉ ẩn hộp thoại: không `pauseBoth()`, không
+   xoá timer, không bỏ `src`. Video chạy ngầm và vòng tua tiếp tục sau khi đã đóng — mỗi
+   lần mở lại chồng thêm một vòng. Đây là lý do hiện tượng **tích luỹ dần theo số lần
+   bấm** chứ không xuất hiện ngay lần đầu.
+
+`ByteRangeParser` được tách sang `Core` vì trước đó logic Range nằm trong `MediaHost` ở
+tầng giao diện nên **không test được chút nào** — và sai thì biểu hiện thành "video không
+phát", cùng triệu chứng với tệp hỏng. Nay có 21 test cho logic này.
+
+## So sánh cạnh nhau bên ngoài: ffmpeg ghép, ffplay hiển thị
+
+Kế hoạch ban đầu là "một ffplay với `-f hstack`". Chạy thật cho thấy **cả ba hướng đều
+không dùng được**:
+
+| Cách | Kết quả |
+|---|---|
+| `ffplay -f hstack` | `Unknown input format: hstack` — hstack là bộ lọc, không phải định dạng |
+| `ffplay -filter_complex ...` | `Option not found` — đó là tuỳ chọn của ffmpeg CLI |
+| `ffplay -vf "[0:v][1:v]hstack" -i a -i b` | `provided as input filename, but ... was already specified` |
+
+Nguyên nhân gốc: **ffplay chỉ nhận một tệp.** Đó là giới hạn của chính ffplay.
+
+Cách chạy được là hai tiến trình nối bằng pipe:
+
+```
+ffmpeg -i goc -i nen -filter_complex "[0:v][1:v]hstack=inputs=2[v]" -f nut -   |   ffplay -i pipe:0
+```
+
+Vẫn đạt đủ ba điều: một cửa sổ, hai bên cạnh nhau, và **đồng bộ tuyệt đối** vì chỉ có
+một đồng hồ trong một pipeline. Ngoài ra nó chạy ngoài tiến trình ứng dụng nên không
+tranh CPU với ffmpeg đang nén, và không đụng `WebResourceRequested`. Kiểm chứng trên clip
+12 giây cắt từ đúng tệp của người dùng, cả ba kịch bản (cùng chiều cao / lệch chiều cao
+/ không rõ kích thước) đều `exit 0`.
+
+Hai điều kiện dễ sai đã ghi thành test:
+
+- Mọi tham số phải nằm **trước** dấu `-` cuối. Đặt `-map` sau đó thì ffmpeg coi là output
+  thứ hai và báo `Unable to choose an output format for 'pipe:1'`.
+- `-t` của ffplay không dừng được tiến trình khi nguồn là pipe, nên cửa sổ chỉ đóng khi
+  ffmpeg hết dữ liệu. Đây là hành vi mong muốn khi xem cả tập, nhưng bài kiểm chứng phải
+  dùng clip ngắn thì mới kịp kết thúc.
+
+`ffplay.exe` không có sẵn trong `app/` (chỉ có `ffmpeg.exe`), nên `"tools": {}` trong
+`data/config.json` khiến nút "Mở ra ngoài" rơi về trình phát mặc định của hệ thống và
+không làm được gì. Nay `ffplay.exe` nằm cạnh `ffmpeg.exe` (cùng bản build 8.0.1 full
+static, SHA256 của ffmpeg hai bên trùng nhau) nên `ToolLocator` tự tìm thấy. Người dùng
+vẫn có thể ghi đè bằng bản khác ở Cài đặt → Công cụ ngoài.

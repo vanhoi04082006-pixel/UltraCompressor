@@ -29,6 +29,11 @@
 .EXAMPLE
     .\setup.ps1
     .\setup.ps1 -FFmpeg 'D:\tools\ffmpeg.exe'
+
+.PARAMETER FFplay
+    ffplay.exe dùng cho màn hình so sánh "cạnh nhau". Bỏ trống thì script tự tìm trong
+    thư mục tools\ cạnh ffmpeg.exe. Thiếu thì nút so sánh cạnh nhau báo lỗi, còn các
+    chức năng khác vẫn chạy bình thường.
 #>
 [CmdletBinding()]
 param(
@@ -38,6 +43,7 @@ param(
   [string]$Source,
   [string]$InstallTo,
   [string]$FFmpeg,
+  [string]$FFplay,
   [string]$Gifsicle,
   [string]$Ghostscript,
   [switch]$SelfContained,
@@ -92,6 +98,7 @@ $toolSources = @(
 
 $tools = @{
   'ffmpeg.exe'    = $FFmpeg
+  'ffplay.exe'    = $FFplay
   'gifsicle.exe'  = $Gifsicle
   'gswin64c.exe'  = $Ghostscript
 }
@@ -131,6 +138,7 @@ Write-Host '== Kiem tra kha nang chay tung cong cu ==' -ForegroundColor Cyan
 # (chạy thử một phép nhỏ) mỗi lần mở, nên ở đây chỉ bắt lỗi rõ ràng kiểu thiếu tệp.
 $probes = @{
   'ffmpeg.exe'   = @('-version')
+  'ffplay.exe'   = @('-version')
   'gifsicle.exe' = @('--version')
   'gswin64c.exe' = @('-version')
 }

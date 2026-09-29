@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using UltraCompressor.Core;
@@ -239,6 +240,7 @@ public sealed class AppHost : IAsyncDisposable
                 "log" => LogMessage(message),
                 "getCompare" => await GetCompareAsync(message),
                 "playFile" => PlayFile(message),
+                "playBothExternal" => await PlayBothExternal(message),
                 "guide" => ToNode(BuildGuide()),
                 _ => null,
             };
@@ -824,6 +826,7 @@ public sealed class AppHost : IAsyncDisposable
             return ToNode(new
             {
                 ok = true,
+                busy = _engine.IsRunning,
                 compare = result with
                 {
                     Original = result.Original with { Url = RegisterMedia?.Invoke(result.Original.Path) },
@@ -891,6 +894,170 @@ public sealed class AppHost : IAsyncDisposable
             return ToNode(new { ok = false, error = ex.Message });
         }
     }
+
+    /// <summary>
+    /// Má»Ÿ báº£n gá»‘c vĂ  báº£n Ä‘Ă£ nĂ©n cáº¡nh nhau trong Má»˜T cá»­a sá»• ffplay, dĂ¹ng bá»™ lá»c
+    /// <c>hstack</c>.
+    ///
+    /// <para>VĂ¬ sao má»™t tiáº¿n trĂ¬nh chá»© khĂ´ng pháº£i hai cá»­a sá»•:</para>
+    /// <list type="bullet">
+    /// <item>Äá»“ng bá»™ tuyá»‡t Ä‘á»‘i theo cáº¥u táº¡o â€” má»™t tiáº¿n trĂ¬nh, má»™t Ä‘á»“ng há»“. Hai cá»­a sá»•
+    /// thĂ¬ pháº£i canh báº±ng tay vĂ  luĂ´n trĂ´i.</item>
+    /// <item>KhĂ´ng tranh CPU vá»›i á»©ng dá»¥ng. Sá»± kiá»‡n <c>WebResourceRequested</c> cá»§a
+    /// WebView2 cháº¡y trĂªn UI thread, nĂªn phĂ¡t hai video trong á»©ng dá»¥ng khi Ä‘ang nĂ©n lĂ 
+    /// nguyĂªn nhĂ¢n cá»­a sá»• Ä‘á»©ng hĂ¬nh. ffplay cháº¡y ngoĂ i tiáº¿n trĂ¬nh nĂªn khĂ´ng dĂ­nh.</item>
+    /// <item>CĂ³ thá»ƒ xáº¿p cáº¡nh nhau tháº­t sá»±. ffplay cĂ³ <c>-x/-y</c> cho kĂ­ch thÆ°á»›c nhÆ°ng
+    /// KHĂ”NG cĂ³ tuá»³ chá»n vá»‹ trĂ­ cá»­a sá»•, nĂªn hai cá»­a sá»• ffplay sáº½ chá»“ng lĂªn nhau; VLC thĂ¬
+    /// Ä‘á»‹nh vá»‹ Ä‘Æ°á»£c nhÆ°ng khĂ´ng Ä‘á»“ng bá»™ vá»›i ffplay. Má»™t cá»­a sá»• ghĂ©p lĂ  lá»±a chá»n duy
+    /// nháº¥t vá»«a cáº¡nh nhau vá»«a Ä‘á»“ng bá»™.</item>
+    /// </list>
+    /// </summary>
+    /// <summary>
+    /// Mở bản gốc và bản đã nén cạnh nhau trong MỘT cửa sổ ffplay.
+    ///
+    /// <para>Phần dựng lệnh nằm ở <see cref="FfplayCommand"/> trong tầng Core để test được;
+    /// hàm này chỉ lo phần tìm tệp và khởi chạy. Xem lý do chọn một tiến trình thay vì hai
+    /// cửa sổ ở đó.</para>
+    /// </summary>
+    /// <summary>
+    /// Mở bản gốc và bản đã nén cạnh nhau trong MỘT cửa sổ.
+    ///
+    /// <para>Dựng lệnh nằm ở <see cref="SideBySidePlayer"/> trong tầng Core để test được;
+    /// hàm này chỉ lo phần tìm công cụ và nối pipe.</para>
+    /// </summary>
+    private async Task<System.Text.Json.Nodes.JsonNode?> PlayBothExternal(BridgeMessage message)
+    {
+        var jobId = BridgeJson.GetString(message, "jobId");
+        var filePath = BridgeJson.GetString(message, "filePath");
+        if (jobId is null || filePath is null) return ToNode(new { ok = false, error = "Thiếu thông tin tệp." });
+
+        var job = _engine.Find(jobId);
+        var item = job?.Items.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return ToNode(new { ok = false, error = "Không tìm thấy tệp trong job." });
+
+        var result = await _compare.BuildAsync(item, job!.OutputFolder);
+        if (result is null) return ToNode(new { ok = false, error = "Tệp không còn tồn tại trên đĩa." });
+
+        if (!result.Original.Exists) return ToNode(new { ok = false, error = "Không tìm thấy bản gốc." });
+        if (result.Compressed is null || !result.Compressed.Exists)
+        {
+            return ToNode(new { ok = false, error = "Chưa có bản nén trên đĩa để so sánh." });
+        }
+
+        if (result.Original.Kind != nameof(MediaKind.Video) || result.Compressed.Kind != nameof(MediaKind.Video))
+        {
+            return ToNode(new { ok = false, error = "Ghép cạnh nhau chỉ dành cho video." });
+        }
+
+        var ffplay = _tools.PathOf(ToolKind.FFplay);
+        if (ffplay is null || !File.Exists(ffplay))
+        {
+            return ToNode(new
+            {
+                ok = false,
+                error = "Chưa có ffplay.exe. Mở Cài đặt → Công cụ ngoài → dòng FFplay → Chọn… rồi trỏ tới ffplay.exe.",
+            });
+        }
+
+        var ffmpeg = _tools.PathOf(ToolKind.FFmpeg);
+        if (ffmpeg is null || !File.Exists(ffmpeg))
+        {
+            return ToNode(new { ok = false, error = "Chưa có ffmpeg.exe để ghép hai bản." });
+        }
+
+        var command = SideBySidePlayer.Build(
+            ffmpeg,
+            ffplay,
+            result.Original.Path,
+            result.Compressed.Path,
+            result.Original.Width,
+            result.Original.Height,
+            result.Compressed.Width,
+            result.Compressed.Height,
+            $"UltraCompressor — {item.FileName} (gốc | đã nén)");
+
+        try
+        {
+            var encode = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = command.FfmpegPath,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var argument in command.FfmpegArguments) encode.ArgumentList.Add(argument);
+
+            var play = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = command.FfplayPath,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var argument in command.FfplayArguments) play.ArgumentList.Add(argument);
+
+            // ffplay phải mở trước: nó đọc pipe, và nếu ffmpeg ghi vào một pipe chưa có
+            // đầu đọc thì lần ghi đầu tiên bị treo, rồi ffplay mở ra và chờ dữ liệu
+            // không bao giờ tới.
+            using var player = System.Diagnostics.Process.Start(play);
+            using var encoder = System.Diagnostics.Process.Start(encode);
+
+            if (player is null || encoder is null)
+            {
+                return ToNode(new { ok = false, error = "Không khởi chạy được ffmpeg hoặc ffplay." });
+            }
+
+            // Nối stdout của ffmpeg sang stdin của ffplay. CopyToAsync chạy nền, nếu chạy
+            // tuần tự thì ffmpeg sẽ kẹt khi pipe đầy trong lúc chờ ta đọc.
+            encoder.StandardOutput.BaseStream
+                .CopyToAsync(player.StandardInput.BaseStream)
+                .ContinueWith(
+                    _ =>
+                    {
+                        try { player.StandardInput.Close(); } catch { /* ignore */ }
+                    },
+                    CancellationToken.None);
+
+            // Đọc lỗi của cả hai về sau, để khi có hỏng thì biết hỏng ở đâu thay vì chỉ
+            // thấy cửa sổ không mở. Không chặn ở đây.
+            _ = DrainAsync(encoder, "ffmpeg");
+            _ = DrainAsync(player, "ffplay");
+
+            _logger.LogInfo("compare", $"Mở so sánh cạnh nhau: {command.Display()}");
+            return ToNode(new { ok = true, player = "ffplay", command = command.Display() });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("compare", $"Không mở được cửa sổ so sánh: {ex.Message} — lệnh: {command.Display()}", ex);
+            return ToNode(new { ok = false, error = $"{ex.Message} — lệnh: {command.Display()}" });
+        }
+    }
+
+    /// <summary>Đọc stderr của một tiến trình con về nhật ký rồi bỏ, không chặn người dùng.</summary>
+    private async Task DrainAsync(System.Diagnostics.Process process, string label)
+    {
+        try
+        {
+            var text = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines.Take(20))
+            {
+                _logger.LogDebug("compare", $"{label}: {line.Trim()}");
+            }
+
+            if (lines.Length > 0)
+            {
+                _logger.LogInfo("compare", $"{label} kết thúc với mã {process.ExitCode}: {lines[0].Trim()}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("compare", $"Không đọc được stderr của {label}: {ex.Message}");
+        }
+    }
+
+
+
 
     private static System.Text.Json.Nodes.JsonNode? BuildGuide() => ToNode(new
     {

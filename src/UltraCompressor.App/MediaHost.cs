@@ -1,26 +1,27 @@
 using System.Globalization;
 using System.IO;
 using Microsoft.Web.WebView2.Core;
+using UltraCompressor.Core.Media;
 
 namespace UltraCompressor.App;
 
 /// <summary>
-/// Phục vụ tệp media cho trang web qua một virtual host riêng.
+/// Phá»¥c vá»¥ tá»‡p media cho trang web qua má»™t virtual host riĂªng.
 ///
-/// Trang chạy trên <c>https://app.local</c> nên không tự tải được <c>file:///C:/...</c>.
-/// Thay vì mở toàn bộ thư mục (lộ mọi tệp trên máy), mỗi tệp được đăng ký một mã ngẫu
-/// nhiên và URL là <c>https://media.local/&lt;mã&gt;</c>. Trang chỉ biết mã, không biết
-/// đường dẫn, và muốn xem tệp nào ngoài danh sách đăng ký thì không có cách nào.
+/// Trang cháº¡y trĂªn <c>https://app.local</c> nĂªn khĂ´ng tá»± táº£i Ä‘Æ°á»£c <c>file:///C:/...</c>.
+/// Thay vĂ¬ má»Ÿ toĂ n bá»™ thÆ° má»¥c (lá»™ má»i tá»‡p trĂªn mĂ¡y), má»—i tá»‡p Ä‘Æ°á»£c Ä‘Äƒng kĂ½ má»™t mĂ£ ngáº«u
+/// nhiĂªn vĂ  URL lĂ  <c>https://media.local/&lt;mĂ£&gt;</c>. Trang chá»‰ biáº¿t mĂ£, khĂ´ng biáº¿t
+/// Ä‘Æ°á»ng dáº«n, vĂ  muá»‘n xem tá»‡p nĂ o ngoĂ i danh sĂ¡ch Ä‘Äƒng kĂ½ thĂ¬ khĂ´ng cĂ³ cĂ¡ch nĂ o.
 ///
-/// <para><b>Hỗ trợ <c>Range</c> là bắt buộc, không phải tuỳ chọn.</b> Chromium (và cả
-/// <c>&lt;video&gt;</c> lẫn <c>&lt;audio&gt;</c>) luôn gửi <c>Range</c> khi tua. Nếu ta trả
-/// <c>200</c> cho mọi yêu cầu thì mỗi lần tua nó phải đọc lại tệp từ byte 0 — đó là lý do
-/// màn hình so sánh giật và tua nghẹn so với VLC, vốn seek thẳng trên tệp. Trả
-/// <c>206 Partial Content</c> với <c>Content-Range</c> đúng thì Chromium chỉ đọc đúng
-/// đoạn nó cần.</para>
+/// <para><b>Há»— trá»£ <c>Range</c> lĂ  báº¯t buá»™c, khĂ´ng pháº£i tuá»³ chá»n.</b> Chromium (vĂ  cáº£
+/// <c>&lt;video&gt;</c> láº«n <c>&lt;audio&gt;</c>) luĂ´n gá»­i <c>Range</c> khi tua. Náº¿u ta tráº£
+/// <c>200</c> cho má»i yĂªu cáº§u thĂ¬ má»—i láº§n tua nĂ³ pháº£i Ä‘á»c láº¡i tá»‡p tá»« byte 0 â€” Ä‘Ă³ lĂ  lĂ½ do
+/// mĂ n hĂ¬nh so sĂ¡nh giáº­t vĂ  tua ngháº¹n so vá»›i VLC, vá»‘n seek tháº³ng trĂªn tá»‡p. Tráº£
+/// <c>206 Partial Content</c> vá»›i <c>Content-Range</c> Ä‘Ăºng thĂ¬ Chromium chá»‰ Ä‘á»c Ä‘Ăºng
+/// Ä‘oáº¡n nĂ³ cáº§n.</para>
 ///
-/// Chỉ dùng cho màn hình so sánh: nhờ đó hai bản gốc và bản nén phát cùng lúc trong chính
-/// ứng dụng, thay vì bắt người dùng mở hai cửa sổ trình phát bên ngoài.
+/// Chá»‰ dĂ¹ng cho mĂ n hĂ¬nh so sĂ¡nh: nhá» Ä‘Ă³ hai báº£n gá»‘c vĂ  báº£n nĂ©n phĂ¡t cĂ¹ng lĂºc trong chĂ­nh
+/// á»©ng dá»¥ng, thay vĂ¬ báº¯t ngÆ°á»i dĂ¹ng má»Ÿ hai cá»­a sá»• trĂ¬nh phĂ¡t bĂªn ngoĂ i.
 /// </summary>
 public sealed class MediaHost
 {
@@ -31,15 +32,15 @@ public sealed class MediaHost
     private readonly Dictionary<string, string> _byToken = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
 
-    /// <summary>Đăng ký một tệp và trả về URL để nhúng. Tệp không tồn tại thì trả null.</summary>
+    /// <summary>ÄÄƒng kĂ½ má»™t tá»‡p vĂ  tráº£ vá» URL Ä‘á»ƒ nhĂºng. Tá»‡p khĂ´ng tá»“n táº¡i thĂ¬ tráº£ null.</summary>
     public string? Register(string path)
     {
         if (!File.Exists(path)) return null;
 
         lock (_gate)
         {
-            // Cùng một tệp đăng ký nhiều lần vẫn trả cùng một URL, để so sánh lại không
-            // sinh ra mã mới mỗi lần bấm.
+            // CĂ¹ng má»™t tá»‡p Ä‘Äƒng kĂ½ nhiá»u láº§n váº«n tráº£ cĂ¹ng má»™t URL, Ä‘á»ƒ so sĂ¡nh láº¡i khĂ´ng
+            // sinh ra mĂ£ má»›i má»—i láº§n báº¥m.
             foreach (var pair in _byToken)
             {
                 if (string.Equals(pair.Value, path, StringComparison.OrdinalIgnoreCase)) return $"{Origin}/{pair.Key}";
@@ -53,17 +54,7 @@ public sealed class MediaHost
 
     public string? Resolve(string requestUri)
     {
-        // Kiểu của Request.Uri khác nhau giữa các bản SDK: bản này là string, bản mới
-        // hơn là Uri. Nhận string và tự tách phần đường dẫn cho cả hai.
-        var path = requestUri;
-        var slash = path.IndexOf('/', path.IndexOf("//", StringComparison.Ordinal) + 2);
-        var token = slash >= 0 ? path[(slash + 1)..] : path;
-
-        var query = token.IndexOf('?');
-        if (query >= 0) token = token[..query];
-
-        token = token.Trim('/');
-        if (token.Length == 0) return null;
+        var token = TokenOf(requestUri);
 
         lock (_gate)
         {
@@ -71,46 +62,97 @@ public sealed class MediaHost
         }
     }
 
-    /// <summary>Trả kết quả cho một yêu cầu media, hoặc null nếu không phục vụ được.</summary>
+    /// <summary>Láº¥y cáº£ Ä‘Æ°á»ng dáº«n vĂ  Ä‘á»™ dĂ i cá»§a má»™t mĂ£. Tráº£ false náº¿u mĂ£ khĂ´ng cĂ³ trong sá»•.</summary>
+    private bool TryResolve(string requestUri, out string path, out long length)
+    {
+        var token = TokenOf(requestUri);
+
+        lock (_gate)
+        {
+            if (_byToken.TryGetValue(token, out path!))
+            {
+                return TryMeasure(path, out length);
+            }
+        }
+
+        path = string.Empty;
+        length = 0;
+        return false;
+    }
+
+    private static bool TryMeasure(string path, out long length)
+    {
+        try
+        {
+            // Äo láº¡i má»—i láº§n thay vĂ¬ nhá»› tá»« lĂºc Ä‘Äƒng kĂ½. Tá»‡p cĂ³ thá»ƒ vá»«a bá»‹ nĂ©n tiáº¿p
+            // trong lĂºc ngÆ°á»i dĂ¹ng Ä‘ang xem, hoáº·c bá»‹ thay sau khi duyá»‡t â€” Ä‘á»™ dĂ i cÅ© thĂ¬
+            // Content-Range sai, mĂ  Content-Range sai thĂ¬ Chromium tá»« chá»‘i phĂ¡t. Hai
+            // lá»‡nh thá»‘ng kĂª tá»‡p ráº» hÆ¡n nhiá»u so vá»›i chuyá»‡n pháº£i Ä‘oĂ¡n sai.
+            length = new FileInfo(path).Length;
+            return true;
+        }
+        catch (Exception)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    /// <summary>TĂ¡ch mĂ£ tá»‡p ra khá»i URL.</summary>
+    private static string TokenOf(string requestUri)
+    {
+        // Kiá»ƒu cá»§a Request.Uri khĂ¡c nhau giá»¯a cĂ¡c báº£n SDK: báº£n nĂ y lĂ  string, báº£n má»›i
+        // hÆ¡n lĂ  Uri. Nháº­n string vĂ  tá»± tĂ¡ch pháº§n Ä‘Æ°á»ng dáº«n cho cáº£ hai.
+        var slash = requestUri.IndexOf('/', requestUri.IndexOf("//", StringComparison.Ordinal) + 2);
+        var token = slash >= 0 ? requestUri[(slash + 1)..] : requestUri;
+
+        var query = token.IndexOf('?');
+        if (query >= 0) token = token[..query];
+
+        return token.Trim('/');
+    }
+
+    /// <summary>Tráº£ káº¿t quáº£ cho má»™t yĂªu cáº§u media, hoáº·c null náº¿u khĂ´ng phá»¥c vá»¥ Ä‘Æ°á»£c.</summary>
     public CoreWebView2WebResourceResponse? Respond(
         CoreWebView2Environment environment,
         CoreWebView2WebResourceRequestedEventArgs args)
     {
-        var path = Resolve(args.Request.Uri);
-
-        // Ghi lại MỌI yêu cầu media, kể cả yêu cầu không phục vụ được.
-        //
-        // Lý do: khi thẻ <video> không phát, Chromium không đưa lý do lên giao diện và cũng
-        // không ghi ra đâu. Một khung đen 0:00 không phân biệt được "tệp hỏng", "sai
-        // Content-Type", "tệp bị khoá" hay "lỗi trong code" — bốn nguyên nhân, một biểu
-        // hiện. Có dòng log thì lần sau mở nhật ký là biết ngay.
-        var header = RangeHeaderOf(args.Request.Headers);
         var requested = args.Request.Uri ?? string.Empty;
-        var token = requested.Length > 0 ? requested[(requested.LastIndexOf('/') + 1)..] : requested;
-        Diagnostic.Log($"MediaHost: yêu cầu {token} | tệp {(path is null ? "KHÔNG CÓ" : Path.GetFileName(path))} | Range={header ?? "(không)"}");
+        var known = TryResolve(requested, out var path, out var total);
 
-        if (path is null || !File.Exists(path))
+        // Ghi láº¡i Má»ŒI yĂªu cáº§u media, ká»ƒ cáº£ yĂªu cáº§u khĂ´ng phá»¥c vá»¥ Ä‘Æ°á»£c.
+        //
+        // LĂ½ do: khi tháº» <video> khĂ´ng phĂ¡t, Chromium khĂ´ng Ä‘Æ°a lĂ½ do lĂªn giao diá»‡n vĂ  cÅ©ng
+        // khĂ´ng ghi ra Ä‘Ă¢u. Má»™t khung Ä‘en 0:00 khĂ´ng phĂ¢n biá»‡t Ä‘Æ°á»£c "tá»‡p há»ng", "sai
+        // Content-Type", "tá»‡p bá»‹ khoĂ¡" hay "lá»—i trong code" â€” bá»‘n nguyĂªn nhĂ¢n, má»™t biá»ƒu
+        // hiá»‡n. CĂ³ dĂ²ng log thĂ¬ láº§n sau má»Ÿ nháº­t kĂ½ lĂ  biáº¿t ngay.
+        var header = RangeHeaderOf(args.Request.Headers);
+        var token = requested.Length > 0 ? requested[(requested.LastIndexOf('/') + 1)..] : requested;
+        Diagnostic.Log($"MediaHost: yĂªu cáº§u {token} | tá»‡p {(known ? Path.GetFileName(path) : "KHĂ”NG CĂ“")} | Range={header ?? "(khĂ´ng)"}");
+
+        if (!known)
         {
-            Diagnostic.Log($"MediaHost: trả null (không phục vụ được) cho {token}.");
+            Diagnostic.Log($"MediaHost: tráº£ null (khĂ´ng phá»¥c vá»¥ Ä‘Æ°á»£c) cho {token}.");
             return null;
         }
 
         try
         {
-            var info = new FileInfo(path);
-            var total = info.Length;
             if (total == 0)
             {
-                Diagnostic.Log($"MediaHost: tệp rỗng, trả null cho {token}.");
+                Diagnostic.Log($"MediaHost: tá»‡p rá»—ng, tráº£ null cho {token}.");
                 return null;
             }
 
-            var range = ParseRange(args.Request.Headers, total);
+            // PhĂ¢n tĂ­ch Range do ByteRangeParser lo. NĂ³ cáº¯t khá»‘i cho range má»Ÿ: client há»i
+            // "bytes=0-" nghÄ©a lĂ  "cho tĂ´i tá»« Ä‘áº§u", báº£n trÆ°á»›c hiá»ƒu thĂ nh "tá»›i háº¿t tá»‡p" vĂ 
+            // Ä‘áº©y trá»n 552 MB qua sá»± kiá»‡n cháº¡y trĂªn UI thread â€” cá»­a sá»• Ä‘á»©ng hĂ¬nh.
+            var range = ByteRangeParser.Parse(header, total);
 
-            // Range không hợp lệ (vượt quá độ dài tệp) -> trả 416, đúng chuẩn HTTP.
+            // Range khĂ´ng há»£p lá»‡ (vÆ°á»£t quĂ¡ Ä‘á»™ dĂ i tá»‡p) -> tráº£ 416, Ä‘Ăºng chuáº©n HTTP.
             if (range is { Invalid: true })
             {
-                Diagnostic.Log($"MediaHost: Range không hợp lệ, trả 416 cho {token}.");
+                Diagnostic.Log($"MediaHost: Range khĂ´ng há»£p lá»‡, tráº£ 416 cho {token}.");
                 return environment.CreateWebResourceResponse(
                     Stream.Null,
                     416,
@@ -122,8 +164,8 @@ public sealed class MediaHost
                 ? (ok.Start, ok.Count)
                 : (0L, total);
 
-            // Không dùng FileOptions.SequentialScan ở đây: yêu cầu Range nhảy tới giữa tệp
-            // nên không phải tuần tự, và cờ đó khiến bộ đệm I/O đoán sai hướng đọc.
+            // KhĂ´ng dĂ¹ng FileOptions.SequentialScan á»Ÿ Ä‘Ă¢y: yĂªu cáº§u Range nháº£y tá»›i giá»¯a tá»‡p
+            // nĂªn khĂ´ng pháº£i tuáº§n tá»±, vĂ  cá» Ä‘Ă³ khiáº¿n bá»™ Ä‘á»‡m I/O Ä‘oĂ¡n sai hÆ°á»›ng Ä‘á»c.
             var stream = new FileStream(
                 path,
                 FileMode.Open,
@@ -155,7 +197,7 @@ public sealed class MediaHost
             }
 
             Diagnostic.Log(
-                $"MediaHost: trả {(range is null ? 200 : 206)} cho {token} | " +
+                $"MediaHost: tráº£ {(range is null ? 200 : 206)} cho {token} | " +
                 $"{MimeTypeOf(path)} | {count}/{total} byte");
 
             return environment.CreateWebResourceResponse(
@@ -166,19 +208,19 @@ public sealed class MediaHost
         }
         catch (IOException ex)
         {
-            // Tệp đang được ghi, hoặc đã bị khoá. Bỏ qua thay vì làm sập trang — nhưng
-            // phải ghi lại, nếu không thì lại là một khung đen không giải thích.
-            Diagnostic.Log($"MediaHost: lỗi I/O khi phục vụ {token}: {ex.Message}");
+            // Tá»‡p Ä‘ang Ä‘Æ°á»£c ghi, hoáº·c Ä‘Ă£ bá»‹ khoĂ¡. Bá» qua thay vĂ¬ lĂ m sáº­p trang â€” nhÆ°ng
+            // pháº£i ghi láº¡i, náº¿u khĂ´ng thĂ¬ láº¡i lĂ  má»™t khung Ä‘en khĂ´ng giáº£i thĂ­ch.
+            Diagnostic.Log($"MediaHost: lá»—i I/O khi phá»¥c vá»¥ {token}: {ex.Message}");
             return null;
         }
         catch (UnauthorizedAccessException ex)
         {
-            Diagnostic.Log($"MediaHost: không có quyền đọc {token}: {ex.Message}");
+            Diagnostic.Log($"MediaHost: khĂ´ng cĂ³ quyá»n Ä‘á»c {token}: {ex.Message}");
             return null;
         }
     }
 
-    /// <summary>Lấy nguyên văn header <c>Range</c>, dùng để ghi nhật ký.</summary>
+    /// <summary>Láº¥y nguyĂªn vÄƒn header <c>Range</c>, dĂ¹ng Ä‘á»ƒ ghi nháº­t kĂ½.</summary>
     private static string? RangeHeaderOf(IEnumerable<KeyValuePair<string, string>> headers)
     {
         foreach (var header in headers)
@@ -192,95 +234,21 @@ public sealed class MediaHost
         return null;
     }
 
-    /// <summary>Kết quả đọc header <c>Range</c>.</summary>
-    private readonly record struct ByteRange(long Start, long Count)
-    {
-        public bool Invalid { get; init; }
-    }
-
     /// <summary>
-    /// Đọc <c>Range: bytes=a-b</c>. Trả null khi không có header (nguyên tệp) hoặc header
-    /// không phải dạng byte — lúc đó trả 200 cả tệp, đúng như cách server tĩnh làm.
-    /// </summary>
-    private static ByteRange? ParseRange(System.Collections.Generic.IEnumerable<KeyValuePair<string, string>> headers, long total)
-    {
-        string? raw = null;
-        foreach (var header in headers)
-        {
-            if (string.Equals(header.Key, "Range", StringComparison.OrdinalIgnoreCase))
-            {
-                raw = header.Value;
-                break;
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-
-        var value = raw.Trim();
-        if (!value.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase)) return null;
-
-        var spec = value["bytes=".Length..].Trim();
-
-        // Nhiều đoạn: Chromium không dùng cho media, và ghép tay dễ sai hơn là bỏ qua.
-        if (spec.Contains(',')) return null;
-
-        var dash = spec.IndexOf('-');
-        if (dash < 0) return null;
-
-        var left = spec[..dash].Trim();
-        var right = spec[(dash + 1)..].Trim();
-
-        long start;
-        long end;
-
-        if (left.Length == 0)
-        {
-            // "-500" = 500 byte cuối.
-            if (!long.TryParse(right, NumberStyles.Integer, CultureInfo.InvariantCulture, out var suffix) || suffix <= 0)
-            {
-                return new ByteRange(0, 0) { Invalid = true };
-            }
-
-            if (suffix > total) suffix = total;
-            return new ByteRange(total - suffix, suffix);
-        }
-
-        if (!long.TryParse(left, NumberStyles.Integer, CultureInfo.InvariantCulture, out start) || start < 0)
-        {
-            return new ByteRange(0, 0) { Invalid = true };
-        }
-
-        if (right.Length == 0)
-        {
-            end = total - 1;
-        }
-        else if (!long.TryParse(right, NumberStyles.Integer, CultureInfo.InvariantCulture, out end))
-        {
-            return new ByteRange(0, 0) { Invalid = true };
-        }
-
-        if (start >= total) return new ByteRange(0, 0) { Invalid = true };
-        if (end >= total) end = total - 1;
-        if (end < start) return new ByteRange(0, 0) { Invalid = true };
-
-        return new ByteRange(start, end - start + 1);
-    }
-
-    /// <summary>
-    /// Đoán kiểu MIME từ phần mở rộng.
+    /// ÄoĂ¡n kiá»ƒu MIME tá»« pháº§n má»Ÿ rá»™ng.
     ///
-    /// <para>Phải bỏ dấu <c>.bak</c> ở cuối trước khi đoán. Tệp backup của ứng dụng có
-    /// tên như <c>phim.mp4.bak</c>: nếu đoán trực tiếp thì ra
-    /// <c>application/octet-stream</c>, và thẻ <c>&lt;video&gt;</c> của Chromium sẽ từ
-    /// chối tệp — hộp so sánh hiện một khung đen, 0:00, không báo lỗi nào. Người dùng
-    /// thấy đúng triệu chứng "bản gốc hỏng" trong khi bản gốc hoàn toàn ổn.</para>
+    /// <para>Pháº£i bá» dáº¥u <c>.bak</c> á»Ÿ cuá»‘i trÆ°á»›c khi Ä‘oĂ¡n. Tá»‡p backup cá»§a á»©ng dá»¥ng cĂ³
+    /// tĂªn nhÆ° <c>phim.mp4.bak</c>: náº¿u Ä‘oĂ¡n trá»±c tiáº¿p thĂ¬ ra
+    /// <c>application/octet-stream</c>, vĂ  tháº» <c>&lt;video&gt;</c> cá»§a Chromium sáº½ tá»«
+    /// chá»‘i tá»‡p â€” há»™p so sĂ¡nh hiá»‡n má»™t khung Ä‘en, 0:00, khĂ´ng bĂ¡o lá»—i nĂ o. NgÆ°á»i dĂ¹ng
+    /// tháº¥y Ä‘Ăºng triá»‡u chá»©ng "báº£n gá»‘c há»ng" trong khi báº£n gá»‘c hoĂ n toĂ n á»•n.</para>
     /// </summary>
     private static string MimeTypeOf(string path)
     {
         var extension = Path.GetExtension(path);
 
-        // Bỏ một lớp .bak. Dùng vòng lặp thay vì kiểm tra một lần: sao lưu của sao lưu
-        // cũng phải phát được, và tệp tên kết thúc bằng .bak.bak là do chính ứng dụng tạo ra.
+        // Bá» má»™t lá»›p .bak. DĂ¹ng vĂ²ng láº·p thay vĂ¬ kiá»ƒm tra má»™t láº§n: sao lÆ°u cá»§a sao lÆ°u
+        // cÅ©ng pháº£i phĂ¡t Ä‘Æ°á»£c, vĂ  tá»‡p tĂªn káº¿t thĂºc báº±ng .bak.bak lĂ  do chĂ­nh á»©ng dá»¥ng táº¡o ra.
         while (extension.Equals(".bak", StringComparison.OrdinalIgnoreCase))
         {
             path = path[..^extension.Length];

@@ -144,7 +144,14 @@ function confirmDialog({ title, text, items: list = [], okText = 'Tiếp tục',
 
 function openModal(id) { $(id).hidden = false; }
 
-function closeModal(id) { $(id).hidden = true; }
+function closeModal(id) {
+  // Modal so sanh giu hai the <video> dang phat. An hop thoai khong du: phai dung phat
+  // va xoa timer dong bo, neu khong video chay ngam va vong tua tiep tuc sau khi da
+  // dong - moi lan mo lai lai chong them mot vong tua chay nen.
+  if (id === 'modalCompare') disposeCompare();
+  $(id).hidden = true;
+}
+
 
 function anyModalOpen() {
   return [...document.querySelectorAll('.modal-root')].some((m) => !m.hidden);
@@ -473,12 +480,27 @@ async function openCompare(jobId, filePath) {
   $('compareNote').textContent = data.note || '';
   $('compareNote').hidden = !data.note;
 
+  // Đang nén thì phát hai video trong ứng dụng sẽ tranh CPU với ffmpeg. Không phải
+  // lỗi, nhưng người dùng sẽ tưởng ứng dụng treo — nên nói trước và chỉ đường vòng.
+  if (payload?.busy) {
+    $('compareNote').textContent =
+      'Đang có job nén chạy. Phát trong ứng dụng sẽ chậm và dễ giật vì ffmpeg đang chiếm CPU —'
+      + ' nên dùng "Mở cả hai cạnh nhau", ffplay chạy ngoài ứng dụng nên không tranh.';
+    $('compareNote').hidden = false;
+  }
+
   renderCompareSide('Original', data.original);
   renderCompareSide('Compressed', data.compressed);
 
   const playable = [data.original, data.compressed].some((s) => s && s.url && s.kind === 'Video');
   $('btnPlayBoth').disabled = !playable;
   $('btnPauseBoth').disabled = !playable;
+
+  // ffplay canh nhau chi lam duoc khi ca hai ben deu la video va deu ton tai tren dia.
+  // Thieu mot ben thi bam cung chi nhan loi, nen tat san cho khoi gay hy vong gia.
+  const bothVideo = data.original?.kind === 'Video' && data.compressed?.kind === 'Video'
+    && data.original?.exists && data.compressed?.exists;
+  $('btnOpenBoth').disabled = !bothVideo;
 
   // Chạy thử thì trên đĩa chưa có bản nén, nút mở bản nén phải ẩn chứ không bấm
   // được rồi báo lỗi.
@@ -591,9 +613,65 @@ function renderCompareSide(prefix, side) {
 /* Phát cả hai cùng lúc, và GIỮ cho chúng ở cùng thời điểm.
 
    Chỉ gọi play() trên cả hai là chưa đủ: hai tệp có độ dài và tốc độ giải mã khác nhau,
-   chúng sẽ trôi dần ra khỏi nhau, và lúc đó bạn đang so hai khoảnh thời gian KHÁC NHAU —
-   tức so sánh sai. Người dùng tua một bên thì bên kia phải nhảy theo. */
-let compareSyncTimer = null;
+   chúng sẽ trôi dần ra khỏi nhau, và lúc đó bạn đang so hai khoảng thời gian KHÁC NHAU —
+   tức so sánh sai. Người dùng tua một bên thì bên kia phải nhảy theo.
+
+   Nhưng vòng tua phải CÓ HẠN. Bản trước cứ 100 ms một lần, lệch quá 0,15 giây là tua,
+   không bao giờ dừng. Khi máy đang nén (ffmpeg chiếm hết CPU) thì hai bên không bao giờ
+   hội tụ được, nên nó tua vô hạn — mỗi lần tua lại là một yêu cầu media mới đi qua
+   WebResourceRequested, mà sự kiện đó chạy trên UI thread. Kết quả là cửa sổ đứng hình.
+   Nay giới hạn số lần, giãn dần, rồi nói rõ thay vì cứ tua tiếp. */
+const SYNC_TOLERANCE_SEC = 0.15;
+const SYNC_MAX_ATTEMPTS = 8;
+const SYNC_BACKOFF_MS = [100, 150, 250, 400, 600, 900, 1200, 1800];
+
+let compareSync = null;
+
+function stopCompareSync() {
+  if (compareSync?.timer) clearInterval(compareSync.timer);
+  compareSync = null;
+}
+
+function scheduleSync(state, delayIndex) {
+  const delay = SYNC_BACKOFF_MS[Math.min(delayIndex, SYNC_BACKOFF_MS.length - 1)];
+  state.timer = setInterval(() => tickSync(state), delay);
+}
+
+function tickSync(state) {
+  const { first, rest } = state;
+  if (first.paused) return;
+
+  // Không tua phần tử chưa đủ dữ liệu: gán currentTime lúc nó đang đói thì chỉ làm nó
+  // hỏng thêm, và sinh thêm một vòng yêu cầu media nữa.
+  if (rest.some((p) => p.readyState < 2 || p.seeking)) return;
+
+  const drift = Math.max(...rest.map((p) => Math.abs(p.currentTime - first.currentTime)));
+  if (drift <= SYNC_TOLERANCE_SEC) {
+    // Đã bám nhau trở lại: quên lần thử trước, bắt đầu đếm lại từ đầu.
+    state.attempts = 0;
+    // Chỉ xoá thông báo của vòng đồng bộ. compareNote còn đang giữ cảnh báo
+    // "đang có job nén chạy" — xóa cả hai làm người dùng mất cảnh báo đó ngay
+    // lúc vừa bật video xong.
+    const note = $('compareNote');
+    if (note.dataset.sync === '1') { note.hidden = true; note.dataset.sync = ''; }
+    return;
+  }
+
+  state.attempts += 1;
+  if (state.attempts > SYNC_MAX_ATTEMPTS) {
+    stopCompareSync();
+    const note = $('compareNote');
+    note.textContent =
+      `Đã dừng tự đồng bộ: hai bên lệch ${drift.toFixed(2)}s mà không bám được` +
+      ` (thường là máy đang bận nén). Dùng "Mở cả hai cạnh nhau" — ffplay chạy ngoài ứng dụng nên không tranh CPU.`;
+    note.dataset.sync = '1';
+    note.hidden = false;
+    return;
+  }
+
+  for (const p of rest) p.currentTime = first.currentTime;
+  scheduleSync(state, state.attempts);
+}
 
 function playBoth() {
   const players = Object.values(comparePlayers).filter(Boolean);
@@ -609,24 +687,37 @@ function playBoth() {
   const [first, ...rest] = players;
   if (!first || rest.length === 0) return;
 
-  if (compareSyncTimer) clearInterval(compareSyncTimer);
-
-  compareSyncTimer = setInterval(() => {
-    if (first.paused) return;
-    for (const p of rest) {
-      if (Math.abs(p.currentTime - first.currentTime) > 0.15) {
-        p.currentTime = first.currentTime;
-      }
-    }
-  }, 100);
+  stopCompareSync();
+  compareSync = { first, rest, attempts: 0, timer: null };
+  scheduleSync(compareSync, 0);
 }
 
 function pauseBoth() {
-  if (compareSyncTimer) { clearInterval(compareSyncTimer); compareSyncTimer = null; }
+  stopCompareSync();
   for (const p of Object.values(comparePlayers)) {
     if (p) p.pause();
   }
 }
+
+/** Dọn trình phát khi đóng modal so sánh.
+
+    Bản trước `closeModal` chỉ ẩn hộp thoại: không dừng video, không xoá timer. Nghĩa là
+    sau khi đóng, hai video vẫn chạy ngầm và vòng tua vẫn tiếp tục — mỗi lần mở lại là
+    thêm một vòng tua chạy nền. Đó là lý do hiện tượng đứng hình tích luỹ dần theo số
+    lần bấm chứ không xuất hiện ngay lần đầu. */
+function disposeCompare() {
+  pauseBoth();
+  for (const key of Object.keys(comparePlayers)) {
+    const p = comparePlayers[key];
+    if (!p) continue;
+    p.pause();
+    // Bỏ hẳn src để Chromium giải phóng bộ giải mã và đóng file handle.
+    p.removeAttribute('src');
+    p.load();
+    comparePlayers[key] = null;
+  }
+}
+
 
 /* Thanh kéo giữa hai cột. Dùng biến CSS --split để phần trăm hai cột, thay vì tính lại
    bằng JavaScript. */
@@ -1322,6 +1413,14 @@ function wire() {
   $('btnRefreshLog').addEventListener('click', showLog);
   $('btnOpenLogs').addEventListener('click', () => call('openLogs'));
   $('btnPlayBoth').addEventListener('click', playBoth);
+  $('btnOpenBoth').addEventListener('click', async () => {
+    const jobId = openJobId;
+    const filePath = compareState?.filePath;
+    if (!jobId || !filePath) return;
+
+    const result = await call('playBothExternal', { jobId, filePath });
+    if (!result?.ok) toast(result?.error || 'KhĂ´ng má»Ÿ Ä‘Æ°á»£c ffplay.', 'warn');
+  });
   $('btnPauseBoth').addEventListener('click', pauseBoth);
   for (const [button, key] of [['btnOpenOriginal', 'original'], ['btnOpenCompressed', 'compressed']]) {
     $(button).addEventListener('click', async () => {

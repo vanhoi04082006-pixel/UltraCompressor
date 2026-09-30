@@ -136,6 +136,32 @@ public sealed class AppConfig
     public int MaxResolutionBranches { get; set; } = 3;
 
     /// <summary>
+    /// Bật tìm kiếm thích ứng theo nội dung: <c>CandidatePlanner</c> sinh tập ứng viên có
+    /// cấu trúc, <c>PilotSearch</c> đo chất lượng thật trên các đoạn đại diện, rồi mới
+    /// encode toàn tệp ứng viên được chọn.
+    ///
+    /// <para><b>Tắt là mặc định, và đó là quyết định có ý thức.</b> Đường thích ứng tốn
+    /// nhiều encode thử hơn: mỗi ứng viên được thử là một lần encode đoạn cộng một lần
+    /// VMAF. Người dùng bật lên là đồng ý trả cái giá đó, nên mặc định phải là đường cũ đã
+    /// được kiểm chứng, không phải đường mới.</para>
+    ///
+    /// <para>Tắt cờ này giữ nguyên hành vi cũ <b>bit nào cũng không đổi</b>: cùng kế hoạch,
+    /// cùng lệnh, cùng kết quả.</para>
+    ///
+    /// <para>Khi bật và tìm kiếm <b>hỏng hạ tầng</b> thì rơi về đường cũ và ghi rõ. Khi
+    /// tìm kiếm chạy đúng mà <b>không ứng viên nào đạt</b> thì giữ bản gốc và KHÔNG rơi về
+    /// đường cũ — tệp đã nén hiệu quả là chuyện thường, không phải lỗi.</para>
+    /// </summary>
+    public bool EnableAdaptiveSearch { get; set; }
+
+    /// <summary>
+    /// Trần số ứng viên được <b>đo thật</b> trong một lần tìm kiếm. Tách khỏi
+    /// <see cref="MaxInitialCandidates"/> vì cái đó giới hạn việc <i>sinh</i> ra bao nhiêu,
+    /// còn cái này giới hạn việc <i>đo</i> bao nhiêu — và hai thứ này tốn công khác nhau.
+    /// </summary>
+    public int MaxSearchEvaluations { get; set; } = 12;
+
+    /// <summary>
     /// Có thử AV1 không. Tắt mặc định: libaom chậm hơn libx265 khoảng một đến hai bậc độ
     /// lũy, nên bật sẽ làm công cụ dừng vô dụng với tệp dài.
     /// </summary>

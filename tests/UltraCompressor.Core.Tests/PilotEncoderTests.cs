@@ -231,6 +231,55 @@ public class PilotEncoderTests
     }
 
     [Fact]
+    public void Encode_toan_tep_dung_chung_bo_loc_voi_phan_thu_nghiem()
+    {
+        // Nếu encode toàn tệp dùng bộ lọc khác với phép thử thì ta đã đo một thứ và nén một
+        // thứ khác, và mọi số VMAF thu được là vô nghĩa. Kiểm trên chuỗi lệnh thật, không
+        // kiểm bằng cách so sánh hai hàm với nhau rồi tin là chúng được gọi cùng nhau.
+        var candidate = Candidate(1920, 1080);
+        var configuration = candidate.ToEncoderConfiguration();
+        var target = new EncodeTarget(1920, 1080);
+
+        var pilotFilter = EncodeTransform.BuildFilter(target, 1920, 1080);
+        var fullFilter = EncodeTransform.BuildFilter(target, 1920, 1080);
+
+        var pilotArgs = EncodeTransform.BuildSegmentArguments(
+            configuration, pilotFilter, "s.mp4", "pilot.mp4", new TimeWindow(10, 3));
+        var fullArgs = EncodeTransform.BuildFullArguments(
+            configuration, fullFilter, "s.mp4", "full.mp4", 128);
+
+        string PilotValue(string flag) =>
+            string.Join(' ', pilotArgs.SkipWhile(a => a != flag).Skip(1)).Split(' ')[0];
+
+        string FullValue(string flag) =>
+            string.Join(' ', fullArgs.SkipWhile(a => a != flag).Skip(1)).Split(' ')[0];
+
+        Assert.Equal(PilotValue("-vf"), FullValue("-vf"));
+
+        // Cùng phép biến đổi, cùng tham số encoder, cùng thư viện codec: cùng mã hoá.
+        foreach (var flag in new[] { "-c:v", "-crf", "-preset", "-pix_fmt" })
+        {
+            Assert.Equal(PilotValue(flag), FullValue(flag));
+        }
+    }
+
+    [Fact]
+    public void Encode_toan_tep_khong_keo_theo_ten_san_pham_cua_bo_loc()
+    {
+        // Một bài kiểm tra thuần về hình thức, nhưng đã bắt được một lỗi thật: filter còn
+        // sót tên output nội bộ khi được dựng cho encode toàn tệp.
+        var args = EncodeTransform.BuildFullArguments(
+            Candidate(1920, 1080).ToEncoderConfiguration(),
+            EncodeTransform.BuildFilter(new EncodeTarget(1280, 720), 1920, 1080),
+            "s.mp4", "full.mp4", 128);
+
+        var filter = string.Join(' ', args);
+
+        Assert.DoesNotContain("[out]", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("[v]", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Doi_fps_phai_la_quyet_dinh_co_ly_do_va_co_ten()
     {
         // Nếu sau này có ứng viên thật sự đổi nhịp khung hình, việc đó phải là một quyết định

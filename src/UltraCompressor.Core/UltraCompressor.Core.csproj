@@ -6,4 +6,17 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!--
+      Cho phép test đạt tới chiến lược tìm kiếm mà không phải mở rộng API công khai ra.
+
+      Lý do cụ thể: "mỗi nhánh dò 2 điểm đầu/cuối", "nhánh rớt thì không dò tiếp" và "xếp
+      theo độ khó rồi mới theo tên" là những QUYẾT ĐỊNH, không phải chi tiết cài đặt. Chúng
+      quyết định tốn bao nhiêu công và cho ra kết luận gì, nên phải kiểm thử trực tiếp được.
+      Nhưng chúng không phải bề mặt mà code khác cần gọi, nên để public chỉ vì tiện cho test
+      là sai — và mở rộng API công khai cũng là cam kết phải giữ về sau.
+    -->
+    <InternalsVisibleTo Include="UltraCompressor.Core.Tests" />
+  </ItemGroup>
+
 </Project>

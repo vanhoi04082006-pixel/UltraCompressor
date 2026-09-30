@@ -45,7 +45,7 @@ public sealed record PilotArtifact(
 /// phép thử mà không đóng góp gì cho quyết định. Phần ước lượng dung lượng phía sau có
 /// tính riêng phần âm thanh, và ghi rõ giả định đó.</para>
 /// </summary>
-public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
+public sealed class PilotEncoder(string ffmpegPath, string tempDirectory) : IPilotEncodeRunner
 {
     /// <summary>Hết giờ cho một lần encode đoạn. Ngắn hơn hẳn thời gian của một cảnh tốt
     /// nhưng dài hơn một đoạn treo.</summary>
@@ -56,7 +56,6 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
         string sourcePath,
         int sourceWidth,
         int sourceHeight,
-        double sourceFps,
         IReadOnlyList<RepresentativeWindow> windows,
         CancellationToken token = default)
     {
@@ -64,7 +63,7 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
         ArgumentNullException.ThrowIfNull(windows);
 
         if (!EncodeTarget.TryFromRequest(
-                sourceWidth, sourceHeight, sourceFps,
+                sourceWidth, sourceHeight,
                 candidate.Width, candidate.Height,
                 out var target, out var targetFailure))
         {
@@ -89,7 +88,7 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
             }
 
             artifacts.Add(await EncodeOneAsync(
-                candidate, sourcePath, sourceWidth, sourceHeight, sourceFps, target, window, token)
+                candidate, sourcePath, sourceWidth, sourceHeight, target, window, token)
                 .ConfigureAwait(false));
         }
 
@@ -101,7 +100,6 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
         string sourcePath,
         int sourceWidth,
         int sourceHeight,
-        double sourceFps,
         EncodeTarget target,
         RepresentativeWindow window,
         CancellationToken token)
@@ -124,7 +122,7 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
         //
         // Tần số khung hình nguồn cũng phải truyền thật, vì BuildFilter dùng nó để quyết
         // định có cần `fps=` hay không.
-        var filter = EncodeTransform.BuildFilter(target, sourceWidth, sourceHeight, sourceFps);
+        var filter = EncodeTransform.BuildFilter(target, sourceWidth, sourceHeight);
         var args = EncodeTransform.BuildSegmentArguments(
             candidate.ToEncoderConfiguration(), filter, sourcePath, output, referenceWindow);
         var watch = Stopwatch.StartNew();
@@ -174,6 +172,22 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory)
             return Failed(candidate, [window], "đã hủy", target, args, watch.Elapsed);
         }
     }
+
+    /// <summary>
+    /// Cài đặt seam. Chỉ chuyển tiếp — không có logic riêng, để cài đặt thật và bản giả trong
+    /// test gọi đúng một hàm.
+    /// </summary>
+    Task<IReadOnlyList<PilotArtifact>> IPilotEncodeRunner.EncodeAsync(
+        VideoEncodeCandidate candidate,
+        string sourcePath,
+        int sourceWidth,
+        int sourceHeight,
+        IReadOnlyList<RepresentativeWindow> windows,
+        CancellationToken token) =>
+        EncodeWindowsAsync(candidate, sourcePath, sourceWidth, sourceHeight, windows, token);
+
+    /// <inheritdoc cref="IPilotEncodeRunner.Release"/>
+    void IPilotEncodeRunner.Release(IReadOnlyList<PilotArtifact> artifacts) => Release(artifacts);
 
     /// <summary>
     /// Xoá các clip thử nghiệm. Gọi một lần khi đã đo xong cả ứng viên.

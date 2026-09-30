@@ -18,7 +18,7 @@ public class SizeEstimatorTests
             CandidateWindow: new TimeWindow(0, windowSeconds),
             OutputPath: ok ? "x.mp4" : null,
             Bytes: ok ? bytes : 0,
-            Target: new EncodeTarget(1920, 1080, 24),
+            Target: new EncodeTarget(1920, 1080),
             FfmpegArguments: [],
             Elapsed: TimeSpan.FromSeconds(1),
             Outcome: new SearchOutcome(

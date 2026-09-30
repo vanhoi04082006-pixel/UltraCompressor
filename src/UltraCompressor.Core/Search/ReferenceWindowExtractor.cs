@@ -52,6 +52,7 @@ public sealed record WindowReference(
 /// các ứng viên. Đổi lại là mất thời gian cắt một lần cho mỗi đoạn.</para>
 /// </summary>
 public sealed class ReferenceWindowExtractor(string ffmpegPath, string tempDirectory)
+    : IReferenceWindowSource
 {
     /// <summary>Chất lượng mã hoá cho clip tham chiếu. 0 = không tổn thất.</summary>
     public const int ReferenceQuality = 0;
@@ -143,6 +144,17 @@ public sealed class ReferenceWindowExtractor(string ffmpegPath, string tempDirec
             throw;
         }
     }
+
+    /// <summary>
+    /// Cài đặt seam. Chỉ chuyển tiếp — không có logic riêng, để cài đặt thật và bản giả trong
+    /// test gọi đúng một hàm.
+    /// </summary>
+    Task<IReadOnlyList<WindowReference>> IReferenceWindowSource.ExtractAsync(
+        string sourcePath, IReadOnlyList<RepresentativeWindow> windows, CancellationToken token) =>
+        ExtractAsync(sourcePath, windows, token);
+
+    /// <inheritdoc cref="IReferenceWindowSource.Release"/>
+    void IReferenceWindowSource.Release(IReadOnlyList<WindowReference> references) => Release(references);
 
     /// <summary>Xoá các clip tham chiếu. Gọi sau khi đo xong mọi ứng viên.</summary>
     public static void Release(IReadOnlyList<WindowReference> references)

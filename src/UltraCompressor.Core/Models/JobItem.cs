@@ -67,6 +67,23 @@ public sealed class JobItem
     /// <summary>Điểm chất lượng VMAF nếu đã chạy đo. Null = chưa đo.</summary>
     public double? QualityScore { get; set; }
 
+    /// <summary>
+    /// Điểm VMAF phân vị 5%. Nhìn <see cref="QualityScore"/> một mình thì vài cảnh hỏng
+    /// bị che bởi phần lớn khung đẹp — số liệu thật trên clip người dùng cho thấy
+    /// mean 88,36 đi kèm min 83,85.
+    /// </summary>
+    public double? QualityP5 { get; set; }
+
+    /// <summary>
+    /// Mã lý do ổn định cho lưới an toàn: <c>ACCEPTED</c>, <c>OUTPUT_LARGER_THAN_SOURCE</c>,
+    /// <c>INSUFFICIENT_SIZE_SAVING</c>, <c>QUALITY_FLOOR_NOT_MET</c>…
+    ///
+    /// <para>Tách khỏi <see cref="Message"/> vì thông báo tiếng Việt sẽ đổi theo thời gian
+    /// còn mã này phải giữ nguyên để gom số liệu. Ví dụ: đo được bao nhiêu tệp rơi vào
+    /// <c>QUALITY_FLOOR_NOT_MET</c> sau khi nâng ngưỡng.</para>
+    /// </summary>
+    public string? DecisionReason { get; set; }
+
     /// <summary>Thời lượng media (giây), lấy từ ffmpeg -i. Null = chưa biết (ảnh, PDF).</summary>
     public double? DurationSeconds { get; set; }
 

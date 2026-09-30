@@ -612,6 +612,8 @@ public sealed class CompressionEngine : IAsyncDisposable
 
             item.Plan = DescribePlan(context);
 
+            var qualityGate = QualityGateFor();
+
             var percent = 0;
             var result = await pipeline.RunAsync(context, p =>
             {
@@ -635,30 +637,36 @@ public sealed class CompressionEngine : IAsyncDisposable
                 return;
             }
 
-            // Quyết định có dùng kết quả hay không.
-            var saving = item.OldSize > 0
-                ? (double)(item.OldSize - result.NewSize) * 100.0 / item.OldSize
-                : 0;
+            // Lưới an toàn sau khi nén: giữ bản gốc nếu ứng viên lớn hơn, tiết kiệm quá
+            // ít, hoặc đo ra dưới ngưỡng chất lượng của mode. Một chỗ duy nhất quyết định
+            // có dùng kết quả hay không — trước đây là hai khối so sánh kích thước rời rạc,
+            // không hề có đo chất lượng nào.
+            var decision = await qualityGate.EvaluateAsync(
+                sourceSize: item.OldSize,
+                candidateSize: result.NewSize,
+                level: job.Level,
+                kind: item.Kind,
+                sourcePath: item.FilePath,
+                candidatePath: temp,
+                durationSeconds: item.DurationSeconds,
+                displayWidth: item.SourceWidth,
+                displayHeight: item.SourceHeight,
+                token);
 
-            if (result.NewSize >= item.OldSize)
-            {
-                _workspace.Release(temp);
-                item.Skip = SkipReason.NoSizeGain;
-                item.NewSize = item.OldSize;
-                item.Message = "Kết quả không nhỏ hơn bản gốc.";
-                item.IsComplete = true;
-                _log.LogSkipped("Kết quả lớn hơn hoặc bằng bản gốc", item.FilePath, job.Id);
-                return;
-            }
+            item.DecisionReason = decision.Reason;
+            item.QualityScore = decision.Quality?.Mean;
+            item.QualityP5 = decision.Quality?.P5;
 
-            if (saving < _config.MinSavingPercent)
+            if (!decision.Accept)
             {
+                // Ứng viên bị loại thì tệp tạm phải đi. Giữ lại chỉ để tệp sót trong
+                // data\tmp tới lúc dọn cả phiên.
                 _workspace.Release(temp);
-                item.Skip = SkipReason.BelowMinSaving;
+                item.Skip = decision.Skip;
                 item.NewSize = item.OldSize;
-                item.Message = $"Chỉ tiết kiệm {Format.Percent(saving)}, dưới ngưỡng {Format.Percent(_config.MinSavingPercent)}.";
+                item.Message = decision.Message;
                 item.IsComplete = true;
-                _log.LogSkipped(item.Message, item.FilePath, job.Id);
+                _log.LogSkipped($"{decision.Reason}: {decision.Message}", item.FilePath, job.Id);
                 return;
             }
 
@@ -721,8 +729,9 @@ public sealed class CompressionEngine : IAsyncDisposable
 
             item.Skip = SkipReason.None;
             item.IsComplete = true;
-            _log.LogInfo("apply", $"{item.FileName}: {Format.Size(item.OldSize)} -> {Format.Size(item.NewSize)} " +
-                $"({Format.Size(item.SavedBytes)}, {saving:F1}%) trong {item.ElapsedSeconds:F1}s");
+            _log.LogInfo("apply", $"{item.FileName}: {Format.Size(item.OldSize)} -> {Format.Size(item.NewSize)} "
+                + $"({Format.Size(item.SavedBytes)}, {item.SavedPercent:F1}%) trong {item.ElapsedSeconds:F1}s"
+                + (item.QualityScore is { } q ? $", VMAF {q:F1}" : string.Empty));
         }
         catch (SkipException ex)
         {
@@ -770,6 +779,34 @@ public sealed class CompressionEngine : IAsyncDisposable
 
         var relative = Path.GetRelativePath(job.FolderPath, item.FilePath);
         return Path.Combine(job.OutputFolder, relative);
+    }
+
+    // ---------------------------------------------------------------- lưới an toàn
+
+    private QualityGate? _qualityGate;
+    private bool _qualityGateResolved;
+
+    /// <summary>
+    /// Lưới an toàn dùng chung cho mọi tệp, cùng lý do như bộ đo SI/TI: mỗi tệp một tiến
+    /// trình ffmpeg là lãng phí, và <c>QualityProbe</c> giữ sẵn cache theo
+    /// (nguồn, ứng viên, cửa sổ, model) nên đo lại cùng một tệp là miễn phí.
+    ///
+    /// <para>Không có ffmpeg thì truyền probe null: lưới kích thước vẫn chạy, chỉ không
+    /// đo được chất lượng. Thiếu ffmpeg thì job đã hỏng trước đó rồi, không phải lúc để
+    /// ném lỗi thứ hai.</para>
+    /// </summary>
+    private QualityGate QualityGateFor()
+    {
+        if (!_qualityGateResolved)
+        {
+            _qualityGateResolved = true;
+            var ffmpeg = _tools.PathOf(ToolKind.FFmpeg);
+            _qualityGate = new QualityGate(
+                _config,
+                ffmpeg is null ? null : new QualityProbe(ffmpeg, _workspace.Root));
+        }
+
+        return _qualityGate!;
     }
 
     // ---------------------------------------------------------------- tự duyệt

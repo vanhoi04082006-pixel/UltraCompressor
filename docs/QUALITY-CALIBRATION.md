@@ -1,5 +1,16 @@
 # Hiệu chỉnh cổng chất lượng
 
+> **Đây là tập dữ liệu hiệu chỉnh KHỞI ĐẦU, không phải hiệu chỉnh phổ quát.**
+>
+> 36 điểm đo trên **2 tệp cùng một thể loại** (anime 1080p). Chưa có số liệu cho: talking
+> head, gameplay, thể thao/chuyển động mạnh, quay/chụp màn hình và chữ, video tối, nhiễu hạt,
+> thiên nhi nhiều chi tiết, nguồn bitrate thấp, nguồn bitrate cao, nguồn H.264/HEVC/AV1, và
+> 720p/1080p/1440p/4K.
+>
+> Hệ thống được thiết kế để bổ sung loại nội dung mới **tune policy mà không sửa thuật toán
+> lõi**: ngưỡng nằm trong bảng tra của `QualityPolicy`, cách đo nằm sau `QualityProbe`.
+> **Không được đổi ngưỡng ở đây nếu chưa có số đo chứng minh.**
+
 Ngưỡng VMAF trong `QualityPolicy` **không** lấy từ tài liệu sản phẩm. Chúng rút từ lần
 đo thật trên thư viện của người dùng, và bài viết này ghi lại lần đo đó để con số có
 nguồn, và để lần sau đổi máy đổi bản dựng thì kiểm tra lại được.

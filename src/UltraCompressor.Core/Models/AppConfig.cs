@@ -22,6 +22,26 @@ public sealed class AppConfig
     /// </summary>
     public double MinSavingPercent { get; set; } = 1.0;
 
+    /// <summary>
+    /// Có đo chất lượng sau khi nén không.
+    ///
+    /// <para>Bật mặc định vì đây là lưới chặn cuối: tắt đi thì ứng viên chỉ còn được cân
+    /// bằng kích thước, và một ứng viên nhỏ hơn 5% nhưng hỏng rõ sẽ đi qua. Nếu ffmpeg
+    /// thiếu <c>libvmaf</c> thì việc đo trả về null và mọi tệp vẫn nén bình thường — tắt
+    /// mục này không làm nhanh hơn, chỉ mất lớp bảo vệ.</para>
+    /// </summary>
+    public bool QualityCheckEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Độ dài đoạn dùng để đo chất lượng (giây). Chỉ một đoạn ngắn, không phải cả tệp.
+    ///
+    /// <para>Không có số liệu đo để biết đo bao nhiêu là đủ, nên 3 giây là chỗ dừng
+    /// tạm: đủ nhiều khung để VMAF ổn định (một lượt 3 giây ở 24 fps cho khoảng 72
+    /// khung) mà vẫn rẻ. Giai đoạn bộ chọn đoạn đại diện sẽ thay con số này bằng
+    /// chính sách riêng, có dữ liệu đi kèm.</para>
+    /// </summary>
+    public double QualityCheckWindowSeconds { get; set; } = 3.0;
+
     /// <summary>Bỏ qua tệp nhỏ hơn mức này. 0 = không bỏ qua.</summary>
     public long MinFileSizeBytes { get; set; }
 

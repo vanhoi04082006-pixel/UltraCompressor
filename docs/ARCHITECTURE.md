@@ -563,3 +563,82 @@ trong đặc tả, và ở đây nó là yêu cầu chứ không phải tuỳ ch
 
 `QualityProbe` + `QualityPolicy` + `QualityLog` đã dùng thật và đo thật; 280 test. Chưa
 nối vào `VideoPipeline` — hiện tầng đo chỉ chờ để vòng tìm nghiệm ở giai đoạn sau dùng.
+
+## Giai đoạn 5A — lưới an toàn sau khi nén
+
+Số đo ở giai đoạn trước cho thấy một vấn đề: bản nén tốt nhất còn lại chất lượng của clip
+người dùng đều **lớn hơn bản gốc**. Không có lưới chặn nào, công cụ sẽ làm phình tệp.
+
+Trước 5A, engine đã có sẵn hai phép so kích thước thô (`NoSizeGain`, `BelowMinSaving`) và
+`MinSavingPercent` đã được dùng. Phần **thật sự còn thiếu** là đo chất lượng. Nay gộp cả
+ba vào một chỗ quyết định duy nhất: `QualityGate`.
+
+### Thứ tự kiểm tra là cố ý: kích thước trước, chất lượng sau
+
+So kích thước tốn không một mili giây; đo VMAF thì tốn một tiến trình ffmpeg. Với tệp mà
+bản nén đã lớn hơn thì đo chất lượng cũng vô nghĩa — dù đạt VMAF 99 thì người dùng vẫn
+mất dung lượng, nên bỏ luôn.
+
+### Không đo được thì KHÔNG loại
+
+Đo hỏng (thiếu `libvmaf`, quá giờ, ffmpeg lỗi) trả về null, và null **không phải** dữ liệu
+để loại tệp. Nếu coi là thất bại thì mọi tệp video sẽ bị bỏ khi công cụ hỏng, và người
+dùng không nén được gì mà không hiểu vì sao. Cùng lý do: không đo được kích thước hiển thị
+thì bỏ qua nhánh đo, và loại media không phải video thì không dựng chuỗi filter giả.
+
+Chỉ video mới đo được. Ảnh/GIF/âm thanh/PDF chỉ còn lưới kích thước — không giả vờ có
+metric cảm nhận.
+
+### Mã lý do tách khỏi thông báo
+
+`JobItem.DecisionReason` mang mã ổn định (`OUTPUT_LARGER_THAN_SOURCE`,
+`INSUFFICIENT_SIZE_SAVING`, `QUALITY_FLOOR_NOT_MET`, `SOURCE_ALREADY_EFFICIENT`,
+`ACCEPTED`), còn `Message` là tiếng Việt cho người dùng. Thông báo sẽ đổi theo thời
+gian; mã thì phải giữ nguyên để gom số liệu — ví dụ "sau khi nâng ngưỡng, bao nhiêu tệp
+rơi vào `QUALITY_FLOOR_NOT_MET`".
+
+`SOURCE_ALREADY_EFFICIENT` đã khai báo nhưng **chưa dùng tới**: ở 5A kết luận đó chỉ
+suy ra được sau khi đã nén. Nó là kết luận của 5B, khi `ORIGINAL` thành ứng viên ngang
+hàng.
+
+Cả ba trường mới (`QualityP5`, `DecisionReason`, và `QualityScore` đã có sẵn) đều được
+lưu vào `SessionStore.Project` — trước đó `QualityP5` và `DecisionReason` rơi mất khi
+đóng ứng dụng.
+
+### Ngưỡng không ngồi rải trong mã
+
+`MinSavingPercent` đã nằm trong cấu hình và **đã được dùng** trước đây; 5A không thêm
+hằng số ma. `QualityCheckEnabled` và `QualityCheckWindowSeconds` cũng nằm trong
+`AppConfig`. `QualityCheckWindowSeconds` mặc định 3 giây là **chỗ dừng tạm**, ghi rõ là
+vậy trong mã: chưa có số liệu đo để biết đo bao nhiêu là đủ.
+
+Không đặt ngưỡng tiết kiệm phụ thuộc mode ở 5A, vì chưa có số đo chứng minh con số nào
+hợp lý. Việc đó thuộc 5B.
+
+### Kiểm chứng trên tệp thật
+
+```
+1. Clip anime đã nén sẵn (copy nguyên 1,44 MB)
+   -> giữ nguyên bản gốc, VMAF 68,17, QUALITY_FLOOR_NOT_MET, 0 tệp tạm sót
+
+2. Clip bị ép cứng 10,18 MB, chế độ Cân bằng
+   -> giữ nguyên bản gốc, VMAF 85,97 / P5 83,28, QUALITY_FLOOR_NOT_MET
+
+3. Clip nén sạch 5,26 MB, chế độ Mạnh
+   -> giữ nguyên bản gốc, VMAF 78,95 / P5 74,89, QUALITY_FLOOR_NOT_MET
+```
+
+Invariant `NewSize <= OldSize` được kiểm bằng test duyệt hết tổ hợp 6×6 cặp kích thước,
+và kiểm lại trên cả ba tệp thật.
+
+### Kết quả này phải nói thẳng: hiện tại KHÔNG nén được gì
+
+Cả ba tệp đều bị từ chối. Ở chế độ Cân bằng, ứng viên của bộ lập kế hoạch hiện tại đo ra
+VMAF 85,97 — dưới ngưỡng 89. Nói cách khác, **bộ lập kế hoạch đang nén mạnh hơn mức ngưỡng
+chất lượng cho phép**.
+
+Đây là hệ quả đúng như mong đợi của 5A: nó chặn hại trước, rồi 3 và 4 sẽ sửa chỗ nén quá
+tay bằng cách **tìm** tham số thoả ngưỡng thay vì đoán một lần. Không sửa bằng cách nới
+ngưỡng — làm vậy là bịa số đo.
+
+Cho tới khi 3 và 4 xong, hành vi đúng của ứng dụng là: **giữ nguyên tệp và nói rõ vì sao**.

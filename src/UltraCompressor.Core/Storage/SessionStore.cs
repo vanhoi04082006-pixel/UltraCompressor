@@ -83,6 +83,8 @@ public sealed class SessionStore(string path) : IDisposable
         ElapsedSeconds = item.ElapsedSeconds,
         Message = item.Message,
         QualityScore = item.QualityScore,
+        QualityP5 = item.QualityP5,
+        DecisionReason = item.DecisionReason,
         DurationSeconds = item.DurationSeconds,
     };
 }

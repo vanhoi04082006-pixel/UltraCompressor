@@ -37,6 +37,16 @@ public sealed record MediaInfo
 
     public string? AudioCodec { get; init; }
 
+    /// <summary>
+    /// Bitrate của riêng luồng âm thanh, kbit/s. Null nếu probe không đọc được.
+    ///
+    /// <para>Tách khỏi <see cref="BitrateKbps"/> — trường đó là bitrate TỔNG của cả tệp, dùng
+    /// cho mật độ bit. Dùng nhầm nó làm phần âm thanh của ước lượng dung lượng làm phần đó
+    /// lớn lên gấp nhiều lần, và chỉ sai theo một hướng: luôn thừa, đủ để loại cả ứng viên
+    /// tốt.</para>
+    /// </summary>
+    public double? AudioBitrateKbps { get; init; }
+
     /// <summary>Số kênh âm thanh. 2 là stereo, 1 là mono, 6 là 5.1.</summary>
     public int? AudioChannels { get; init; }
 
@@ -139,6 +149,7 @@ public sealed partial class MediaProbe(string ffmpegPath)
             AudioCodec = ParseCodec(audioLine),
             AudioChannels = ParseChannels(audioLine),
             AudioSampleRate = ParseSampleRate(audioLine),
+            AudioBitrateKbps = FFmpegOutputParser.FindAudioStreamBitrateKbps(lines),
             BitDepth = ParseBitDepth(videoLine),
             PixelFormat = ParseToken(videoLine, "yuv", "gray", "rgb", "gbr"),
             IsStillImage = videoLine is null,

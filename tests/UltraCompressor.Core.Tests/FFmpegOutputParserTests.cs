@@ -128,6 +128,58 @@ public class FFmpegOutputParserTests
     }
 
     [Fact]
+    public void Doc_bitrate_am_thanh_phai_la_rieng_luong_am_thanh()
+    {
+        // Ba con so khac nhau, va hay nham sai nhat la tong voi am thanh:
+        //   1629 kb/s  = TONG ca tep
+        //   1374 kb/s  = rieng luong VIDEO
+        //   128  kb/s  = rieng luong AUDIO
+        //
+        // Dung 1629 lam bitrate am thanh tren tep 300s cong them 83 MB vao uoc luong, du
+        // de loai ca ung vien tot. Day la ly do phai doc rieng, khong suy ra tu tong.
+        var stderr = new[]
+        {
+            "  Duration: 00:05:00.00, start: 0.000000, bitrate: 1629 kb/s",
+            "  Stream #0:0: Video: h264 (Main), 1920x1080, 1374 kb/s, 23.98 fps",
+            "  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s",
+        };
+
+        Assert.Equal(128, FFmpegOutputParser.FindAudioStreamBitrateKbps(stderr));
+        Assert.NotEqual(FFmpegOutputParser.FindInputBitrateKbps(stderr),
+            FFmpegOutputParser.FindAudioStreamBitrateKbps(stderr));
+    }
+
+    [Fact]
+    public void Doc_bitrate_am_thanh_tra_null_khi_ffmpeg_khong_in()
+    {
+        // ffmpeg thuong BO TRONG truong do voi AAC trong MP4. Khong co so do la 0 — 0 se
+        // bi hieu la "khong co am thanh" va uoc luong se mat het phan am thanh.
+        var stderr = new[]
+        {
+            "  Duration: 00:05:00.00, start: 0.000000, bitrate: 1629 kb/s",
+            "  Stream #0:0: Video: h264 (Main), 1920x1080, 1374 kb/s, 23.98 fps",
+            "  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp",
+        };
+
+        Assert.Null(FFmpegOutputParser.FindAudioStreamBitrateKbps(stderr));
+    }
+
+    [Fact]
+    public void Doc_bitrate_am_thanh_chi_doc_dung_luong_am_thanh()
+    {
+        // Regex phai khop dung loai luong. Neu no chap nhan ca hai, thi "audio" se lam
+        // chay bang chieu video — va phan am thanh uoc ra cong bang phan video.
+        var stderr = new[]
+        {
+            "  Stream #0:0: Video: h264 (Main), 1920x1080, 1374 kb/s, 23.98 fps",
+            "  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s",
+        };
+
+        Assert.Equal(1374, FFmpegOutputParser.FindVideoStreamBitrateKbps(stderr));
+        Assert.Equal(128, FFmpegOutputParser.FindAudioStreamBitrateKbps(stderr));
+    }
+
+    [Fact]
     public void Duration_khong_co_thi_tra_null()
     {
         // ffmpeg in "Duration: N/A" với nhiều định dạng. Bản gốc xử lý sai chỗ này và

@@ -151,6 +151,31 @@ public static partial class FFmpegOutputParser
         return null;
     }
 
+    /// <summary>
+    /// Tìm bitrate của riêng luồng audio từ dòng mô tả luồng.
+    ///
+    /// <para>Cần hàm riêng vì <see cref="FindInputBitrateKbps"/> trả về bitrate <b>tổng</b>
+    /// của cả tệp, và <see cref="FindVideoStreamBitrateKbps"/> trả về phần video. Không có
+    /// con số nào trong hai cái đó là phần âm thanh. Dùng nhầm bitrate tổng làm phần âm
+    /// thanh của ước lượng dung lượng lớn lên gấp nhiều lần — trên một tệp 300 giây, lấy
+    /// nhầm 2.346 kb/s thay vì 128 kb/s là cộng thêm 83 MB vào ước lượng, đủ điểm loại cả
+    /// ứng viên tốt.</para>
+    ///
+    /// <para>Trả null khi dòng luồng audio không ghi bitrate (phổ biến với AAC trong MP4,
+    /// vì ffmpeg thường chỉ in tốc độ dạng "kb/s" trần khi có, và bỏ trống khi không).</para>
+    /// </summary>
+    public static double? FindAudioStreamBitrateKbps(IReadOnlyList<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (!HasAudioStreamRegex().IsMatch(line)) continue;
+            var value = ParseStreamBitrateKbps(line);
+            if (value is > 0) return value;
+        }
+
+        return null;
+    }
+
     [GeneratedRegex(@"(?<w>\d{2,5})x(?<h>\d{2,5})")]
     private static partial Regex DimensionRegex();
 

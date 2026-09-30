@@ -57,17 +57,47 @@ public sealed record SizeEstimate
 ///
 /// <para>Khi thiếu metadata, hàm trả kèm <see cref="SizeEstimate.IsReliable"/> = false và
 /// nêu rõ đang giả định gì, thay vì trả một con số trông chắc chắn.</para>
+///
+/// <para><b>ĐÃ HIỆU CHỈNH trên encode toàn tệp thật, và kết quả phải được đọc trước khi
+/// dùng.</b> Nguồn thử: 1920x1080 h264, 120,1s, 34,0 MB, ba đoạn 3,0s, x264 preset medium,
+/// cùng cấu hình cho phần thử nghiệm và cho encode toàn tệp:</para>
+///
+/// <list type="table">
+/// <item><term>crf16</term><description>ước 78,4 MB — thật 61,9 MB — thừa 26,7%</description></item>
+/// <item><term>crf24</term><description>ước 34,4 MB — thật 28,0 MB — thừa 23,0%</description></item>
+/// <item><term>crf32</term><description>ước 14,4 MB — thật 12,8 MB — thừa 12,4%</description></item>
+/// </list>
+///
+/// <para><b>Sai lệch KHÔNG phải một hệ số cố định</b> (12,4% → 26,7%), nên không hiệu chỉnh
+/// được bằng một hằng số. Nhưng thứ tự xếp hạng được giữ đúng trên cả ba ứng viên — và thứ tự
+/// xếp hạng là điều duy nhất hàm này được phép làm.</para>
+///
+/// <para><b>Vì sao lấy đoạn đắc nhất chứ không lấy trung bình.</b> Trung bình cho sai lệch
+/// gần tương đương (thiếu 21–26%) nhưng <b>sai theo hướng ngược lại</b>: thiếu thì báo cáo
+/// thấy tệp cuối nhỏ hơn thực tế, tức nói với người dùng rằng ta tiết kiệm được nhiều hơn
+/// sự thật. Thừa thì báo cáo bi tiết kiệm — ít đẹp hơn nhưng không nói dối. Ước lượng thừa là
+/// lựa chọn có ý thức, không phải thiếu cẩn thận.</para>
+///
+/// <para><b>Phần vỏ container không quan trọng.</b> Giả định 1.024 B là 0,0016% dung lượng
+/// tệp thật trên tệp đã đo. Giữ hằng số vì nó có tên và được ghi rõ là sơ bộ, không phải vì
+/// nó quyết định điều gì.</para>
+///
 /// </summary>
 public static class SizeEstimator
 {
     /// <summary>
-    /// Phần vỏ container ước lượng cho mỗi đoạn ghép, byte.
+    /// Phần vỏ container của TỆP ĐẦU RA, byte.
     ///
-    /// <para>Con số này <b>chưa được đo</b> trong kho — không có tệp nào đủ nhiều đoạn để
-    /// lấy trung bình. Giữ một giá trị nhỏ có tên và được ghi rõ là sơ bộ, tốt hơn là bỏ
-    /// trống rồi âm thầm thiếu. Khi có dữ liệu thay số này.</para>
+    /// <para>Đây là hằng số trên mỗi tệp, KHÔNG nhân với số đoạn thử nghiệm. Bản trước
+    /// nhân với số đoạn, dựa trên suy luận rằng vỏ container tính theo từng đoạn ghép —
+    /// nhưng tệp đầu ra là MỘT tệp, và con số phần vỏ không phụ thuộc vào việc ta đã thử
+    /// nghiệm bao nhiêu ứng viên. Ba đoạn thử nghiệm không làm tệp đầu ra nặng thêm ba lần
+    /// phần vỏ.</para>
+    ///
+    /// <para>Con số này <b>chưa được đo</b> trong kho. Giữ một giá trị nhỏ có tên và được
+    /// ghi rõ là sơ bộ, tốt hơn là bỏ trống rồi âm thầm thiếu. Khi có dữ liệu thay số này.</para>
     /// </summary>
-    public const long ContainerBytesPerSegmentAssumed = 1024;
+    public const long ContainerBytesAssumed = 1024;
 
     /// <summary>
     /// Ước lượng từ các clip thử nghiệm của một ứng viên.
@@ -110,8 +140,12 @@ public static class SizeEstimator
         }
 
         // Dùng THỬ NGHIỆM SẮC NHẤT thay vì trung bình. Một clip rẻ bất thường (cảnh tĩnh)
-        // kéo trung bình xuống, và ứng viên trông nhỏ hơn thực tế. Clip đắc nhất là ước lượng
-        // thận trọng hơn: ước to hơn một chút còn hơn chọn nhầm ứng viên tệ.
+        // kéo trung bình xuống, và ứng viên trông nhỏ hơn thực tế.
+        //
+        // Lý do chọn hướng THỪA, đã đo trên encode toàn tệp thật: trung bình thiếu 21–26%,
+        // đoạn đắc nhất thừa 12–27%. Sai số gần bằng nhau, nhưng hướng thì không tương đương.
+        // Thiếu thì báo cáo thấy tệp cuối nhỏ hơn thực tế, tức nói với người dùng ta tiết
+        // kiệm được nhiều hơn sự thật. Thừa thì báo cáo bi tiết kiệm.
         var reference = usable
             .OrderByDescending(a => a.Bytes / a.ReferenceWindow.LengthSeconds)
             .First();
@@ -126,7 +160,9 @@ public static class SizeEstimator
             $"video: {videoBytesPerSecond.ToString("0", CultureInfo.InvariantCulture)} B/s "
                 + $"lấy từ đoạn đắc nhất ({reference.Role}, "
                 + $"{reference.Bytes} B / {reference.ReferenceWindow.LengthSeconds.ToString("0.0", CultureInfo.InvariantCulture)}s) "
-                + $"; {usable.Count} đoạn dùng để so sánh, không lấy trung bình");
+                + $"; {usable.Count} đoạn dùng để so sánh, không lấy trung bình — "
+                + "đo trên encode toàn tệp thật, hướng này THỪA 12–27%, và thừa thì báo cáo "
+                + "bi tiết kiệm chứ không nói dối rằng ta tiết kiệm nhiều hơn sự thật");
 
         var reliable = true;
 
@@ -153,11 +189,11 @@ public static class SizeEstimator
             assumptions.Add("audio: nguồn không có âm thanh");
         }
 
-        // Vỏ container: ngỏ ý một phần nhỏ, chưa đo.
-        var containerBytes = ContainerBytesPerSegmentAssumed * Math.Max(1, artifacts.Count);
+        // Vỏ container: một tệp đầu ra thì một phần vỏ, bất kể đã thử nghiệm bao nhiêu ứng
+        // viên và đã cắt bao nhiêu đoạn.
+        var containerBytes = ContainerBytesAssumed;
         assumptions.Add(
-            $"container: {ContainerBytesPerSegmentAssumed} B × {Math.Max(1, artifacts.Count)} đoạn — "
-            + "GIÁ ĐỊNH SƠ BỘ, chưa đo trong kho");
+            $"container: {ContainerBytesAssumed} B cho ca tệp đầu ra — GIÁ ĐỊNH SƠ BỘ, chưa đo trong kho");
 
         if (duration <= 0)
         {

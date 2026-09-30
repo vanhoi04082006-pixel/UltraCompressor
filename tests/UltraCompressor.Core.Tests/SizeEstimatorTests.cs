@@ -191,6 +191,22 @@ public class SizeEstimatorTests
     }
 
     [Fact]
+    public void Pho_v_container_khong_duoc_nhan_voi_so_doan_thu_nghiem()
+    {
+        // Tệp đầu ra là MỘT tệp. Thử nghiệm ba ứng viên hay một ứng viên không làm phần vỏ
+        // container của tệp đó nặng thêm. Bản trước nhân với số đoạn dựa trên suy luận rằng
+        // vỏ tính theo từng đoạn ghép — điều không có cơ sở nào ở đây.
+        var one = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0)], 100, null, false);
+        var many = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0), Artifact(300_000, 3.0), Artifact(300_000, 3.0)],
+            100, null, false);
+
+        Assert.Equal(one.ContainerBytes, many.ContainerBytes);
+        Assert.Equal(SizeEstimator.ContainerBytesAssumed, one.ContainerBytes);
+    }
+
+    [Fact]
     public void Phan_tram_tiet_kiem_am_nghia_la_uoc_lon_hon_nguon()
     {
         var result = SizeEstimator.Estimate(

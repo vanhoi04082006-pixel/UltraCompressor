@@ -58,7 +58,7 @@ public static class ProcessRunner
         Action<string>? onStdoutLine = null,
         Action<string>? onStderrLine = null,
         CancellationToken token = default)
-        => await RunCoreAsync(fileName, arguments, onStdoutLine, onStderrLine, timeout: null, token);
+        => await RunCoreAsync(fileName, arguments, onStdoutLine, onStderrLine, timeout: null, workingDirectory: null, token);
 
     /// <summary>Chạy lệnh ngắn có giới hạn thời gian — dùng cho kiểm tra công cụ.</summary>
     public static async Task<ProcessResult> RunAsync(
@@ -66,7 +66,16 @@ public static class ProcessRunner
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         CancellationToken token = default)
-        => await RunCoreAsync(fileName, arguments, null, null, timeout, token);
+        => await RunCoreAsync(fileName, arguments, null, null, timeout, null, token);
+
+    /// <summary>Chạy lệnh ngắn trong thư mục xác định — dùng khi ffmpeg phải ghi tệp ra đĩa.</summary>
+    public static Task<ProcessResult> RunAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        string workingDirectory,
+        CancellationToken token = default)
+        => RunCoreAsync(fileName, arguments, null, null, timeout, workingDirectory, token);
 
     /// <summary>Chạy không cần đọc output — dùng cho các lệnh kiểm tra nhanh.</summary>
     public static Task<ProcessResult> RunAsync(
@@ -217,6 +226,7 @@ public static class ProcessRunner
         Action<string>? onStdoutLine,
         Action<string>? onStderrLine,
         TimeSpan? timeout,
+        string? workingDirectory,
         CancellationToken token)
     {
         var startInfo = new System.Diagnostics.ProcessStartInfo
@@ -230,6 +240,16 @@ public static class ProcessRunner
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+
+        // ffmpeg tự phân giải đường dẫn tương đối theo thư mục làm việc, nên đây là cách
+        // duy nhất yên ổn khi một tùy chọn bên trong -lavfi cần ghi ra tệp. Đường dẫn tuyệt
+        // đối kiểu Windows không dùng được ở đó: dấu `:` phá vỡ cú pháp filtergraph, và
+        // các kiểu escape thử đều bị ffmpeg bỏ qua lặng lẽ — exit 0, không lỗi, không
+        // có tệp log.
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            startInfo.WorkingDirectory = workingDirectory;
+        }
 
         // ArgumentList tự escape — tránh lỗi quote tay như bản gốc.
         foreach (var arg in arguments)

@@ -468,3 +468,98 @@ Kiểm chứng bằng engine + ffmpeg thật trên clip cắt từ tệp thật:
    giu ket qua, 2 tep .bak -> nap tu dia ra trang thai "Cho" -> chay tiep toi het
    het .bak sau khi tu duyet
 ```
+
+## Cổng chất lượng: đo được thì mới dám nén
+
+Trước đây cả pipeline không hề đo chất lượng: đọc metadata, đo SI/TI, lên một kế hoạch,
+nén một lần, xong. "Chất lượng" chỉ là thứ giả định suy ra từ CRF.
+
+Nay có `QualityProbe`: đo VMAF (kèm SSIM trong cùng một lượt) trên một đoạn đại diện,
+và `QualityPolicy` đặt ngưỡng cứng theo mode.
+
+### SSIM không dùng làm cổng — và đây là do đo, không phải do tài liệu
+
+Ứng viên VMAF **72,08** (đã rõ là hỏng) vẫn cho SSIM **0,9887**. Ngưỡng SSIM kiểu đặc
+tả 0,985 cho qua tới mức ứng viên tệ, tức là cổng không tồn tại. SSIM vẫn được đo và ghi
+lại để chẩn đoán, nhưng `Accepts` chỉ nhìn VMAF.
+
+Còn một ví dụ nữa, đo lúc dựng: ứng viên 1080p bị thu xuống 720p rồi so ở 1080p cho
+VMAF 78,2 / SSIM 0,9972. Chỉ dùng SSIM thì coi như đạt và chấp nhận mất 56% chiều cao.
+
+### P5 là bắt buộc, và khoảng cách mean − P5
+
+Trên clip thật, `mean − P5` dao động 1,2…7 điểm, còn `min` thấp hơn nữa (hàng x265 CRF
+30: mean 88,36, min 83,85). Chỉ nhìn mean thì một tệp vài cảnh hỏng vẫn đạt, vì đa số
+khung còn lại đẹp. Ngưỡng vì thế là cặp, và `P5` thấp hơn `mean` khoảng 4 điểm —
+đúng khoảng cách quan sát được.
+
+### Model VMAF phải ghim, và bản dựng hiện tại không chạy được v1
+
+Model v1 của Netflix (6/2026) cần 4 feature extractor. Bản ffmpeg 8.0.1 đóng kèm chỉ có
+`cambi`; thiếu `speed`, `adm3`, `motion3`:
+
+```
+libvmaf ERROR could not initialize feature extractor "Cambi_feature_cambi_score"
+```
+
+Tải model v1 vào repo **không giải quyết được** — file đúng, binary thiếu feature. Nên
+nay dùng `vmaf_v0.6.1neg` (bản dành cho tối ưu encoder) và `VmafModels` chỉ liệt kê
+model **đã chạy thật**. Khi nào đổi bản dựng, chỉ cần bổ sung một mục và thả file vào
+`tools/vmaf/`; bảng ngưỡng v1 đã viết sẵn trong `QualityPolicy` để bật lại ngay.
+
+Vì vậy ngưỡng **không** chép từ đặc tả (bản đó viết cho v1, cho điểm cao hơn ở cùng mức
+chất lượng). Số trong `QualityPolicy` rút từ lần quét thật, ghi đầy đủ ở
+`docs/QUALITY-CALIBRATION.md`:
+
+| Mode | mean | P5 |
+|---|---:|---:|
+| Nhẹ | 93 | 89 |
+| Cân bằng | 89 | 85 |
+| Mạnh | 84 | 80 |
+
+### Ba điều kiện đo, sai là ra số vô nghĩa
+
+1. **Hai luồng phải cùng kích thước.** Ứng viên bị thu nhỏ được phóng lại về đúng kích
+   thước hiển thị của nguồn, để mất chiều không gian bị trừ điểm đúng như nó đáng bị trừ.
+2. **Thứ tự là `[cái bị nén][bản gốc]`** và phép so không đối xứng. Cùng một cặp tệp,
+   đảo thứ tự cho 78,18 và 86,63. Sai thứ tự thì mọi cổng chất lượng đảo ngược mà không
+   báo lỗi. Kiểm bằng tính đơn điệu: ứng viên tốt phải điểm cao hơn, và khoảng cách
+   phải rộng hơn (23,2 so với 15,0 khi đúng thứ tự).
+3. **Phải tự tính P5 từ log JSON.** libvmaf chỉ in điểm gộp, mà điểm gộp không có phân
+   vị thấp.
+
+### Hai lỗi im lặng lộ ra khi hiệu chỉnh
+
+Cả hai đều không báo lỗi, chỉ cho kết quả sai — loại lỗi tệ nhất.
+
+**`log_path` không nhận đường dẫn tuyệt đối kiểu Windows.** Dấu `:` trong `C:` phá vỡ
+cú pháp filtergraph, và bốn kiểu escape (`C\:/...`, trong dấu nháy đơn, gạch chéo ngược,
+không escape) đều bị bỏ qua lặng lẽ: exit 0, không dòng lỗi, không có tệp log. Cách
+đúng là cho ffmpeg chạy với thư mục làm việc là thư mục tạm và truyền tên tệp trần.
+`ProcessRunner.RunAsync` nay có tham số `workingDirectory` cho việc này.
+
+**`log_path` phải kèm `log_fmt=json`.** Không có nó, tệp tên đuôi `.json` vẫn nhận nội
+dung XML và `JsonDocument.Parse` ném lỗi.
+
+Ngoài ra một lần đo hỏng vì hết giờ ở cảnh chuyển động mạnh 1080p với x265 CRF 18; mốc
+120 giây nâng lên 240.
+
+### Phát hiện quan trọng nhất: thư viện này không nên nén lại
+
+`bpppf` của hai tệp đo là **0,0105** và **0,0087** — ở 1080p24 tương đương khoảng
+520 kbit/s cho cả tệp 30 phút. Nhưng ứng viên HEVC chất lượng tốt nhất trong bảng đo là
+bpp 0,056 (CRF 18) và 0,023 (CRF 26); phải tới CRF 38 (VMAF 72, đã hỏng) mới ngang bằng
+nguồn.
+
+Nghĩa là **mọi mức CRF còn lại chất lượng đều cho tệp lớn hơn bản gốc**. Nguồn đã nén
+sẵn tốt hơn bất cứ lần nén lại nào ở cùng độ phân giải. (HEVC vẫn thắng H.264 khoảng
+50% ở cùng CRF — nhưng thua chính tệp nguồn.)
+
+Kết quả đúng với thư viện này là **không nén gì cả**. Đây là quy tắc `RETURN_ORIGINAL`
+trong đặc tả, và ở đây nó là yêu cầu chứ không phải tuỳ chọn: không có nó, công cụ sẽ
+**làm phình** tệp của người dùng.
+
+### Trạng thái
+
+`QualityProbe` + `QualityPolicy` + `QualityLog` đã dùng thật và đo thật; 280 test. Chưa
+nối vào `VideoPipeline` — hiện tầng đo chỉ chờ để vòng tìm nghiệm ở giai đoạn sau dùng.

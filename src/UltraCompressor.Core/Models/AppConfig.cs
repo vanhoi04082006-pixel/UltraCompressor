@@ -42,6 +42,80 @@ public sealed class AppConfig
     /// </summary>
     public double QualityCheckWindowSeconds { get; set; } = 3.0;
 
+    // ---------------------------------------------------------------- chọn đoạn đại diện
+
+    /// <summary>Số khung hình lấy mẫu mỗi giây khi quét đặc tính tệp.</summary>
+    public double AnalysisSampleFps { get; set; } = 4.0;
+
+    /// <summary>
+    /// Độ dài mỗi mẫu quét (giây). Ngắn để rẻ, đủ dài để lấy được chuyển động.
+    /// </summary>
+    public double AnalysisSampleSeconds { get; set; } = 2.0;
+
+    /// <summary>
+    /// Số mẫu ít nhất và nhiều nhất khi quét. Số mẫu thực tế tăng theo log thời lượng:
+    /// tệp ngắn không cần quét nhiều, tệp dài thì một mẫu phải phủ ít thời gian hơn.
+    /// </summary>
+    public int AnalysisMinSamples { get; set; } = 8;
+
+    public int AnalysisMaxSamples { get; set; } = 24;
+
+    /// <summary>
+    /// Số đoạn đại diện mong muốn. Không phải con số cứng của thuật toán: thuật toán
+    /// chọn nhiều nhất số này đoạn, và có thể chọn ít hơn khi tệp không có đủ kiểu nội
+    /// dung khác nhau.
+    /// </summary>
+    public int TargetWindowCount { get; set; } = 3;
+
+    /// <summary>Trần cứng, để một cấu hình sai không khiến công cụ encode hàng chục cửa sổ.</summary>
+    public int MaxWindowCount { get; set; } = 5;
+
+    /// <summary>Độ dài mỗi đoạn được chọn để đo chất lượng (giây).</summary>
+    public double WindowDurationSeconds { get; set; } = 3.0;
+
+    /// <summary>
+    /// Hai đoạn cách nhau dưới ngưỡng này được coi là trùng nhau. Không có khoảng cách
+    /// tối thiểu thì thuật toán dễ chọn ba cửa sổ nằm trong cùng một cảnh.
+    /// </summary>
+    public double MinWindowSeparationSeconds { get; set; } = 30.0;
+
+    /// <summary>
+    /// Cỡ chuyển động được coi là "khác biệt đáng kể", tính theo độ lệch giữa mẫu cao
+    /// nhất và mẫu trung vị sau khi chuẩn hoá. Tệp gần như tĩnh sẽ không có đoạn
+    /// HIGH_MOTION nào — đúng, vì tạo ra nó chỉ là bịa.
+    /// </summary>
+    public double MotionSpreadThreshold { get; set; } = 0.15;
+
+    /// <summary>
+    /// Mốc chuyển động <b>tuyệt đối</b> trên thang chênh luma 0–255 của ffmpeg, bên dưới
+    /// đây coi như tệp không có chuyển động đáng kể.
+    ///
+    /// <para>Cần mốc này vì chuẩn hoá tương đối luôn khuếch đại nhiễu thành [0,1]: một
+    /// tệp gần như tĩnh mà YDIF dao động 0,18–0,22 sẽ ra "biến thiên toàn phạm vi" và
+    /// sinh ra một đoạn HIGH_MOTONG hoàn toàn vô nghĩa. Chuẩn hoá tương đối quyết định
+    /// <i>thứ tự</i>; mốc tuyệt đối quyết định <i>vai trò có tồn tại hay không</i>.</para>
+    ///
+    /// <para>Mốc 1,0 là khoảng 4% dải thực tế đo được trên thư viện người dùng
+    /// (0,00 đến 23,54), và bằng khoảng một bậc luma. Yêu cầu mở rộng tập mẫu trước khi
+    /// coi con số này là chính thức — xem <c>docs/QUALITY-CALIBRATION.md</c>.</para>
+    /// </summary>
+    public double MotionAbsoluteFloor { get; set; } = 1.0;
+
+    /// <summary>
+    /// Mốc chi tiết tuyệt đối, trên thang [0,1] mà ffmpeg đã quy đổi sẵn cho
+    /// <c>normalized_entropy</c>. Dải này đã chuẩn hoá nên không cần hiệu chỉnh thêm.
+    /// </summary>
+    public double SpatialAbsoluteFloor { get; set; } = 0.05;
+
+    /// <summary>Trọng số cộng dồn ra độ khó tổng thể. Xem <c>RepresentativeWindowSelector</c>.</summary>
+    public double ComplexityWeightSpatial { get; set; } = 0.35;
+
+    public double ComplexityWeightMotion { get; set; } = 0.30;
+
+    public double ComplexityWeightScene { get; set; } = 0.15;
+
+    public double ComplexityWeightSharpness { get; set; } = 0.20;
+
     /// <summary>Bỏ qua tệp nhỏ hơn mức này. 0 = không bỏ qua.</summary>
     public long MinFileSizeBytes { get; set; }
 

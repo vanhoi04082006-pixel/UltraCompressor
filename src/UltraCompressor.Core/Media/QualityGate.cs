@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using UltraCompressor.Core.Models;
 
@@ -68,12 +69,14 @@ public sealed class QualityGate
 {
     private readonly AppConfig _config;
     private readonly QualityProbe? _probe;
+    private readonly TimelineScanner? _scanner;
     private readonly VmafModel _model = VmafModels.Default;
 
-    public QualityGate(AppConfig config, QualityProbe? probe)
+    public QualityGate(AppConfig config, QualityProbe? probe, TimelineScanner? scanner = null)
     {
         _config = config;
         _probe = probe;
+        _scanner = scanner;
     }
 
     /// <summary>Ngưỡng chất lượng của mode, theo model sẽ dùng để đo.</summary>
@@ -138,35 +141,83 @@ public sealed class QualityGate
             return Accept(level, null);
         }
 
-        var window = PickWindow(durationSeconds, _config.QualityCheckWindowSeconds);
-
-        var sample = await _probe.MeasureAsync(
-            sourcePath, candidatePath, window, width, height,
-            candidateWidth: width, candidateHeight: height, model: _model, token).ConfigureAwait(false);
-
-        if (sample is null)
-        {
-            // Không đo được KHÔNG phải là dữ liệu để loại tệp. Công cụ hỏng hay quá giờ
-            // thì mọi tệp video sẽ bị bỏ nếu coi như thất bại — và người dùng sẽ không
-            // nén được gì mà không hiểu vì sao.
-            return Accept(level, null);
-        }
-
-        var quality = sample.Sample;
+        // Chọn đoạn theo nội dung, không phải theo phần trăm thời lượng. Trước đây chỉ lấy
+        // một đoạn ở giữa tệp: với tệp mà đầu là cảnh tĩnh và giữa là cảnh cháy, đo giữa
+        // thì hỏng, đo đầu thì qua — cả hai đều không đại diện cho tệp.
+        var selection = await SelectWindowsAsync(sourcePath, kind, durationSeconds, token).ConfigureAwait(false);
         var floor = FloorFor(level);
 
-        if (!floor.Accepts(quality))
+        foreach (var window in selection.Windows)
         {
+            if (token.IsCancellationRequested) break;
+
+            var measured = await _probe.MeasureAsync(
+                sourcePath, candidatePath, new TimeWindow(window.StartSeconds, window.DurationSeconds),
+                width, height, candidateWidth: width, candidateHeight: height, model: _model, token)
+                .ConfigureAwait(false);
+
+            if (measured is null) continue;
+            if (floor.Accepts(measured.Sample)) continue;
+
+            var quality = measured.Sample;
             return GateDecision.Reject(
                 DecisionReasons.QualityFloorNotMet,
                 SkipReason.BelowMinSaving,
-                $"Chất lượng {Format.Percent(quality.Mean / 100)} (ngưỡng {floor}) dù đã tiết kiệm "
-                + $"{Format.Percent(saving)} — giữ bản gốc.",
+                $"Đoạn {window.Role} lúc {window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}s "
+                + $"chỉ đạt VMAF {quality.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}) — giữ bản gốc.",
                 quality);
         }
 
-        return Accept(level, quality);
+        // Không đo được đoạn nào thì KHÔNG loại. Công cụ hỏng hay quá giờ thì mọi tệp
+        // video sẽ bị bỏ nếu coi như thất bại, và người dùng không nén được gì.
+        return Accept(level, null);
     }
+
+    /// <summary>
+    /// Quét rồi chọn đoạn. Bọc thử: mọi lỗi quét rơi về chiến lược vị trí chia đều.
+    /// </summary>
+    private async Task<WindowSelection> SelectWindowsAsync(
+        string sourcePath, MediaKind kind, double? durationSeconds, CancellationToken token)
+    {
+        _lastDuration = durationSeconds is { } d ? TimeSpan.FromSeconds(d) : null;
+
+        if (kind != MediaKind.Video || _scanner is null)
+        {
+            _lastStats = new ScanStats(0, 0, TimeSpan.Zero, FellBack: true);
+            return RepresentativeWindowSelector.Fallback(_lastDuration, _config, _lastStats);
+        }
+
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            var samples = await _scanner.ScanAsync(sourcePath, _lastDuration, _config, token).ConfigureAwait(false);
+            watch.Stop();
+
+            _lastStats = new ScanStats(
+                SamplesRequested: TimelineScanner.SampleCountFor(_lastDuration, _config),
+                SamplesMeasured: samples.Count,
+                Duration: watch.Elapsed,
+                FellBack: false);
+
+            return RepresentativeWindowSelector.Select(samples, _lastDuration, _config, _lastStats);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            _lastStats = new ScanStats(0, 0, TimeSpan.Zero, FellBack: true);
+            return RepresentativeWindowSelector.Fallback(_lastDuration, _config, _lastStats);
+        }
+    }
+
+    private TimeSpan? _lastDuration;
+
+    /// <summary>Số liệu lần chọn đoạn gần nhất, để ghi log và chẩn đoán.</summary>
+    public ScanStats LastSelection => _lastStats;
+
+    private ScanStats _lastStats = ScanStats.None;
 
     private static GateDecision Accept(CompressionLevel level, QualitySample? quality) =>
         GateDecision.Keep(
@@ -176,19 +227,4 @@ public sealed class QualityGate
                 ? null
                 : $"VMAF {quality.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {QualityPolicy.For(level, VmafModels.Default)})",
             quality);
-
-    /// <summary>
-    /// Chọn đoạn đo một cách tất định: lấy giữa tệp.
-    ///
-    /// <para>Đo đầu tệp là chỗ dễ nhầm nhất — thường là logo, credit, hoặc một cảnh tĩnh
-    /// ngắn, đo ở đó thì mọi tệp đều ra cùng một kết luận. Giai đoạn sau sẽ thay bằng bộ
-    /// chọn nhiều đoạn đại diện; hàm này giữ chỗ cho chỗ đó, và vẫn tất định nếu chưa có.</para>
-    /// </summary>
-    public static TimeWindow PickWindow(double? durationSeconds, double windowSeconds)
-    {
-        var length = Math.Max(0.5, windowSeconds);
-        var duration = durationSeconds is { } d && d > 0 ? d : length;
-        var start = Math.Max(0, (duration - length) / 2);
-        return new TimeWindow(start, Math.Min(length, duration));
-    }
 }

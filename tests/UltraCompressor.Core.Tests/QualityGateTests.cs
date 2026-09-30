@@ -163,41 +163,56 @@ public class QualityGateTests
     }
 
     // ---------------------------------------------------------------- chọn đoạn đo
-
     [Fact]
-    public void Chon_doan_do_lay_giua_tep()
+    public void Du_phong_khi_quet_hong_phao_vao_trong_tep()
     {
-        // Đầu tệp thường là logo hoặc credit — đo ở đó thì mọi tệp ra cùng một kết luận.
-        var window = QualityGate.PickWindow(durationSeconds: 600, windowSeconds: 3);
+        // Không đo được gì thì đứng ở vị trí chia đều, và tuyệt đối không vượt ra ngoài tệp.
+        var selection = RepresentativeWindowSelector.Fallback(
+            TimeSpan.FromSeconds(600), Config(), new ScanStats(0, 0, TimeSpan.Zero, true));
 
-        Assert.Equal(298.5, window.StartSeconds, 3);
-        Assert.Equal(3, window.LengthSeconds, 3);
+        Assert.True(selection.UsedFallback);
+        Assert.Equal(3, selection.Windows.Count);
+        foreach (var w in selection.Windows)
+        {
+            Assert.True(w.StartSeconds >= 0, $"bat dau {w.StartSeconds}");
+            Assert.True(w.EndSeconds <= 600.5, $"ket thuc {w.EndSeconds}");
+        }
     }
 
     [Fact]
-    public void Tep_ngan_hon_cua_so_do_thi_do_toan_bo()
+    public void Du_phong_tren_tep_ngan_thi_bi_it_vao_ranh()
     {
-        var window = QualityGate.PickWindow(durationSeconds: 1.5, windowSeconds: 3);
+        var selection = RepresentativeWindowSelector.Fallback(
+            TimeSpan.FromSeconds(1.5), Config(), new ScanStats(0, 0, TimeSpan.Zero, true));
 
-        Assert.Equal(0, window.StartSeconds, 3);
-        Assert.Equal(1.5, window.LengthSeconds, 3);
+        foreach (var w in selection.Windows)
+        {
+            Assert.True(w.StartSeconds >= 0, $"bat dau {w.StartSeconds}");
+            Assert.True(w.EndSeconds <= 1.5, $"ket thuc {w.EndSeconds}");
+        }
     }
 
     [Fact]
-    public void Chua_biet_thoi_luong_thi_do_tu_dau()
+    public void Du_phong_phai_noi_ro_la_dung_phong()
     {
-        var window = QualityGate.PickWindow(durationSeconds: null, windowSeconds: 2.5);
+        var selection = RepresentativeWindowSelector.Fallback(
+            TimeSpan.FromSeconds(600), Config(), new ScanStats(0, 0, TimeSpan.Zero, true));
 
-        Assert.Equal(0, window.StartSeconds, 3);
-        Assert.Equal(2.5, window.LengthSeconds, 3);
+        Assert.Contains("Quét đặc tính thất bại", selection.Windows[0].Reason);
     }
 
     [Fact]
-    public void Cua_so_do_phai_duoc_tinh_lai()
+    public void Du_phong_phai_tat_dinh()
     {
         // Cùng đầu vào phải cho cùng kết quả, không lệch theo thứ tự thực thi.
-        var a = QualityGate.PickWindow(600, 3);
-        var b = QualityGate.PickWindow(600, 3);
-        Assert.Equal(a, b);
+        var config = Config();
+        var a = RepresentativeWindowSelector.Fallback(TimeSpan.FromSeconds(600), config, ScanStats.None);
+        var b = RepresentativeWindowSelector.Fallback(TimeSpan.FromSeconds(600), config, ScanStats.None);
+
+        Assert.Equal(
+            a.Windows.Select(w => (w.StartSeconds, w.Role)),
+            b.Windows.Select(w => (w.StartSeconds, w.Role)));
     }
+
+    private static AppConfig Config() => new() { TargetWindowCount = 3, WindowDurationSeconds = 3 };
 }

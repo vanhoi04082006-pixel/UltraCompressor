@@ -642,3 +642,118 @@ tay bằng cách **tìm** tham số thoả ngưỡng thay vì đoán một lần
 ngưỡng — làm vậy là bịa số đo.
 
 Cho tới khi 3 và 4 xong, hành vi đúng của ứng dụng là: **giữ nguyên tệp và nói rõ vì sao**.
+
+## Giai đoạn 2 — RepresentativeWindowSelector: đoạn đại diện chọn theo nội dung
+
+Trước đây đo chất lượng lấy một đoạn **ở giữa tệp**. Với tệp mà đầu là cảnh tĩnh và
+giữa là cảnh cháy thì đo giữa thì hỏng, đo đầu thì qua — cả hai đều không đại diện cho
+tệp. Nay đoạn đo do nội dung quyết định.
+
+### Số đo quyết định thiết kế: seek thưa, không quét cả timeline
+
+Đo trên tệp 30 phút của người dùng:
+
+| Cách | Thời gian |
+|---|---:|
+| Giải mã toàn bộ, **không filter** | 93,2 s |
+| Giải mã toàn bộ + mọi filter | 111,8 s |
+| **Một cửa sổ 2 s qua seek** | **0,29–0,48 s** |
+
+Giải mã chiếm gần hết thời gian, nên quét cả timeline đắt hơn seek **khoảng 200 lần**, dù
+chỉ mở một tiến trình. Vì vậy `TimelineScanner` chạy N lần seek thưa, mỗi lần một cửa
+sổ ngắn:
+
+```
+-ffmpeg -ss <vị trí> -t 2 -i <tệp>
+  -vf "fps=4,scale=320:180:flags=bilinear,format=gray,
+       scdet=threshold=10,signalstats,entropy,blurdetect,
+       metadata=print:file=scan-<id>.txt"
+  -f null -
+```
+
+Năm tín hiệu lấy được trong **một lượt**: `normalized_entropy.normal.Y` (chi tiết, ffmpeg
+đã trả trên [0,1] nên không phải tự chế công thức), `signalstats.YDIF` (chuyển động),
+`scdet.score` (đổi cảnh), `blur` (độ sắc — đảo chiều vì nhỏ nghĩa là nhiều cạnh),
+`signalstats.YAVG` (độ sáng). Số mẫu tăng theo **log thời lượng**, không tuyến tính.
+
+Đo thật: 18 mẫu / 8,1 s cho tệp 30 phút, tức **0,27 giây mỗi phút nội dung** — so với
+vài phút cho một lần nén thật.
+
+### Tách scanner khỏi selector là điều kiện để kiểm thử được
+
+`TimelineScanner` là I/O với ffmpeg. `RepresentativeWindowSelector` là thuần toán, không
+mở tệp, **không biết ứng viên nào sẽ được encode** — đúng như yêu cầu cho giai đoạn sau
+tái sử dụng. Nhờ vậy test được dựng bằng đặc trưng tổng hợp, không cần ffmpeg, và chạy
+trong 100 ms.
+
+### Vai trò, không phải top-N
+
+Sắp theo một điểm tổng rồi lấy 3 cái trên cùng gần như chắc chắn rơi vào cùng một
+cảnh. Chọn theo vai trò buộc các đoạn phải khác nhau về bản chất: `Typical`,
+`HighMotion`, `HighSpatial`, `LowComplexity`. **Vai trò không có thật thì không tạo ra** —
+tệt gần như tĩnh không có `HighMotion`.
+
+### Hai lỗi thuật toán mà test bắt được
+
+**Chuẩn hoá min-max khuếch đại nhiễu thành biến thiên thật.** Tệp gần tĩnh có YDIF dao
+động 0,18–0,22, chuẩn hoá ra `[0,50 … 1,00]` và sinh ra một đoạn "chuyển động cao" hoàn
+toàn vô nghĩa. Đo lại trên tệp thật: `YDIF` chạy từ **0,00** (cảnh tĩnh) tới **23,54**
+(cảnh bận), và sàn đo của chính ffmpeg với cảnh tĩnh là đúng 0.
+
+Sửa bằng cách tách hai loại câu hỏi: **thứ tự** xếp hạng bằng chuẩn hoá tương đối, còn
+**vai trò có tồn tại không** phải có mốc tuyệt đối (`MotionAbsoluteFloor`, mặc định 1,0
+trên thang chênh luma 0–255 ≈ 4% dải đo được). Con số này đã ghi trong mã là **tạm** và
+cần mở rộng tập mẫu.
+
+**`Typical` chiếm mẫu rồi chặn mất mẫu khó nhất.** Ở một fixture, `Typical` lấy mẫu ở
+giây 10; mẫu chuyển động cao nằm ở giây 30, cách 20 s — dưới ngưỡng 30 s — nên
+`HighMotion` bị loại và rơi về một mẫu tầm thường. Tức là đo đoạn dễ thay vì đo đoạn khó.
+
+Sửa bằng thứ tự chọn **cực đại trước, trung bình sau**: một vai trò cực đại có đúng một
+ứng viên đáng chọn, còn vai trò "điển hình" có cả một mảng ứng viên gần như ngang nhau.
+
+### Khoảng cách tối thiểu phải co theo thời lượng
+
+Một tệp 60 giây không thể chia ra ba đoạn cách nhau 30 giây. Mốc cố định khiến bộ chọn
+âm thầm trả về **ít hơn số đoạn yêu cầu mà không kèm lý do**. Nay mốc thực tế là
+`min(cấu hình, thời lượng / (số đoạn + 1))`.
+
+### Chuẩn hoá tương đối, và cái giá của nó
+
+Mọi đặc trưng chuẩn hoá theo min/max của chính các mẫu trong tệp đó. Không cần hằng số
+tuyệt đối nào và không suy ra ngưỡng từ tập hiệu chỉnh hiện có.
+
+Đánh đổi, ghi rõ trong mã: một tệp đều khó sẽ trông "đa dạng" như mọi tệp khác. Điều đó
+đúng vì câu hỏi ở đây là *"đoạn nào khó **trong tệp này**"*. Câu hỏi *"tệp này khó đến
+đâu"* thuộc ứng viên ở giai đoạn sau, và cần corpus rộng hơn.
+
+### Kết quả trên tệp thật
+
+```
+Aku no Onna Kanbu - 01.mp4   (30,0 phút)  18 mẫu  8,1s  0,27 s/phút
+  HighSpatial @ 566,6s   không gian 1,00 · chuyển động 0,27 · đổi cảnh 0,14
+  HighMotion  @ 947,9s   không gian 0,77 · chuyển động 1,00 · đổi cảnh 0,65
+  Typical     @ 1138,6s  không gian 0,69 · chuyển động 0,38 · đổi cảnh 0,26
+
+Boku no Risou no Isekai Seikatsu - 01.mp4  (16,5 phút)  17 mẫu  6,2s  0,38 s/phút
+  HighMotion  @ 49,6s    không gian 0,81 · chuyển động 1,00 · đổi cảnh 1,00
+  Typical     @ 272,9s   không gian 0,89 · chuyển động 0,00 · đổi cảnh 0,00
+  HighSpatial @ 831,0s   không gian 1,00 · chuyển động 0,29
+```
+
+Khớp với số đo thô: mẫu chuyển động cao nhất của tệp anime nằm ở **948 s** (`YDIF` 43,90),
+mẫu nhiều chi tiết nhất ở **567 s** (entropy 0,942) — và selector chọn đúng hai mẫu đó.
+
+**Vị trí chia đều cũ (25%/50%/75%) là 450/900/1350 s. Selector chọn 567/948/1139 s —
+không đoạn nào trùng.**
+
+Tệp thứ hai cho thấy bộ chọn bám nội dung: `Typical` rơi vào đoạn có chuyển động 0,00
+(cảnh tĩnh giữa tệp) chứ không phải đoạn ở giữa thời lượng.
+
+### Dự phòng và dọn dẹp
+
+Tệp hỏng, quét hỏng, không đọc được mẫu nào → rơi về vị trí chia đều, vẫn trả đủ số đoạn
+để job chạy tiếp. Đo trên tệp hỏng: **0,7 s**, không ném lỗi. Tệp quét tạm bị xoá trong
+`finally` ngay sau mỗi mẫu — kiểm chứng 0 tệp sót.
+
+321 test. Không nới ngưỡng VMAF, không sửa CRF, không đụng ứng viên.

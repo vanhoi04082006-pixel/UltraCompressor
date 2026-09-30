@@ -803,7 +803,8 @@ public sealed class CompressionEngine : IAsyncDisposable
             var ffmpeg = _tools.PathOf(ToolKind.FFmpeg);
             _qualityGate = new QualityGate(
                 _config,
-                ffmpeg is null ? null : new QualityProbe(ffmpeg, _workspace.Root));
+                ffmpeg is null ? null : new QualityProbe(ffmpeg, _workspace.Root),
+                ffmpeg is null ? null : new TimelineScanner(ffmpeg, _workspace.Root));
         }
 
         return _qualityGate!;

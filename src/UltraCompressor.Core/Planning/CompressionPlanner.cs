@@ -142,9 +142,28 @@ public static class CompressionGoalExtensions
 /// <summary>
 /// Biến <b>mức mục tiêu</b> thành tham số nén cụ thể, tính riêng cho từng tệp.
 ///
+/// <para><b>KHÔNG THÊM QUY TẮC MỚI VÀO ĐÂY.</b> Đây là bộ lập kế hoạch một-lần, thay
+/// thế cho <see cref="CandidatePlanner"/> — thế sinh nhiều ứng viên để giai đoạn tìm
+/// kiếm đo và chọn. Nó còn ở đây vì đường ống nén hiện tại vẫn gọi nó; giai đoạn tìm kiếm
+/// sẽ thay thế chỗ đó.</para>
+///
+/// <para>Hai hàm dưới đây là hình mẫu đúng cái <b>không</b> được làm, và chúng ở lại đây
+/// để so sánh:</para>
+/// <list type="bullet">
+/// <item><description><c>BaseCrf(goal)</c> — mode ánh xạ thẳng ra tham số encoder.</description></item>
+/// <item><description><c>WidthCap(goal, kind)</c> — mode ánh xạ thẳng ra độ phân giải.</description></item>
+/// <item><description><c>PresetFor(goal)</c> — mode ánh xạ thẳng ra preset encode.</description></item>
+/// </list>
+///
+/// <para>Ở <c>CandidatePlanner</c>, mode chỉ dịch vị trí trung tâm của vùng tìm trong một
+/// băng hẹp quanh mặc định của từng codec, còn preset do ngân sách tính toán quyết định.
+/// Có test chặn riêng cho từng bất biến đó.</para>
+///
+/// <para>Nếu một quy tắc ở đây từng hữu ích (ví dụ nội dung màn hình nên dùng H.264),
+/// hãy mang nó sang miền tìm kiếm tương ứng thay vì nhân bản ở đây.</para>
+///
 /// <para>Đây là hàm thuần: cùng đầu vào thì cùng đầu ra, không đọc tệp, không chạy tiến
-/// trình. Nhờ vậy toàn bộ quy tắc lập kế hoạch kiểm thử được, thay vì phải nén thật mỗi
-/// lần muốn xem một mức cho ra bao nhiêu.</para>
+/// trình.</para>
 ///
 /// <para><b>Vì sao không định nghĩa thẳng "Mạnh = 1280px + CRF 30".</b> Vì các con số đó
 /// chỉ đúng với một dạng tệp. Cùng mức "Mạnh" nhưng:

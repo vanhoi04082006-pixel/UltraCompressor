@@ -757,3 +757,176 @@ Tệp hỏng, quét hỏng, không đọc được mẫu nào → rơi về vị
 `finally` ngay sau mỗi mẫu — kiểm chứng 0 tệp sót.
 
 321 test. Không nới ngưỡng VMAF, không sửa CRF, không đụng ứng viên.
+
+## Giai đoạn 3 — CandidatePlanner: sinh nhiều ứng viên thay vì một
+
+### Vấn đề: một tệp, một bộ tham số
+
+`CompressionPlanner` cũ sinh đúng một ứng viên: `BaseCrf(goal)` rồi áp cho mọi codec,
+`WidthCap(goal, kind)` cho độ phân giải, `PresetFor(goal)` cho preset. Ba hàm đó là
+hình mẫu đúng cái **không** được làm, nên chúng ở lại trong mã và ghi rõ là legacy —
+không phải để dùng, mà để so sánh.
+
+Nói thẳng điều khó chịu nhất về cách làm cũ: `BaseCrf(goal)` trả cùng một con số cho
+x264, x265 và AV1. Ba thứ đó **không cùng đơn vị**. "Mạnh = 28" nghĩa là CRF 28 của
+x264, 28 của x265 và 28 của libaom — ba mức chất lượng khác nhau. Bất kỳ ai đọc
+`BaseCrf` cũng dễ tin rằng đó là một thang chung, và đó là lý do mã này nguy hiểm hơn
+trông thấy.
+
+### Ranh giới: một miền tìm kiếm cho mỗi codec
+
+`IEncoderSearchDomain` là điểm mấu chốt. Mỗi codec có miền riêng, và miền **không nhận
+miền số của codec khác**:
+
+| Miền | Encoder | Tham số chất lượng | Công tắc preset | Trạng thái |
+|---|---|---|---|---|
+| `X264SearchDomain` | `libx264` | 0–51 | `-preset` | luôn thử |
+| `X265SearchDomain` | `libx265` | 0–51 | `-preset` | luôn thử |
+| `LibaomAv1SearchDomain` | `libaom-av1` | 0–63 | `-cpu-used` | tắt mặc định |
+
+Miền AV1 **không** khai báo miền bằng `new MaxQuality => 63` mà bằng `override`. Nếu
+khai báo `new`, giao diện vẫn trả miền của lớp cha (`0–51`) và mọi ứng viên AV1 hợp lệ
+sẽ bị chặn oan mà không có dấu hiệu gì. Có test riêng gọi qua giao diện để chặn đúng lỗi
+này.
+
+Tên lớp ghi rõ `Libaom` chứ không phải `SvtAv1`. SVT-AV1 là encoder khác hẳn, dùng thang
+QP chứ không phải CRF; một lớp tên "SvtAv1" gắn với `libaom-av1` sẽ khiến người đọc
+tưởng công cụ đã hỗ trợ SVT-AV1 trong khi chưa. Thêm SVT-AV1 sau cần một lớp riêng.
+
+### Ba giá trị phải đo, không được tin tài liệu
+
+Bảng trên không lấy từ tài liệu. Đo trên `ffmpeg 8.0.1-essentials` đi kèm, và **ba
+giả định ban đầu đều sai**:
+
+**1. `-cpu-used` của libaom chạy 0–8, không phải 0–9.** `-cpu-used 9` bị từ chối:
+`Value 9.000000 for parameter 'cpu-used' out of range [0 - 8]`. Con số 9 là thói quen từ
+tài liệu SVT-AV1. Nếu giữ, ứng viên ngân sách Nhanh chỉ lộ lỗi khi encode thật.
+
+**2. x265 từ chối CRF ≥ 52, còn x264 thì không.** Trần 51 cho cả hai là **chọn có chủ
+đích**, không phải đặc tính đo được của cả hai. Việc lớp bọc ffmpeg của x264 không chặn
+không phải bằng chứng rằng 63 là một CRF có nghĩa. Ngoài 51 thì tệp ra thường đã lớn hơn
+nguồn, tức ứng viên vô dụng — nên kẹp. Sàn 0 vì cả hai chấp nhận `-1`, nhưng -1 là chế
+độ lượng tử hằng, không phải chất lượng hằng.
+
+**3. Tham số chất lượng là số nguyên.** Cả ba encoder đều khai báo `<int>`, nên mọi điểm
+được làm tròn ở **một chỗ duy nhất** ngay khi rời miền. Trước đó log in ra
+`16.64029999423075`, ID mang theo, và lệnh ffmpeg nhận đúng con số đó.
+
+### Lỗi tệ nhất: `-preset` bị bỏ qua âm thầm
+
+`Preset()` trước đây trả về `"cpu-used=9"` — một mảnh cú pháp dòng lệnh chứ không phải
+tên preset. Nếu giai đoạn dựng lệnh ghép thành `-preset cpu-used=8`, ffmpeg **không báo
+lỗi**:
+
+| Cách truyền | Thời gian | Kích thước |
+|---|---|---|
+| `-cpu-used 8` | **2,05 s** | 172,9 KB |
+| `-preset "cpu-used=8"` | 151,8 s | 124,8 KB |
+| không truyền gì (mặc định = 1) | 154,3 s | 124,8 KB |
+
+Tệp ra **giống hệt** mặc định, và chậm hơn **74 lần**. Với tệp 40 phút, một ứng viên
+"Nhanh" sẽ mất hơn 20 giờ thay vì 16 phút, và người dùng chỉ thấy nó "thành công". Đây là
+dạng lỗi tệ nhất: thất bại mà trông như thành công.
+
+Vì vậy miền tách **công tắc** khỏi **giá trị**: `PresetSwitch` (`-preset` / `-cpu-used`)
+và `Preset()` trả về thẻ trần. Test chặn giá trị chứa dấu `=` hoặc khoảng trắng, và
+chặn việc hai miền dùng chung công tắc.
+
+### Mode dịch vị trí vùng tìm, không gán thang chung
+
+Mode chỉ dịch **tâm vùng tìm** trong một băng hẹp ±6 quanh mặc định của chính encoder đó
+(x264 23, x265 28, libaom 32), rồi kẹp vào miền. Băng hẹp vì mode là ý định chất lượng,
+còn miền là giới hạn kỹ thuật.
+
+Còn preset do **ngân sách tính toán** quyết định, hoàn toàn tách mode. Đó là ranh giới
+giữa "chất lượng mong muốn" và "tiền bạc và thời gian được phép tiêu".
+
+### Hạ độ phân giải phải mã hoá kỹ hơn, không phải giữ nguyên tham số
+
+Có một lỗi thiết kế dễ bỏ qua: nếu mọi nhánh độ phân giải dùng chung một tập tham số chất
+lượng, thì nhánh nhỏ hơn sẽ hỏng ngưỡng chất lượng và tốn công encode vô ích. Hạ 4K xuống
+1440p mà giữ nguyên tham số là mất rất nhiều chi tiết cảm nhận.
+
+Nên vùng tìm dịch theo số lần giảm một nửa số pixel, dùng `log2`:
+
+```
+bước chất lượng = số lần giảm một nửa số pixel × 4
+```
+
+**Chiều** là chắc chắn và kiểm chứng được không cần đo: nhánh nhỏ thì mỗi pixel phải
+được mã hoá kỹ hơn. **Độ lớn** 4 là chưa có số đo nào trong kho, nên được đánh dấu
+`Uncalibrated` ngay trong tên hằng số. Đây không phải ngưỡng chất lượng và không được
+dùng để kết luận ứng viên nào đạt — việc đó thuộc `QualityProbe` ở giai đoạn sau.
+
+### Câu hỏi mở: mật độ bit dịch vùng tìm theo chiều nào
+
+`ContentBias` trước đây dịch vùng tìm theo mật độ bit, kèm comment giải thích **ngược
+chiều với đoạn code ngay bên dưới**: comment nói nguồn hết dự trữ thì "nén nhẹ hơn",
+còn code lại hạ tham số chất lượng — tức nén *nặng* hơn.
+
+Hai hướng đều nghe hợp lý:
+
+- **hướng "nén mạnh"**: nguồn đã không còn chi tiết, giữ chất lượng cao cũng không thu
+  được byte nào, chỉ tốn dung lượng;
+- **hướng "nén nhẹ"**: nguồn đã bị nén đến mức hạt nhiễu lộ lên, nén thêm sẽ hỏng hình.
+
+Không có số đo nào trong kho để chọn giữa hai hướng, nên thay vì tung đồng xu, **mật độ
+bit bị loại khỏi vị trí này**. Nó vẫn được giữ trong hồ sơ nguồn để giai đoạn tìm kiếm và
+giai đoạn hiệu chỉnh dùng, và câu hỏi được ghi lại trong mã nguồn.
+
+Còn tín hiệu **độ khó nội dung** thì giữ, vì chiều của nó kiểm chứng được mà không cần đo
+chất lượng: nhiều chuyển động nghĩa là nhiều khối phải dựng lại mỗi khung hình, và đó là
+nơi hạt và nhấp nháy lộ ra đầu tiên khi siết tham số.
+
+### Ứng viên phải dựng được thành lệnh ffmpeg
+
+`Reason` trước đây in ra **chỉ số điểm** ("chất lượng = 2/3") thay vì tham số thật, và ở
+nhánh nguồn không in kích thước cụ thể. Cả hai khiến log không dùng để dựng lại lệnh
+được. Nay mỗi ứng viên tự mô tả trọn:
+
+```
+libx264 · giữ nguyên độ phân giải nguồn 1920x1080 · điểm dò thô · -preset medium -crf 22
+```
+
+### Tập ứng viên có cấu trúc, không phải danh sách phẳng
+
+Ứng viên nhóm theo **nhánh** (codec × kích thước). Điểm đầu mỗi nhánh là
+`CoarseProbe` — điểm dò thô; các điểm sau là `QualityAnchor` để giai đoạn tìm kiếm
+khoanh biên. Đây là cấu trúc giai đoạn tìm kiếm cần, không phải chi tiết trang trí.
+
+`CandidateOrigin` chỉ mô tả **vai trò tìm kiếm**. Việc một ứng viên có thuộc nhánh giữ
+nguyên độ phân giải nguồn hay không nằm ở `BranchId` và kích thước. Trộn hai ý nghĩa đó
+vào một kiểu đã sinh ra `Origin = nhánh[0] ? SourceResolution : SourceResolution` — một
+mệnh đề đúng vô nghĩa, khiến `Origin` không bao giờ là `CoarseProbe`, tức giai đoạn tìm
+kiếm không biết đâu là điểm dò thô.
+
+### Kết quả trên ba hồ sơ nguồn
+
+Cùng BALANCED, ngân sách Normal, x264:
+
+| Hồ sơ nguồn | Nhánh hình | Điểm chất lượng x264 |
+|---|---|---|
+| 4K 60fps, nội dung bận | 3840x2160 | 21 / 17 / 13 |
+| | 2560x1440 | 17 / 13 / 9 |
+| 1080p 24fps | 1920x1080 | 23 / 19 / 15 |
+| | 1280x720 | 18 / 15 / 11 |
+| 720p 25fps | 1280x720 | 22 / 18 / 14 |
+| | 852x480 | 18 / 14 / 10 |
+
+Cùng một mode và cùng một ngưỡng, ba nguồn ra ba tập ứng viên khác nhau. Đó là thứ phân
+biệt một bộ lập kế hoạch thật với một bảng preset — và là thứ mà `BaseCrf(goal)` không
+bao giờ làm được.
+
+Kiểm trên 348 ứng viên (3 hồ sơ × 3 mode × 3 ngân sách): 0 ứng viên vượt kích thước
+nguồn, 0 sai fps, 0 ngoài miền codec, 0 tham số có phần thập, 0 trùng trong cùng plan.
+
+Thiếu codec thì báo rõ thay vì im lặng: bỏ `libx265` khỏi ffmpeg → 6 ứng viên, ghi rõ
+bỏ `libx265` và `libaom-av1`; không còn codec nào → 0 ứng viên kèm ghi chú.
+
+### 380 test. Chưa động vào đường ống nén
+
+`CandidatePlanner` **chưa** được nối vào engine. `CompressionPlanner` cũ vẫn là thứ
+được gọi, và được ghi rõ là legacy. Việc thay thế thuộc giai đoạn 4 — cùng lúc đó mới
+cần tới giá trị `PresetSwitch`/`Preset`/`QualitySwitch` ở đây để dựng lệnh.
+
+Không nới ngưỡng VMAF, không đổi `QualityPolicy`, không sửa CRF, không nối engine.

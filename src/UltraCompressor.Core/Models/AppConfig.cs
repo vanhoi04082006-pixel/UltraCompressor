@@ -1,3 +1,5 @@
+using UltraCompressor.Core.Planning;
+
 namespace UltraCompressor.Core.Models;
 
 /// <summary>Cấu hình ứng dụng, lưu ở <c>config.json</c> cạnh tệp thực thi.</summary>
@@ -115,6 +117,29 @@ public sealed class AppConfig
     public double ComplexityWeightScene { get; set; } = 0.15;
 
     public double ComplexityWeightSharpness { get; set; } = 0.20;
+
+    // ---------------------------------------------------------------- ngân sách tính toán
+
+    /// <summary>
+    /// Ngân sách tính toán: được phép dùng bao nhiêu công sức để <i>tìm</i> cách nén tốt.
+    /// Tách khỏi mức nén vì "nhanh" và "chất lượng thấp" là hai điều khác nhau.
+    /// </summary>
+    public ComputeBudget ComputeBudget { get; set; } = ComputeBudget.Normal;
+
+    /// <summary>
+    /// Trần số ứng viên được sinh ra. Có trần vì một tập ứng viên vô hạn sẽ biến giai
+    /// đoạn tìm kiếm thành thử mọi tổ hợp.
+    /// </summary>
+    public int MaxInitialCandidates { get; set; } = 24;
+
+    /// <summary>Số nhánh độ phân giải tối đa, tính cả nhánh giữ nguyên nguồn.</summary>
+    public int MaxResolutionBranches { get; set; } = 3;
+
+    /// <summary>
+    /// Có thử AV1 không. Tắt mặc định: libaom chậm hơn libx265 khoảng một đến hai bậc độ
+    /// lũy, nên bật sẽ làm công cụ dừng vô dụng với tệp dài.
+    /// </summary>
+    public bool EnableAv1Search { get; set; }
 
     /// <summary>Bỏ qua tệp nhỏ hơn mức này. 0 = không bỏ qua.</summary>
     public long MinFileSizeBytes { get; set; }

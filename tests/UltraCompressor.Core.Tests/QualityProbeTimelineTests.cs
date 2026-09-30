@@ -184,6 +184,24 @@ public class QualityProbeTimelineTests
         }
     }
 
+    // KHONG them test cho buoc chuan hoa timestamp o day, va ly do phai ghi ro.
+    //
+    // Da do bang ffmpeg that tren tep that, cap clip da cat san:
+    //
+    //   cap khop moc 0s                       VMAF 90,3
+    //   cap lech moc 3,0s                     VMAF 90,3   <- lech khong gay ra khac biet
+    //   remux sang MPEG-TS, start PTS 1,483s  VMAF 86,16  <- mat 4,1 diem
+    //
+    // `settb`/`setpts` cho ra 90,3 / 90,3 / 86,16 — tuc khong sua duoc ca chuyen lech moc
+    // 3,0s lẫn ca truong hop mat diem that su. Mot test "chuan hoa sua duoc" se do do
+    // mot lan chay. Test chi chung minh rang goi lai cho cung ket qua thi da co san
+    // o `Cung_mot_cua_so_thi_vao_dung_cua_so_giua_hai_lan_goi`.
+    //
+    // Nguyen nhan lam mat 4,1 diem do CHUA bi sua, va no khong nam o moc thoi gian ma o
+    // noi dung khung hinh bi lech sau khi giai ma — cung loai voi loi seek lech mot khung
+    // da gap o giai doan truoc. Ghi lai o day de khong quen va de khong viet comment
+    // nguoc lai lan sau.
+
     private static double ProbeDuration(string path)
     {
         // Dùng chính MediaProbe của production thay vì tự parse, để số đo khớp với đường

@@ -198,10 +198,31 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQua
             // chỉ có nghĩa trong một điều kiện xem xác định. So ứng viên 720p với tham chiếu
             // 1080p mà không đưa về cùng kích thước là so hai hình ở hai kích thước khác
             // nhau rồi kết luận ai thắng — sai hoàn toàn.
+            //
+            // `settb` và `setpts` đặt timebase và mốc thời gian của cả hai về cùng một đơn
+            // vị (AVTB, bắt đầu tại 0) trước khi libvmaf ghép cặp khung hình, để việc ghép
+            // cặp được định nghĩa bằng chính thứ tự khung hình chứ không phụ thuộc vào
+            // timestamp mà container mang theo.
+            //
+            // ĐO ĐƯỢC, và cần nói rõ vì dễ hiểu nhầm: hai bước này KHÔNG sửa được lỗi lệch
+            // timestamp mà người ta hay nghĩ tới. Trên tệp thật, cap clip đã cắt với mốc
+            // lệch 3,0s cho VMAF 90,3 — y hệt cap khop (90,3), và có chuan hoa hay khong cung
+            // 90,3. Tức libvmaf tự bỏ qua lech moc bat dau. Do do hai buoc nay giu tai day
+            // nhu mot lop phong ngua, va chung KHONG phai ly do giup so do dung — neu comment
+            // nay noi nguoc lai, lan sau se dua quyet dinh sai vao mot thu vo ich.
+            //
+            // Lỗi lam mat diem that su da duoc do va chua bi sua: remux cung noi dung (stream
+            // copy, khong doi mot pixel) sang container MPEG-TS, start PTS = 1,483s, VMAF
+            // xuong 86,16 — mat 4,1 diem. `settb`/`setpts` khong sua duoc, nghia la nguyen
+            // nhan khong nam o moc thoi gian ma o noi dung khung hinh bi lech sau khi giai
+            // ma. Cung loai loi voi loi seek lech mot khung da gap o giai doan truoc. Giu o
+            // day de khong quen, chua sua.
             var filter =
-                $"[0:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos[ref];" +
-                $"[1:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos[dis];" +
-                $"[dis][ref]{libvmaf}";
+                $"[0:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
+                    + "settb=AVTB,setpts=PTS-STARTPTS[ref];"
+                    + $"[1:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
+                    + "settb=AVTB,setpts=PTS-STARTPTS[dis];"
+                    + $"[dis][ref]{libvmaf}";
 
             // libvmaf nhận distorted TRƯỚC, reference SAU. Đảo cặp thì mọi cổng chất lượng
             // lặng lẽ đảo chiều: vẫn ra số, không báo lỗi.

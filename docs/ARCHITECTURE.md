@@ -930,3 +930,158 @@ bỏ `libx265` và `libaom-av1`; không còn codec nào → 0 ứng viên kèm g
 cần tới giá trị `PresetSwitch`/`Preset`/`QualitySwitch` ở đây để dựng lệnh.
 
 Không nới ngưỡng VMAF, không đổi `QualityPolicy`, không sửa CRF, không nối engine.
+
+## Giai đoạn 4A — Linh kiện lõi của Pilot Search (CHƯA nối runtime)
+
+Năm thành phần độc lập, deterministic, kiểm thử được. **Production runtime vẫn chạy
+`CompressionPlanner` legacy.** `candidate_planner_runtime_active = false`.
+
+### Nguyên tắc bất di bất dịch
+
+> Planner đề xuất. Measurement quyết định.
+
+`CandidatePlanner` sinh ra các ứng viên mà **không biết** ứng viên nào đạt. Không thành
+viên nào được phép tự tuyên bố mình có chất lượng tốt — đó là việc của `QualityProbe`
+đo được.
+
+### Thứ tự trách nhiệm
+
+```
+EncodeTarget.TryFromRequest   chặn phóng to, méo tỉ lệ, kích thước lẻ
+        ↓
+EncodeTransform               một nơi duy nhất quyết định hình được tạo ra thế nào
+        ↓
+PilotEncoder                  encode CHỈ các đoạn đại diện
+        ↓
+ReferenceWindowExtractor      cắt tham chiếu thành clip, dùng chung mọi ứng viên
+        ↓
+QualityAggregator             gộp nhiều đoạn, theo hướng bảo thủ
+        ↓
+SizeEstimator                 ước lượng, chỉ để xếp hạng
+        ↓
+ParetoSelector                loại ứng viên bị áp đảo
+```
+
+`PilotSearch` (giai đoạn 4B) sẽ điều phối, **không** nhét orchestration vào bất kỳ tầng
+nào ở trên.
+
+### Sai lầm lớn nhất tìm được: VMAF gần như không nhạy lệch nửa khung, nhưng sụp khi lệch một khung
+
+Đo trên bốn nguồn tổng hợp, 1280×720 @ 25 fps, tự so với chính nó:
+
+| Lệch | VMAF |
+|---|---|
+| 0,00 s | 99,2 – 100,0 |
+| 0,02 s (nửa khung) | 98,8 – 99,2 |
+| **0,04 s (một khung)** | **21,2 – 68,7** |
+
+Trên tệp anime thật của dự án, cùng **một** ứng viên cho mean **41,3** theo cách seek thẳng
+vào nguồn, và **94,0** khi cắt cả hai thành clip. Chênh 2,3 lần, không phải vì chất lượng
+mà vì đọc lệch khung hình.
+
+Hai nguyên nhân, cả hai đều là lỗi của ta:
+
+**1. Tham chiếu và ứng viên lấy bằng hai đường seek khác nhau.** Nên `ReferenceWindowExtractor`
+cắt tham chiếu thành clip bằng **đúng cấu trúc lệnh** của `PilotEncoder`, rồi đo clip đối
+clip tại `(0, d)`. Điểm khung hình đầu tiên trùng nhau *theo cách xây dựng*, không phải nhờ
+một con số thật phân nào khớp — con số đó phụ thuộc bản ffmpeg và cấu trúc khung hình tệp.
+Cắt **một lần, dùng chung cho mọi ứng viên**: các ứng viên chỉ khác ở phần mã hoá, mà đoạn
+tham chiếu thì giống nhau. Tham chiếu mã hoá **không tổn thất** (CRF 0) để nó mang đúng
+pixel gốc; mã hoá tổn thất ở tham chiếu sẽ cộng sai số giống nhau vào mọi ứng viên, và sai
+số đó khác nhau theo độ dễ của nội dung — tức làm méo chính phép so sánh.
+
+**2. `EncodeTransform` cứ dựng `fps=23.98` cho một nguồn 23,976 fps.** Comment nói là không
+dựng, code thì có. Chênh 0,004 fps buộc ffmpeg lặp hoặc bỏ khung hình, và ứng viên lệch
+trục thời gian với tham chiếu. Nay `fps=` chỉ được dựng khi chênh lệch vượt `FpsEpsilon`.
+
+Cả hai lỗi đều **âm thầm**: ffmpeg trả mã 0, log trông bình thường, và mọi ứng viên đều bị
+loại oan. Không có gì báo động.
+
+### Gộp chất lượng: bảo thủ tuyệt đối
+
+Ứng viên khả thi **chỉ khi mọi** đoạn đo được đều đạt cả ngưỡng mean lẫn ngưỡng P5.
+
+Ví dụ ở BALANCED (89/85): đoạn A 94/91 đạt, đoạn B 88/84 rớt, đoạn C 95/92 đạt. Trung bình
+là 92,3 — đẹp. Nhưng B là cảnh khó, và người dùng sẽ thấy đúng cảnh đó bị hỏng. Trung
+bình là cách nhanh nhất để che một sự cố.
+
+**Không đo được thì không phải đạt.** Đây là khác biệt lớn nhất so với lưới chất lượng cuối,
+vốn cố tình fail-open để người dùng vẫn nén được khi công cụ hỏng. Ở đây ứng viên chưa đo
+thì **không biết** nó có an toàn không, nên không được đi tiếp. Mã
+`PILOT_MEASUREMENT_UNAVAILABLE`.
+
+**Không phát minh ngưỡng mới.** `Min` và đoạn tệ nhất được **lưu để chẩn đoán**, không
+tham gia quyết định. Chưa có số đo nào đủ rộng để biết ngưỡng cho chúng.
+
+**Không lấy trung bình P5.** P5 luôn thuộc về một đoạn cụ thể. Trung bình P5 của vài đoạn
+là con số không thuộc về đoạn nào và không có nghĩa gì. Chấm điểm xếp hạng cũng theo **đoạn
+tệ nhất**, khớp với điều quyết định dùng để loại.
+
+**SSIM chỉ là telemetry.** Đã đo được VMAF 80 với SSIM 0,9999: SSIM cao không chứng minh
+điều gì. Test khẳng định SSIM 0,90 và 0,9999 cho cùng một kết luận.
+
+### Ước lượng dung lượng: tách ba thành phần, ghi rõ giả định
+
+Không dùng `pilotBytes / pilotDuration * fullDuration` — sai theo ba lý do cùng lúc: clip
+thử nghiệm **không có âm thanh**, vỏ container không tỉ lệ thuần với thời lượng, và một đoạn
+tĩnh kéo tỉ lệ xuống.
+
+Ước lượng tách `VideoBytes` + `AudioBytes` + `ContainerBytes`, lấy tỉ lệ từ đoạn **đắc
+nhất** (ước thận trọng hơn là ước nhỏ rồi chọn nhầm ứng viên tệ), và trả kèm `IsReliable`
+cùng danh sách giả định. Thiếu bitrate âm thanh thì `IsReliable = false` và ghi rõ phần
+này bị ước bằng 0 — tức tổng ước lượng chắc chắn thấp hơn thực tế.
+
+Ước lượng **không bao giờ** là nguồn sự thật. Nguồn sự thật là `FileInfo(fullOutput).Length`
+sau khi encode, và lưới cuối giữ `NewSize <= OldSize`.
+
+### Pareto: chỉ chất lượng đã đo, không bao giờ tham số encoder
+
+Ứng viên A áp đảo B khi A không kém ở chiều nào (chất lượng, dung lượng) và tốt hơn đủ ở
+ít nhất một chiều. Chênh lệch dưới `QualityEpsilon`/`SizeRatioEpsilon` coi như bằng, vì VMAF
+lệch vài phần nghìn là nhiễu đo, xếp hạng theo nhiễu là vô nghĩa.
+
+**CRF 30 của x264, CRF 30 của libaom và QP 30 của SVT-AV1 là ba mức chất lượng không liên
+quan.** Đưa thang số thô vào phép so sẽ loại nhầm một ứng viên HEVC chỉ vì con số của nó
+trông lớn hơn. Chỉ VMAF đã đo mới vào phép so, vì mọi ứng viên đều đo bằng cùng một mô hình
+trên cùng một điều kiện hiển thị.
+
+Chỉ ứng viên khả thi mới vào frontier. Thứ tự kết quả tất định (chất lượng giảm dần, rồi
+dung lượng, rồi chi phí, rồi ID) vì ứng viên chạy song song không có thứ tự nào cố định.
+
+### Mã lý do tách khỏi câu chữ
+
+Câu chữ sẽ được viết lại khi cần; mã thì được đếm và lọc. Gộp làm một thì mọi lần sửa câu
+chữ đều phá vỡ thống kê. Mã của giai đoạn tìm **không dùng chung** với mã của lưới cuối, và
+không tái dụng `SOURCE_ALREADY_EFFICIENT` — mã đó nói về chính tệp nguồn và thuộc giai đoạn
+5B.
+
+### Vòng đời tệp thử nghiệm
+
+`PilotEncoder` **không** xoá clip khi thành công: bước đo sắp tới cần đọc chúng. Xoá ở đó
+nghĩa là `OutputPath` trỏ tới tệp không tồn tại và cả chuỗi đo rơi vào hư không. Clip hỏng
+bị xoá ngay vì không còn gì để đo. Vòng đời thuộc người gọi, qua `Release`.
+
+### Kiểm chứng thật trên một nguồn
+
+1920×1080 h264 23,98 fps, 35,2 MB, 3 đoạn đại diện (HighMotion 6,0s · HighSpatial 65,0s ·
+Typical 104,3s), mỗi đoạn 3,0 s.
+
+| ứng viên | HighMotion | HighSpatial | Typical | khả thi | ước lượng |
+|---|---|---|---|---|---|
+| 1920×1080 crf16 | 97,91 | 96,66 | 99,07 | có | 125,9 MB |
+| 1920×1080 crf24 | 95,83 | 93,77 | 95,40 | có | 73,8 MB |
+| 1920×1080 crf32 | 88,45 | 86,90 | 86,02 | **không** | 53,5 MB |
+| 1280×720 crf20 | 94,18 | 89,70 | 90,70 | có | 66,2 MB |
+
+CRF 32 bị loại đúng vì đoạn tệ nhất 86,02 < 89. Ba ứng viên còn lại tạo thành frontier với
+đánh đổi chất lượng/dung lượng thật. Tham chiếu cắt một lần, 6,6–15,9 MB/đoạn, 0,6–1,0 s.
+Temp cleanup: 0 file còn lại.
+
+Cả bốn ước lượng đều **lớn hơn tệp nguồn** — đúng thật, vì các CRF này quá tiết chễ cho
+tệp đó. Giai đoạn 4B sẽ phải dò tham số rộng hơn; nếu vẫn không ứng viên nào đủ nhỏ thì
+giữ bản gốc là kết quả đúng.
+
+472 test, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
+
+Không nối `VideoPipeline`, không nối `CompressionEngine`, không thêm feature flag, không
+đo nguồn low-bpppf, không làm giai đoạn 5B.

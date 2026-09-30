@@ -1,3 +1,4 @@
+using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Planning;
@@ -142,7 +143,7 @@ public class CandidatePlannerAcceptanceTests
         foreach (var (a, b) in depletedX264.Zip(richX264))
         {
             Assert.Equal(a.BranchId, b.BranchId);
-            Assert.Equal(a.QualityParameter, b.QualityParameter);
+            Assert.Equal(a.QualityValue, b.QualityValue);
         }
     }
 
@@ -170,8 +171,8 @@ public class CandidatePlannerAcceptanceTests
         var still = Balanced(WithMotion(0));
         var busy = Balanced(WithMotion(30));
 
-        var stillMax = still.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityParameter);
-        var busyMax = busy.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityParameter);
+        var stillMax = still.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityValue);
+        var busyMax = busy.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityValue);
 
         // Tham số nhỏ hơn = chất lượng cao hơn, nên nội dung bận phải có con số nhỏ hơn.
         Assert.True(busyMax < stillMax, $"ban {busyMax} khong < tinh {stillMax}");
@@ -188,7 +189,7 @@ public class CandidatePlannerAcceptanceTests
         foreach (var source in new[] { Source4K(), Source1080p(), Source720p() })
         {
             var plan = Balanced(source);
-            Assert.All(plan.EncodeCandidates, c => Assert.True(c.QualityParameter >= 0));
+            Assert.All(plan.EncodeCandidates, c => Assert.True(c.QualityValue >= 0));
             Assert.Equal(89.0, floor.VmafMean);
         }
     }
@@ -208,7 +209,7 @@ public class CandidatePlannerAcceptanceTests
                 };
 
                 Assert.True(
-                    domain.Validate(candidate.QualityParameter, candidate.Width, candidate.Height, out _),
+                    domain.Validate(candidate.QualityValue, candidate.Width, candidate.Height, out _),
                     $"{candidate.Id} ngoai mien {domain.EncoderName}");
             }
         }

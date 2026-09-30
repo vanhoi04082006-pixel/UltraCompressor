@@ -55,7 +55,47 @@ public sealed record QualityResult(
 /// không báo lỗi.</item>
 /// </list>
 /// </summary>
-public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
+/// <summary>
+/// Khả năng đo chất lượng giữa một tệp tham chiếu và một tệp ứng viên.
+///
+/// <para>Tách khỏi <see cref="QualityProbe"/> để phần <b>tổng hợp và báo cáo</b> của lưới
+/// chất lượng kiểm thử được mà không cần ffmpeg. Phần đo thật thì vẫn kiểm bằng tích hợp
+/// với ffmpeg thật — dùng bản giả cho phần đo sẽ cho test xanh ngay cả khi
+/// <see cref="QualityProbe"/> đã hỏng, đúng như ghi chú trong <c>QualityGateTests</c> đã
+/// cảnh báo.</para>
+/// </summary>
+public interface IQualityMeasure
+{
+    /// <summary>
+    /// Đo một đoạn. Trả <c>null</c> khi <b>không đo được</b> — khác hẳn với điểm 0.
+    /// Người gọi bắt buộc phân biệt hai trường hợp này.
+    /// </summary>
+    /// <param name="referenceWindow">Đoạn cần lấy từ tệp tham chiếu.</param>
+    /// <param name="candidateWindow">
+    /// Đoạn cần lấy từ tệp ứng viên.
+    ///
+    /// <para>Tách khỏi <paramref name="referenceWindow"/> vì ứng viên của giai đoạn tìm
+    /// kiếm là <b>clip đã cắt sẵn</b> theo đúng đoạn đó, nên đoạn của nó bắt đầu tại 0.
+    /// Truyền chung một cửa sổ sẽ seek quá cuối clip và đo ra rỗng — hoặc tệ hơn, đo
+    /// nhầm đoạn khác.</para>
+    ///
+    /// <para>Với ứng viên đã encode toàn tệp thì truyền bằng <paramref name="referenceWindow"/>.
+    /// </para>
+    /// </param>
+    Task<QualityResult?> MeasureAsync(
+        string referencePath,
+        string candidatePath,
+        TimeWindow referenceWindow,
+        TimeWindow candidateWindow,
+        int displayWidth,
+        int displayHeight,
+        int candidateWidth,
+        int candidateHeight,
+        VmafModel model,
+        CancellationToken token = default);
+}
+
+public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQualityMeasure
 {
     /// <summary>
     /// Giới hạn thời gian cho một lần đo. Quá là bỏ đoạn đó, không treo job.
@@ -80,7 +120,8 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
     public async Task<QualityResult?> MeasureAsync(
         string referencePath,
         string candidatePath,
-        TimeWindow window,
+        TimeWindow referenceWindow,
+        TimeWindow candidateWindow,
         int displayWidth,
         int displayHeight,
         int candidateWidth,
@@ -91,7 +132,9 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
         if (token.IsCancellationRequested) return null;
 
         var key = string.Join('|',
-            referencePath, candidatePath, window.StartText, window.LengthText,
+            referencePath, candidatePath,
+            referenceWindow.StartText, referenceWindow.LengthText,
+            candidateWindow.StartText, candidateWindow.LengthText,
             displayWidth, displayHeight, model.Id,
             StampOf(candidatePath));
 
@@ -100,13 +143,14 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
             if (Cache.TryGetValue(key, out var cached))
             {
                 return cached is { } hit
-                    ? new QualityResult(model.Id, window, displayWidth, displayHeight, candidateWidth, candidateHeight, hit)
+                    ? new QualityResult(model.Id, referenceWindow, displayWidth, displayHeight, candidateWidth, candidateHeight, hit)
                     : null;
             }
         }
 
         var sample = await MeasureCoreAsync(
-            referencePath, candidatePath, window, displayWidth, displayHeight, model, token)
+            referencePath, candidatePath, referenceWindow, candidateWindow,
+            displayWidth, displayHeight, model, token)
             .ConfigureAwait(false);
 
         lock (CacheLock)
@@ -116,13 +160,14 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
 
         return sample is null
             ? null
-            : new QualityResult(model.Id, window, displayWidth, displayHeight, candidateWidth, candidateHeight, sample);
+            : new QualityResult(model.Id, referenceWindow, displayWidth, displayHeight, candidateWidth, candidateHeight, sample);
     }
 
     private async Task<QualitySample?> MeasureCoreAsync(
         string referencePath,
         string candidatePath,
-        TimeWindow window,
+        TimeWindow referenceWindow,
+        TimeWindow candidateWindow,
         int displayWidth,
         int displayHeight,
         VmafModel model,
@@ -148,17 +193,24 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory)
             var libvmaf =
                 $"libvmaf=model=version={model.Id}:feature=name=float_ssim:log_path={logName}:log_fmt=json";
 
+            // Cả hai đầu vào đều được đưa về đúng kích thước hiển thị trước khi đo, bằng
+            // Lanczos. Đây là điều kiện bắt buộc của VMAF chứ không phải tuỳ chọn: điểm VMAF
+            // chỉ có nghĩa trong một điều kiện xem xác định. So ứng viên 720p với tham chiếu
+            // 1080p mà không đưa về cùng kích thước là so hai hình ở hai kích thước khác
+            // nhau rồi kết luận ai thắng — sai hoàn toàn.
             var filter =
                 $"[0:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos[ref];" +
                 $"[1:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos[dis];" +
                 $"[dis][ref]{libvmaf}";
 
+            // libvmaf nhận distorted TRƯỚC, reference SAU. Đảo cặp thì mọi cổng chất lượng
+            // lặng lẽ đảo chiều: vẫn ra số, không báo lỗi.
             var result = await ProcessRunner.RunAsync(
                 _ffmpegPath,
                 [
                     "-hide_banner", "-loglevel", "error", "-nostdin",
-                    "-ss", window.StartText, "-t", window.LengthText, "-i", referencePath,
-                    "-ss", window.StartText, "-t", window.LengthText, "-i", candidatePath,
+                    "-ss", referenceWindow.StartText, "-t", referenceWindow.LengthText, "-i", referencePath,
+                    "-ss", candidateWindow.StartText, "-t", candidateWindow.LengthText, "-i", candidatePath,
                     "-lavfi", filter,
                     "-f", "null", "-",
                 ],

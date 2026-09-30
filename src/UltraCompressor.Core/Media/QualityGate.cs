@@ -68,11 +68,11 @@ public sealed record GateDecision(
 public sealed class QualityGate
 {
     private readonly AppConfig _config;
-    private readonly QualityProbe? _probe;
+    private readonly IQualityMeasure? _probe;
     private readonly TimelineScanner? _scanner;
     private readonly VmafModel _model = VmafModels.Default;
 
-    public QualityGate(AppConfig config, QualityProbe? probe, TimelineScanner? scanner = null)
+    public QualityGate(AppConfig config, IQualityMeasure? probe, TimelineScanner? scanner = null)
     {
         _config = config;
         _probe = probe;
@@ -127,18 +127,18 @@ public sealed class QualityGate
         }
 
         // ---- 2. Chất lượng: chỉ khi tệp đủ lớn để việc đo đáng giá, và chỉ cho video.
-        if (!_config.QualityCheckEnabled) return Accept(level, null);
+        if (!_config.QualityCheckEnabled) return Accept(level, null, 0, null);
 
         if (kind != MediaKind.Video)
         {
             // Ảnh/GIF/âm thanh/PDF: chưa có metric cảm nhận nào đo được bằng VMAF, nên
             // không giả vờ có. Chỉ còn lưới kích thước ở trên.
-            return Accept(level, null);
+            return Accept(level, null, 0, null);
         }
 
         if (_probe is null || displayWidth is not { } width || displayHeight is not { } height || width <= 0 || height <= 0)
         {
-            return Accept(level, null);
+            return Accept(level, null, 0, null);
         }
 
         // Chọn đoạn theo nội dung, không phải theo phần trăm thời lượng. Trước đây chỉ lấy
@@ -147,30 +147,53 @@ public sealed class QualityGate
         var selection = await SelectWindowsAsync(sourcePath, kind, durationSeconds, token).ConfigureAwait(false);
         var floor = FloorFor(level);
 
+        // Số đo tệ nhất đã thấy, để dùng cho thông báo và để báo cáo. Không tham gia quyết
+        // định ở đây — quyết định vẫn là: đoạn nào dưới ngưỡng thì loại, đoạn nào đạt thì qua.
+        QualitySample? worst = null;
+        WindowRole? worstRole = null;
+        var measuredCount = 0;
+
         foreach (var window in selection.Windows)
         {
             if (token.IsCancellationRequested) break;
 
             var measured = await _probe.MeasureAsync(
-                sourcePath, candidatePath, new TimeWindow(window.StartSeconds, window.DurationSeconds),
-                width, height, candidateWidth: width, candidateHeight: height, model: _model, token)
+                sourcePath, candidatePath,
+                new TimeWindow(window.StartSeconds, window.DurationSeconds),
+                new TimeWindow(window.StartSeconds, window.DurationSeconds),
+                width, height,
+                candidateWidth: width, candidateHeight: height,
+                model: _model, token)
                 .ConfigureAwait(false);
 
             if (measured is null) continue;
+
+            measuredCount++;
+            if (worst is null || measured.Sample.Mean < worst.Mean)
+            {
+                worst = measured.Sample;
+                worstRole = window.Role;
+            }
+
             if (floor.Accepts(measured.Sample)) continue;
 
-            var quality = measured.Sample;
             return GateDecision.Reject(
                 DecisionReasons.QualityFloorNotMet,
                 SkipReason.BelowMinSaving,
                 $"Đoạn {window.Role} lúc {window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}s "
-                + $"chỉ đạt VMAF {quality.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}) — giữ bản gốc.",
-                quality);
+                + $"chỉ đạt VMAF {measured.Sample.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}) — giữ bản gốc.",
+                measured.Sample);
         }
 
         // Không đo được đoạn nào thì KHÔNG loại. Công cụ hỏng hay quá giờ thì mọi tệp
         // video sẽ bị bỏ nếu coi như thất bại, và người dùng không nén được gì.
-        return Accept(level, null);
+        //
+        // Mang theo số đo tệ nhất khi có. Trước đây chỗ này gọi Accept(level, null) nên
+        // đo được rồi đạt thì số đo bị ném đi: `item.QualityScore` và `QualityP5` luôn null
+        // với mọi tệp được chấp nhận, và nhìn vào log không phân biệt được "đo rồi đạt" với
+        // "không đo được". Quyết định thì không sai, chỉ là mất khả năng quan sát — và mất
+        // telemetry thì sai số liệu ở các giai đoạn sau.
+        return Accept(level, worst, measuredCount, worstRole);
     }
 
     /// <summary>
@@ -219,12 +242,33 @@ public sealed class QualityGate
 
     private ScanStats _lastStats = ScanStats.None;
 
-    private static GateDecision Accept(CompressionLevel level, QualitySample? quality) =>
-        GateDecision.Keep(
+    /// <summary>
+    /// Chấp nhận, kèm số đo tệ nhất nếu có.
+    /// </summary>
+    /// <param name="worst">Số đo của đoạn có mean thấp nhất — ràng buộc gắn nhất.</param>
+    /// <param name="measuredCount">Số đoạn đo được; phân biệt "đo rồi đạt" với "không đo được".</param>
+    private static GateDecision Accept(
+        CompressionLevel level,
+        QualitySample? worst,
+        int measuredCount,
+        WindowRole? worstRole)
+    {
+        if (worst is null)
+        {
+            return GateDecision.Keep(
+                DecisionReasons.Accepted, SkipReason.None, null, null);
+        }
+
+        var floor = QualityPolicy.For(level, VmafModels.Default);
+        var where = worstRole is null ? string.Empty : $" ở đoạn {worstRole}";
+
+        return GateDecision.Keep(
             DecisionReasons.Accepted,
             SkipReason.None,
-            quality is null
-                ? null
-                : $"VMAF {quality.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {QualityPolicy.For(level, VmafModels.Default)})",
-            quality);
+            $"VMAF {worst.Mean.ToString("0.0", CultureInfo.InvariantCulture)}"
+                + $" (P5 {worst.P5.ToString("0.0", CultureInfo.InvariantCulture)}){where}"
+                + $", ngưỡng {floor}"
+                + $" — đo {measuredCount.ToString(CultureInfo.InvariantCulture)} đoạn, đoạn tệ nhất.",
+            worst);
+    }
 }

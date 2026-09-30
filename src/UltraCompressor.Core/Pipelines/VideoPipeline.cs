@@ -1,4 +1,5 @@
 using System.Globalization;
+using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Planning;
@@ -68,16 +69,20 @@ public sealed class VideoPipeline : FFmpegPipelineBase
 
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
         args.AddRange(ProgressArgs);
-        args.AddRange(
-        [
-            "-i", context.SourcePath,
-            "-map", "0:v:0?",
-            "-map", "0:a:0?",
-            "-map_metadata", "0",
-            "-c:v", plan.VideoEncoder,
-            "-crf", plan.Crf.ToString(CultureInfo.InvariantCulture),
-            "-preset", plan.Preset,
-        ]);
+        args.AddRange(["-i", context.SourcePath, "-map", "0:v:0?", "-map", "0:a:0?", "-map_metadata", "0"]);
+
+        // Dựng phần encoder từ cấu hình có kiểu, không ghép tay từ các chuỗi rời rạc.
+        // Đây là tầng duy nhất được phép biết tên công tắc ffmpeg, nên cũng là tầng duy
+        // nhất có thể sinh ra một cặp công tắc/giá trị sai.
+        var encoder = EncoderConfigurationFor(plan);
+        if (!encoder.Validate(out var configurationFailure))
+        {
+            return PipelineResult.Failed(
+                SkipReason.Error,
+                $"Cấu hình encoder không hợp lệ: {configurationFailure}");
+        }
+
+        args.AddRange(encoder.ToArguments());
 
         // Rỗng = giữ nguyên cả bề rộng lẫn số khung hình, không dựng `-vf` cho nên không tốn công gì.
         var filter = VideoFilter.Build(plan.TargetWidth, plan.TargetFps);
@@ -116,6 +121,43 @@ public sealed class VideoPipeline : FFmpegPipelineBase
     /// đúng bằng thứ đã cộng — để một hằng số ở hai nơi là cách chắc chắn nhất để chúng lệch.
     /// </summary>
     private const int HevcCrfOffset = CompressionPlanner.HevcCrfOffsetForH264;
+
+    /// <summary>
+    /// Ép kế hoạch của planner cũ thành cấu hình encode có kiểu.
+    ///
+    /// <para>Đây là chỗ nối duy nhất giữa đường legacy và mô hình tuỳ chọn mới. Nó tồn tại
+    /// để <see cref="CompressionPlanner"/> (vốn trả chuỗi trần) không thể tự dựng được
+    /// lệnh; khi giai đoạn tìm kiếm nối vào, chỗ này biến mất cùng đường legacy.</para>
+    ///
+    /// <para>Chọn lớp tuỳ chọn theo <b>tên encoder</b>, không theo tên codec trong kế
+    /// hoạch: <c>-crf 0..51</c> cho x26x và <c>-crf 0..63</c> cho libaom là hai miền khác
+    /// nhau, còn <c>-cpu-used</c> thì không dùng chung với <c>-preset</c>.</para>
+    /// </summary>
+    public static EncoderConfiguration EncoderConfigurationFor(VideoPlan plan)
+    {
+        var kind = EncoderRanges.KindOf(plan.VideoEncoder);
+        var crf = plan.Crf;
+
+        return new EncoderConfiguration
+        {
+            EncoderName = plan.VideoEncoder,
+            Quality = kind switch
+            {
+                EncoderKind.LibaomAv1 => QualityOption.LibaomCrf(crf),
+                EncoderKind.SvtAv1 => QualityOption.SvtAv1Qp(crf),
+                EncoderKind.Hardware => QualityOption.HardwareConstantQuality(crf),
+                _ => QualityOption.X26xCrf(crf),
+            },
+            Speed = kind switch
+            {
+                EncoderKind.LibaomAv1 => SpeedOption.AomCpuUsed(6),
+                EncoderKind.SvtAv1 => SpeedOption.SvtAv1Preset(8),
+                EncoderKind.Hardware => SpeedOption.HardwareEncoderPreset(plan.Preset),
+                _ => SpeedOption.X26xPreset(plan.Preset),
+            },
+            PixelFormat = "yuv420p",
+        };
+    }
 
     /// <summary>
     /// Bổ sung đặc trưng nội dung vào kết quả probe. Không ném lỗi ra ngoài: mất đo được

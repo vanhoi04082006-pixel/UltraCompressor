@@ -1,4 +1,5 @@
 using System.Globalization;
+using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 
@@ -133,7 +134,7 @@ public static class CandidatePlanner
         {
             foreach (var domain in domains)
             {
-                var preset = domain.Preset(budget);
+                var speed = domain.Speed(budget);
                 var pixelFormat = domain.PixelFormats[0];
                 var tune = domain.TuneFor(source.Content);
                 var branchId = $"{domain.Codec}/{branch.Width}x{branch.Height}";
@@ -151,22 +152,28 @@ public static class CandidatePlanner
                         continue;
                     }
 
-                    var candidate = new VideoEncodeCandidate($"{branchId}/q{quality.ToString("0.##", CultureInfo.InvariantCulture)}")
+                    // Ép tham số chất lượng thành tuỳ chọn có kiểu ngay tại đây, một lần và
+                    // duy nhất. Từ chỗ này trở đi không còn con số chất lượng trần nào nữa,
+                    // nên không thể vô tình so số của x264 với số của libaom.
+                    var qualityOption = domain.Quality(quality);
+
+                    var candidate = new VideoEncodeCandidate(
+                        $"{branchId}/{qualityOption.Switch.TrimStart('-')}{qualityOption.Text}")
                     {
                         Codec = domain.Codec,
                         EncoderName = domain.EncoderName,
-                        QualityParameter = quality,
+                        Quality = qualityOption,
                         Width = branch.Width,
                         Height = branch.Height,
                         Fps = source.Fps,
-                        Preset = preset,
+                        Speed = speed,
                         PixelFormat = pixelFormat,
                         Tune = tune,
                         Origin = i == 0 ? CandidateOrigin.CoarseProbe : CandidateOrigin.QualityAnchor,
                         BranchId = branchId,
                         PointIndex = i,
                         PointCount = points.Count,
-                        Reason = Explain(domain, branch, quality, preset, i, points.Count),
+                        Reason = Explain(domain, branch, quality, speed, i, points.Count),
                     };
 
                     // Loại trùng ngữ nghĩa: cùng codec, cùng kích thước, cùng tham số chất
@@ -175,8 +182,8 @@ public static class CandidatePlanner
                     // nghĩa thì loại được ngay.
                     var key = string.Join('|',
                         candidate.EncoderName, candidate.Width, candidate.Height,
-                        candidate.QualityParameter.ToString("0.##", CultureInfo.InvariantCulture),
-                        candidate.Preset, candidate.PixelFormat, candidate.Tune ?? string.Empty);
+                        qualityOption.Switch, qualityOption.Text,
+                        speed.Switch, speed.Text, candidate.PixelFormat, candidate.Tune ?? string.Empty);
 
                     if (!seen.Add(key))
                     {
@@ -404,13 +411,10 @@ public static class CandidatePlanner
         IEncoderSearchDomain domain,
         Branch branch,
         double quality,
-        string preset,
+        SpeedOption speed,
         int pointIndex,
         int pointCount)
     {
-        // Luôn nêu kích thước thật, kể cả nhánh giữ nguyên độ phân giải nguồn. Nói
-        // "giữ nguyên độ phân giải nguồn" thì không dựng lại được lệnh ffmpeg mà không
-        // phải mở lại tệp nguồn.
         var size = branch.IsSourceSize
             ? $"giữ nguyên độ phân giải nguồn {branch.Width}x{branch.Height}"
             : $"nhánh nhỏ hơn {branch.Width}x{branch.Height}";
@@ -421,9 +425,10 @@ public static class CandidatePlanner
                 ? "neo chất lượng để khoanh biên"
                 : "điểm nén mạnh nhất của nhánh";
 
-        // In ra con số thật. Trước đây chỗ này in chỉ số điểm ("2/3"), tức là log nói
+        // In ra cấu hình thật. Trước đây chỗ này in chỉ số điểm ("2/3"), tức là log nói
         // "chất lượng = 2/3" — một câu trả lời không ai dùng được để dựng lệnh ffmpeg.
-        return $"{domain.EncoderName} · {size} · {role} · "
-            + $"{domain.PresetSwitch} {preset} {domain.QualitySwitch} {quality.ToString("0.##", CultureInfo.InvariantCulture)}";
+        // Tuỳ chọn đã có kiểu nên tự biết tên công tắc của mình.
+        return $"{domain.EncoderName} · {size} · {role} · {speed} · "
+            + $"{domain.Quality(quality)}";
     }
 }

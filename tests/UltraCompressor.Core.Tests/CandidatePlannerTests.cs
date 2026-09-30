@@ -1,4 +1,5 @@
 using System.Globalization;
+using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Planning;
@@ -63,8 +64,8 @@ public class CandidatePlannerTests
         // Ngân sách khác nhau phải cho tập ứng viên khác nhau — đó là chỗ nó được phép
         // khác nhau. Chất lượng thì không: cùng mode thì cùng ngưỡng.
         Assert.NotEqual(
-            fast.EncodeCandidates.Select(c => c.Preset).Distinct().Order(),
-            thorough.EncodeCandidates.Select(c => c.Preset).Distinct().Order());
+            fast.EncodeCandidates.Select(c => c.Speed.Text).Distinct().Order(),
+            thorough.EncodeCandidates.Select(c => c.Speed.Text).Distinct().Order());
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public class CandidatePlannerTests
         var source = Source();
         var presets = new[] { CompressionLevel.Light, CompressionLevel.Balanced, CompressionLevel.Strong }
             .Select(level => Plan(source, level, budget: ComputeBudget.Fast)
-                .EncodeCandidates.Select(c => c.Preset).Distinct().Order().ToArray())
+                .EncodeCandidates.Select(c => c.Speed.Text).Distinct().Order().ToArray())
             .ToArray();
 
         Assert.Equal(presets[0], presets[1]);
@@ -112,8 +113,8 @@ public class CandidatePlannerTests
 
             Assert.Equal(lightBranch.Count, strongBranch.Count);
             Assert.True(
-                lightBranch.Max(c => c.QualityParameter) < strongBranch.Min(c => c.QualityParameter),
-                $"nhánh {branch}: nhe {lightBranch.Max(c => c.QualityParameter)} khong < manh {strongBranch.Min(c => c.QualityParameter)}");
+                lightBranch.Max(c => c.QualityValue) < strongBranch.Min(c => c.QualityValue),
+                $"nhánh {branch}: nhe {lightBranch.Max(c => c.QualityValue)} khong < manh {strongBranch.Min(c => c.QualityValue)}");
         }
     }
 
@@ -135,8 +136,8 @@ public class CandidatePlannerTests
 
         for (var i = 1; i < byHeight.Count; i++)
         {
-            var higher = byHeight[i - 1].Max(c => c.QualityParameter);
-            var lower = byHeight[i].Max(c => c.QualityParameter);
+            var higher = byHeight[i - 1].Max(c => c.QualityValue);
+            var lower = byHeight[i].Max(c => c.QualityValue);
 
             Assert.True(
                 lower < higher,
@@ -308,8 +309,8 @@ public class CandidatePlannerTests
     {
         // Mode khác nhau phải cho tập ứng viên khác nhau, nếu không mode chưa làm gì.
         var source = Source(1920, 1080);
-        var light = Plan(source, CompressionLevel.Light).EncodeCandidates.Select(c => c.QualityParameter).ToHashSet();
-        var strong = Plan(source, CompressionLevel.Strong).EncodeCandidates.Select(c => c.QualityParameter).ToHashSet();
+        var light = Plan(source, CompressionLevel.Light).EncodeCandidates.Select(c => c.QualityValue).ToHashSet();
+        var strong = Plan(source, CompressionLevel.Strong).EncodeCandidates.Select(c => c.QualityValue).ToHashSet();
 
         Assert.NotEmpty(light.Except(strong));
     }
@@ -373,7 +374,7 @@ public class CandidatePlannerTests
         var plan = Plan(Source(3840, 2160), budget: ComputeBudget.Thorough);
 
         var keys = plan.EncodeCandidates
-            .Select(c => string.Join('|', c.EncoderName, c.Width, c.Height, c.QualityParameter, c.Preset, c.PixelFormat, c.Tune ?? ""))
+            .Select(c => string.Join('|', c.EncoderName, c.Width, c.Height, c.QualityValue, c.Speed.Text, c.PixelFormat, c.Tune ?? ""))
             .ToList();
 
         Assert.Equal(keys.Count, keys.Distinct(StringComparer.Ordinal).Count());
@@ -453,38 +454,38 @@ public class CandidatePlannerTests
     // ================================================================= Ứng viên phải dựng được lệnh ffmpeg
 
     [Fact]
-    public void Gia_tri_preset_luon_la_the_tran_khong_phai_manh_cu_phap()
+    public void Gia_tri_toc_do_luon_la_the_tran_khong_phai_manh_cu_phap()
     {
-        // Trước đây miền AV1 trả về "cpu-used=9". Nếu giai đoạn dựng lệnh ghép thành
-        // "-preset cpu-used=9" thì ffmpeg từ chối, và lỗi chỉ lộ ra khi encode thật. Ở đây
-        // chặn ngay: giá trị phải là một thẻ đơn, và công tắc nằm ở chỗ khác.
+        // Trước đây miền AV1 trả về "cpu-used=9", và lệnh dựng ra là "-preset cpu-used=9":
+        // ffmpeg không báo lỗi mà bỏ qua âm thầm, khiến encode chậm hơn 74 lần. Ở mô hình có
+        // kiểu thì giá trị không thể chứa dấu "=" ngay từ kiểu dữ liệu.
         foreach (IEncoderSearchDomain domain in AllDomains())
         {
             foreach (var budget in new[] { ComputeBudget.Fast, ComputeBudget.Normal, ComputeBudget.Thorough })
             {
-                var preset = domain.Preset(budget);
+                var speed = domain.Speed(budget);
 
-                Assert.False(preset.Contains('='), $"{domain.EncoderName}/{budget}: preset \"{preset}\" chua la the tran");
-                Assert.False(preset.Contains(' '), $"{domain.EncoderName}/{budget}: preset \"{preset}\" chua la the tran");
-                Assert.False(string.IsNullOrWhiteSpace(preset), $"{domain.EncoderName}/{budget}: preset rong");
+                Assert.DoesNotContain("=", speed.Text);
+                Assert.DoesNotContain(" ", speed.Text);
+                Assert.False(string.IsNullOrWhiteSpace(speed.Text));
+                Assert.StartsWith("-", speed.Switch, StringComparison.Ordinal);
             }
         }
     }
 
     [Fact]
-    public void Cong_tac_cua_preset_dung_voi_tung_encoder()
+    public void Cong_tac_cua_toc_do_dung_voi_tung_encoder()
     {
         // libaom không dùng -preset kiểu x264; mức tốc độ của nó nằm ở -cpu-used. Ghép sai
-        // công tắc là lỗi âm thầm: encoder vẫn chạy nhưng chạy theo mức tốc độ mặc định,
-        // tức là khoảng 10-50 lần chậm so với dự kiến.
-        Assert.Equal("-preset", new X264SearchDomain().PresetSwitch);
-        Assert.Equal("-preset", new X265SearchDomain().PresetSwitch);
-        Assert.Equal("-cpu-used", new LibaomAv1SearchDomain().PresetSwitch);
+        // là lỗi âm thầm: encoder vẫn chạy nhưng theo mức tốc độ mặc định.
+        Assert.Equal("-preset", new X264SearchDomain().Speed(ComputeBudget.Normal).Switch);
+        Assert.Equal("-preset", new X265SearchDomain().Speed(ComputeBudget.Normal).Switch);
+        Assert.Equal("-cpu-used", new LibaomAv1SearchDomain().Speed(ComputeBudget.Normal).Switch);
 
         foreach (IEncoderSearchDomain domain in AllDomains())
         {
-            Assert.StartsWith("-", domain.PresetSwitch, StringComparison.Ordinal);
-            Assert.Equal("-crf", domain.QualitySwitch);
+            Assert.StartsWith("-", domain.Speed(ComputeBudget.Normal).Switch, StringComparison.Ordinal);
+            Assert.Equal("-crf", domain.Quality(23).Switch);
         }
     }
 
@@ -500,18 +501,51 @@ public class CandidatePlannerTests
         // rõ nguồn để lần đo sau cần cập nhật cả hai.
         foreach (var budget in new[] { ComputeBudget.Fast, ComputeBudget.Normal, ComputeBudget.Thorough })
         {
+            var speed = domain.Speed(budget);
             Assert.True(
-                int.TryParse(domain.Preset(budget), out var cpuUsed) && cpuUsed is >= 0 and <= 8,
-                $"{budget}: cpu-used \"{domain.Preset(budget)}\" ngoai 0..8 do duoc");
+                int.TryParse(speed.Text, CultureInfo.InvariantCulture, out var cpuUsed) && cpuUsed is >= 0 and <= 8,
+                $"{budget}: cpu-used \"{speed.Text}\" ngoài 0..8 đo được");
         }
 
         // cpu-used nhỏ = chậm và nén tốt, nên ngân sách càng kỹ thì cpu-used càng nhỏ.
-        var fast = int.Parse(domain.Preset(ComputeBudget.Fast), CultureInfo.InvariantCulture);
-        var normal = int.Parse(domain.Preset(ComputeBudget.Normal), CultureInfo.InvariantCulture);
-        var thorough = int.Parse(domain.Preset(ComputeBudget.Thorough), CultureInfo.InvariantCulture);
+        var fast = int.Parse(domain.Speed(ComputeBudget.Fast).Text, CultureInfo.InvariantCulture);
+        var normal = int.Parse(domain.Speed(ComputeBudget.Normal).Text, CultureInfo.InvariantCulture);
+        var thorough = int.Parse(domain.Speed(ComputeBudget.Thorough).Text, CultureInfo.InvariantCulture);
 
-        Assert.True(fast > normal, $"nhanh {fast} phai lon hon thuong {normal}");
-        Assert.True(normal > thorough, $"thuong {normal} phai lon hon ky {thorough}");
+        Assert.True(fast > normal, $"nhanh {fast} phải lớn hơn thường {normal}");
+        Assert.True(normal > thorough, $"thường {normal} phải lớn hơn kỹ {thorough}");
+    }
+
+    [Fact]
+    public void Chi_dung_duoc_luong_tu_nhanh_hon_khong_roi_tuyen_chon()
+    {
+        // Ứng viên AV1 có CRF 52 hợp lệ (miền 0–63) nhưng cùng con số đó với x264 thì vượt
+        // miền. Miền AV1 rộng hơn là cố ý; dùng chung một thang số là lỗi đã bị chặn.
+        var av1 = new LibaomAv1SearchDomain().Quality(52);
+        Assert.True(av1.IsInRange, "AV1 phải nhận 52");
+        Assert.Equal(63, av1.AcceptedRange.Max);
+
+        var x264 = new X264SearchDomain().Quality(52);
+        Assert.False(x264.IsInRange, "x264 không được nhận 52");
+    }
+
+    [Fact]
+    public void Moi_diem_trong_mien_da_vao_duoc_kiem_tra_cua_bo_dung_luong()
+    {
+        // Điểm mấu chốt của mô hình có kiểu: thang số phải là của chính codec, và cấu hình
+        // sinh ra phải vượt qua kiểm tra của đúng encoder đó.
+        foreach (IEncoderSearchDomain domain in AllDomains())
+        {
+            var configuration = new EncoderConfiguration
+            {
+                EncoderName = domain.EncoderName,
+                Quality = domain.Quality(domain.DefaultQualityPoint),
+                Speed = domain.Speed(ComputeBudget.Normal),
+                PixelFormat = "yuv420p",
+            };
+
+            Assert.True(configuration.Validate(out var failure), $"{domain.EncoderName}: {failure}");
+        }
     }
 
     [Fact]
@@ -541,11 +575,11 @@ public class CandidatePlannerTests
 
         foreach (var c in plan.EncodeCandidates)
         {
-            var expected = c.QualityParameter.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+            var expected = c.QualityValue.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
             Assert.Contains(c.EncoderName, c.Reason);
             Assert.Contains(expected, c.Reason);
-            Assert.Contains(c.Preset, c.Reason);
+            Assert.Contains(c.Speed.Text, c.Reason);
             Assert.Contains($"{c.Width}x{c.Height}", c.Reason);
         }
     }
@@ -602,7 +636,7 @@ public class CandidatePlannerTests
 
         foreach (var branch in plan.EncodeCandidates.GroupBy(c => c.BranchId))
         {
-            var points = branch.Select(c => c.QualityParameter).ToList();
+            var points = branch.Select(c => c.QualityValue).ToList();
             Assert.Equal(points.Count, points.Distinct().Count());
         }
     }
@@ -616,14 +650,16 @@ public class CandidatePlannerTests
         var x264 = new X264SearchDomain();
         var libaom = new LibaomAv1SearchDomain();
 
-        Assert.NotEqual(x264.PresetSwitch, libaom.PresetSwitch);
+        Assert.NotEqual(
+            x264.Speed(ComputeBudget.Fast).Switch,
+            libaom.Speed(ComputeBudget.Fast).Switch);
 
         // Và ghép theo công tắc của từng miền thì không chứa dấu "=" — dấu báo hiệu đây là
         // dạng "mảnh cú pháp" mà ffmpeg sẽ bỏ qua.
         foreach (var domain in AllDomains())
         {
-            var args = $"{domain.PresetSwitch} {domain.Preset(ComputeBudget.Fast)}";
-            Assert.DoesNotContain("=", args);
+            var speed = domain.Speed(ComputeBudget.Fast);
+            Assert.DoesNotContain("=", $"{speed.Switch} {speed.Text}");
         }
     }
 
@@ -642,7 +678,7 @@ public class CandidatePlannerTests
         Assert.All(branches, branch =>
         {
             Assert.All(
-                branch.OrderBy(c => c.QualityParameter),
+                branch.OrderBy(c => c.QualityValue),
                 c => Assert.InRange(c.PointIndex, 0, c.PointCount - 1));
         });
     }
@@ -701,11 +737,11 @@ public class CandidatePlannerTests
         {
             Codec = VideoCodec.H264,
             EncoderName = "libx264",
-            QualityParameter = 23,
+            Quality = QualityOption.X26xCrf(23),
             Width = 1920,
             Height = 1080,
             Fps = 24,
-            Preset = "medium",
+            Speed = SpeedOption.X26xPreset("medium"),
             PixelFormat = "yuv420p",
             Origin = CandidateOrigin.CoarseProbe,
             BranchId = "H264/1920x1080",
@@ -715,6 +751,9 @@ public class CandidatePlannerTests
         };
 
         Assert.IsAssignableFrom<CompressionCandidate>(encode);
+
+        // Và phải dựng được thành lệnh hợp lệ ngay từ ứng viên.
+        Assert.True(encode.Validate(out var failure), failure);
     }
 
     [Fact]
@@ -743,7 +782,7 @@ public class CandidatePlannerTests
         foreach (var (a, b) in depletedX264.Zip(richX264))
         {
             Assert.Equal(a.BranchId, b.BranchId);
-            Assert.Equal(a.QualityParameter, b.QualityParameter);
+            Assert.Equal(a.QualityValue, b.QualityValue);
         }
     }
 
@@ -764,8 +803,8 @@ public class CandidatePlannerTests
 
         // Nội dung động nên dồn về chất lượng cao hơn nội dung tĩnh.
         Assert.True(
-            busy.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityParameter)
-            < still.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityParameter));
+            busy.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityValue)
+            < still.EncodeCandidates.Where(c => c.Codec == VideoCodec.H264).Max(c => c.QualityValue));
     }
 
     // ================================================================= Ràng buộc mode

@@ -1,3 +1,5 @@
+using UltraCompressor.Core.Encoders;
+
 namespace UltraCompressor.Core.Planning;
 
 /// <summary>
@@ -55,10 +57,14 @@ public sealed record VideoEncodeCandidate(string Id) : CompressionCandidate(Id)
     public required string EncoderName { get; init; }
 
     /// <summary>
-    /// Tham số chất lượng của codec này (CRF/CQ). Nghĩa và thang **không** giống nhau giữa
-    /// các codec — đó là lý do nó thuộc miền tìm kiếm chứ không phải một con số chung.
+    /// Tuỳ chọn chất lượng của <b>đúng codec này</b>: thang số, công tắc và miền giá trị
+    /// đều do miền tìm kiếm quyết định.
+    ///
+    /// <para>Kiểu này thay cho một <c>double</c> trần. X264 <c>-crf 30</c>, libaom
+    /// <c>-crf 30</c> và SVT-AV1 <c>-qp 30</c> là ba mức chất lượng không liên quan; để
+    /// chúng chung một kiểu số là để mời người kế tiếp so chúng như thể cùng thang.</para>
     /// </summary>
-    public required double QualityParameter { get; init; }
+    public required QualityOption Quality { get; init; }
 
     public required int Width { get; init; }
 
@@ -67,8 +73,11 @@ public sealed record VideoEncodeCandidate(string Id) : CompressionCandidate(Id)
     /// <summary>Luôn bằng FPS nguồn ở giai đoạn này: không tăng, không giảm.</summary>
     public required double Fps { get; init; }
 
-    /// <summary>Preset encode, do ngân sách tính toán quyết định.</summary>
-    public required string Preset { get; init; }
+    /// <summary>
+    /// Tuỳ chọn tốc độ, do ngân sách tính toán quyết định. Kiểu đã biết công tắc, nên không
+    /// thể sinh ra <c>-preset cpu-used=8</c>.
+    /// </summary>
+    public required SpeedOption Speed { get; init; }
 
     public required string PixelFormat { get; init; }
 
@@ -90,4 +99,20 @@ public sealed record VideoEncodeCandidate(string Id) : CompressionCandidate(Id)
 
     /// <summary>Câu giải thích tiếng Việt, đủ để trả lời "vì sao thử phương án này".</summary>
     public required string Reason { get; init; }
+
+    /// <summary>Giá trị chất lượng dạng số, chỉ để hiển thị và gom nhóm. So số này giữa hai codec khác nhau là vô nghĩa.</summary>
+    public double QualityValue => Quality.Numeric;
+
+    /// <summary>Ép ứng viên thành cấu hình encode có thể dựng lệnh.</summary>
+    public EncoderConfiguration ToEncoderConfiguration() => new()
+    {
+        EncoderName = EncoderName,
+        Quality = Quality,
+        Speed = Speed,
+        Tune = Tune,
+        PixelFormat = PixelFormat,
+    };
+
+    /// <summary>Kiểm tra ứng viên có dựng được lệnh hợp lệ không. Gọi ở ranh giới.</summary>
+    public bool Validate(out string failure) => ToEncoderConfiguration().Validate(out failure);
 }

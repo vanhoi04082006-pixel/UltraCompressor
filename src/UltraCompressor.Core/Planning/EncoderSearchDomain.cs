@@ -1,4 +1,5 @@
 using System.Globalization;
+using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 
@@ -46,21 +47,37 @@ public interface IEncoderSearchDomain
         CompressionLevel level, double bias, double detailScale, int count);
 
     /// <summary>
-    /// Tên preset encode, do <b>ngân sách tính toán</b> quyết định — không phải do mode.
+    /// Vị trí trung tâm mặc định của miền: <b>giá trị mặc định của chính encoder</b>
+    /// (x264 23, x265 28, libaom 32), không phải con số do mức nén chọn.
+    ///
+    /// <para>Công khai vì nó là dữ kiện thật về encoder và cần kiểm chứng được độc lập — mode
+    /// chỉ được phép dịch vị trí quanh nó, nên bất biến "mode không đổi được mặc định của
+    /// encoder" phải kiểm được từ bên ngoài.</para>
+    /// </summary>
+    double DefaultQualityPoint { get; }
+
+    /// <summary>
+    /// Tuỳ chọn tốc độ encode, do <b>ngân sách tính toán</b> quyết định — không phải do mode.
     /// </summary>
     /// <remarks>
-    /// Giá trị này phải là <b>một thẻ đơn</b>, không phải mảnh cú pháp dòng lệnh. Trước đây
-    /// miền AV1 trả về <c>"cpu-used=9"</c>, và nếu giai đoạn dựng lệnh ghép thành
-    /// <c>-preset cpu-used=9</c> thì ffmpeg sẽ từ chối. Tên công tắc nằm ở
-    /// <see cref="PresetSwitch"/>.
+    /// Kiểu đã biết sẵn công tắc và miền giá trị của chính nó, nên không thể sinh ra
+    /// <c>-preset cpu-used=8</c>: x26x trả <c>X26xPreset</c> chỉ nhận tên trong danh sách
+    /// đóng, còn libaom trả <c>AomCpuUsed</c> luôn gắn với <c>-cpu-used</c>.
+    ///
+    /// <para>Trước đây hàm này trả chuỗi trần, và chỗ duy nhất có thể ghép nhầm là tầng dựng
+    /// lệnh. Loại bỏ chuỗi khỏi biên là cách chặn đúng chỗ đó.</para>
     /// </remarks>
-    string Preset(ComputeBudget budget);
+    SpeedOption Speed(ComputeBudget budget);
 
-    /// <summary>Công tắc ffmpeg mang giá trị của <see cref="Preset"/>, ví dụ <c>-preset</c>.</summary>
-    string PresetSwitch { get; }
-
-    /// <summary>Công tắc ffmpeg mang giá trị chất lượng, ví dụ <c>-crf</c>.</summary>
-    string QualitySwitch { get; }
+    /// <summary>
+    /// Tuỳ chọn chất lượng của <b>chính codec này</b>, gắn sẵn đúng thang số và công tắc.
+    /// </summary>
+    /// <remarks>
+    /// x264/x265 dùng <c>-crf</c> thang 0–51; libaom dùng <c>-crf</c> thang 0–63; SVT-AV1 dùng
+    /// <c>-qp</c> thang riêng. Gộp chung thành một số trần là mời người kế tiếp so chúng
+    /// như thể cùng thang, và đó chính là điều đã sai ở mã cũ.
+    /// </remarks>
+    QualityOption Quality(double value);
 
     /// <summary>Định dạng pixel đầu ra theo thứ tự ưu tiên; phần tử đầu là mặc định.</summary>
     IReadOnlyList<string> PixelFormats { get; }
@@ -106,6 +123,9 @@ public abstract class X26xSearchDomain(VideoCodec codec, string encoderName, dou
     /// thành cam kết chất lượng.
     /// </summary>
     protected double DefaultQuality { get; } = defaultQuality;
+
+    /// <inheritdoc />
+    public double DefaultQualityPoint => DefaultQuality;
 
     /// <summary>
     /// <b>Chưa hiệu chỉnh.</b> Số điểm chất lượng cần dịch xuống bao nhiêu cho mỗi lần
@@ -168,11 +188,13 @@ public abstract class X26xSearchDomain(VideoCodec codec, string encoderName, dou
         return points;
     }
 
-    public abstract string Preset(ComputeBudget budget);
+    public abstract SpeedOption Speed(ComputeBudget budget);
 
-    public virtual string PresetSwitch => "-preset";
-
-    public virtual string QualitySwitch => "-crf";
+    /// <summary>
+    /// x264 và x265 dùng chung thang CRF 0–51, nên phần lớn thân miền dùng chung.
+    /// AV1 phải ghi đè vì thang số và cả tên công tắc đều khác.
+    /// </summary>
+    public virtual QualityOption Quality(double value) => QualityOption.X26xCrf(value);
 
     public IReadOnlyList<string> PixelFormats { get; } = ["yuv420p10le", "yuv420p"];
 
@@ -214,12 +236,12 @@ public sealed class X264SearchDomain : X26xSearchDomain
     {
     }
 
-    public override string Preset(ComputeBudget budget) => budget switch
+    public override SpeedOption Speed(ComputeBudget budget) => SpeedOption.X26xPreset(budget switch
     {
         ComputeBudget.Fast => "veryfast",
         ComputeBudget.Thorough => "slow",
         _ => "medium",
-    };
+    });
 
     public override string? TuneFor(ContentProfile profile) => profile switch
     {
@@ -237,12 +259,12 @@ public sealed class X265SearchDomain : X26xSearchDomain
     {
     }
 
-    public override string Preset(ComputeBudget budget) => budget switch
+    public override SpeedOption Speed(ComputeBudget budget) => SpeedOption.X26xPreset(budget switch
     {
         ComputeBudget.Fast => "fast",
         ComputeBudget.Thorough => "slow",
         _ => "medium",
-    };
+    });
 
     public override string? TuneFor(ContentProfile profile) => profile switch
     {
@@ -282,19 +304,25 @@ public sealed class LibaomAv1SearchDomain : X26xSearchDomain
     {
     }
 
-    public override string Preset(ComputeBudget budget) => budget switch
+    public override SpeedOption Speed(ComputeBudget budget) => SpeedOption.AomCpuUsed(budget switch
     {
         // cpu-used: 0 chậm nhất, 8 nhanh nhất — chiều NGƯỢC với preset của x264/x265.
-        // Trả về thẻ trần; công tắc do PresetSwitch chỉ định.
         //
         // Trần là 8, đo trên bản ffmpeg đi kèm: "-cpu-used 9" bị từ chối với
         // "Value 9.000000 for parameter 'cpu-used' out of range [0 - 8]". Trước đây chỗ
         // này dùng 9 theo thói quen của tài liệu SVT-AV1, và sẽ chỉ lộ lỗi khi encode
         // thật. Miền này phụ thuộc bản dựng, nên hằng số đi kèm ghi rõ nguồn.
-        ComputeBudget.Fast => "8",
-        ComputeBudget.Thorough => "3",
-        _ => "6",
-    };
+        ComputeBudget.Fast => 8,
+        ComputeBudget.Thorough => 3,
+        _ => 6,
+    });
+
+    /// <summary>
+    /// libaom dùng <c>-crf</c> nhưng thang 0–63, khác x26x. Ghi đè bắt buộc: dùng chung
+    /// <c>X26xCrf</c> sẽ chặn oan mọi ứng viên AV1 trên 51 — đúng loại lỗi mà kiểu tuỳ
+    /// chọn riêng sinh ra để chặn.
+    /// </summary>
+    public override QualityOption Quality(double value) => QualityOption.LibaomCrf(value);
 
     /// <summary>libaom không dùng <c>-preset</c> kiểu x264; mức tốc độ nằm ở <c>-cpu-used</c>.</summary>
     /// <remarks>
@@ -309,9 +337,11 @@ public sealed class LibaomAv1SearchDomain : X26xSearchDomain
     /// (cpu-used 1) và chậm hơn 74 lần. Với tệp 40 phút, một ứng viên "Nhanh" sẽ mất
     /// hơn 20 giờ thay vì 16 phút, và người dùng chỉ thấy nó "thành công". Đây là dạng
     /// lỗi tệ nhất: thất bại mà trông như thành công.</para>
+    ///
+    /// <para>Giờ lỗi đó không còn biểu diễn được: <c>SpeedOption.AomCpuUsed</c> luôn sinh
+    /// <c>-cpu-used</c>, còn <c>X26xPreset</c> chỉ nhận tên trong danh sách đóng nên không
+    /// mang được giá trị <c>cpu-used=8</c>.</para>
     /// </remarks>
-    public override string PresetSwitch => "-cpu-used";
-
     public override string? TuneFor(ContentProfile profile) => null;
 
     /// <summary>

@@ -213,4 +213,66 @@ public sealed class AppConfig
     /// vẫn mất thời gian. Người dùng nén màn hình nên chọn H.264.</para>
     /// </summary>
     public string VideoCodec { get; set; } = "hevc";
+
+    /// <summary>
+    /// Chép các thiết lập lúc chạy từ một bản cấu hình khác vào đối tượng đang chạy.
+    /// </summary>
+    /// <remarks>
+    /// <para>Đặt ở đây, trong <see cref="AppConfig"/>, vì đây là <b>ngữ nghĩa của cấu hình</b> —
+    /// câu hỏi "trường nào được giao diện gửi lên" thuộc về cấu hình, không thuộc về tầng WinForms.
+    /// Nhờ vậy quy tắc này kiểm thử được mà không cần dựng cửa sổ, thay vì nằm trong một hàm
+    /// <c>internal</c> của dự án giao diện mà dự án kiểm thử không tham chiếu được.</para>
+    ///
+    /// <para><b>Danh sách trường là một danh sách cho phép, không phải danh sách loại trừ.</b>
+    /// Trường không có trong đây thì giữ nguyên giá trị đang chạy. Đó là điểm cố ý: một cờ thử
+    /// nghiệm mà giao diện không có ô bật sẽ không bao giờ bị ghi đè bởi một lần lưu cấu hình.</para>
+    ///
+    /// <para><b>Lỗi đã mắc phải và vì sao quy tắc này tồn tại:</b> trước đây hàm chép cấu
+    /// hình nằm trong tầng giao diện liệt kê tường minh các trường, và trường
+    /// <see cref="EnableAdaptiveSearch"/> không có trong danh sách đó. Người dùng bật cờ bằng
+    /// tay trong tệp cấu hình rồi bấm "Lưu" ở giao diện sẽ thấy cờ bị tắt — và vì thao tác lưu
+    /// ghi lại chính đối tượng đó, giá trị tắt còn nằm trong tệp. Không có dấu hiệu gì cho biết.</para>
+    /// </remarks>
+    /// <param name="from">Bản cấu hình do giao diện gửi lên.</param>
+    /// <param name="preserveExperimentalFlags">
+    /// Giữ nguyên các cờ thử nghiệm đang bật. Mặc định đúng: cờ thử nghiệm không đến từ giao
+    /// diện, nên lấy từ <paramref name="from"/> sẽ luôn cho giá trị mặc định (tắt).
+    /// </param>
+    public void CopyRuntimeSettingsFrom(AppConfig from, bool preserveExperimentalFlags = true)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+
+        var adaptive = EnableAdaptiveSearch;
+
+        Level = from.Level;
+        DryRunDefault = from.DryRunDefault;
+        MaxConcurrent = from.MaxConcurrent;
+        Tools = from.Tools;
+        MinSavingPercent = from.MinSavingPercent;
+        MinFileSizeBytes = from.MinFileSizeBytes;
+        IncludeSubfolders = from.IncludeSubfolders;
+        ExcludePatterns = from.ExcludePatterns;
+        MeasureQuality = from.MeasureQuality;
+        CheckFreeSpace = from.CheckFreeSpace;
+        ConcurrencyScale = from.ConcurrencyScale;
+        LogLevel = from.LogLevel;
+        Theme = from.Theme;
+
+        if (!preserveExperimentalFlags)
+        {
+            EnableAdaptiveSearch = from.EnableAdaptiveSearch;
+            return;
+        }
+
+        // Cờ thử nghiệm chỉ đổi khi ai đó sửa tệp cấu hình, tức là chủ ý.
+        EnableAdaptiveSearch = adaptive;
+    }
+
+    /// <summary>Các cờ thử nghiệm: không đi qua giao diện, nên không bị lưu cấu hình ghi đè.</summary>
+    /// <remarks>
+    /// Liệt kê tường minh để thêm một cờ mới bắt buộc phải quyết định có nên đi qua giao diện
+    /// hay không. Mặc định của mọi cờ ở đây là <b>không</b>: giữ nguyên giá trị đang chạy.
+    /// </remarks>
+    public static IReadOnlyList<string> ExperimentalFlags { get; } =
+        [nameof(EnableAdaptiveSearch)];
 }

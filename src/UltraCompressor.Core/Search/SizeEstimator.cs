@@ -58,7 +58,33 @@ public sealed record SizeCalibrationProvenance(
     double ObservedMin,
     double ObservedMax,
     string Corpus,
-    string Documentation);
+    string Documentation)
+{
+    /// <summary>
+    /// Trạng thái của một bộ hiệu chỉnh đã đủ căn cứ để coi là <b>chứng minh được</b>.
+    /// </summary>
+    public const string CertifiedStatus = "certified";
+
+    /// <summary>
+    /// Bộ hiệu chỉnh này có đủ căn cứ để ra kết luận <b>không hoàn tác được</b> không.
+    /// </summary>
+    /// <remarks>
+    /// <para>Đây là ranh giới quan trọng nhất của cả lớp ước lượng. Biên heuristics dựng từ
+    /// độ lan tỉa <i>quan sát được</i> trên một bộ mẫu nhỏ không phải chứng minh toán học:
+    /// nó không nói được ở ngoài bộ mẫu đó thì sai bao nhiêu.</para>
+    ///
+    /// <para><b>Bằng chứng đã loại giả định đó:</b> trên nguồn nhiễu ngẫu nhiên 720p crf 32
+    /// (84,13 MB), ước lượng ra <b>87,8 MB</b> còn tệp thật là <b>122,3 MB</b> — lệch −28%,
+    /// <b>nằm ngoài toàn bộ khoảng 0,61…0,89</b> đã hiệu chỉnh. Sai số không chỉ lớn hơn dự
+    /// kiến mà còn <b>ra ngoài biên</b>, tức biên không bao trọn thực tế.</para>
+    ///
+    /// <para>Vì vậy bộ hiệu chỉnh hiện tại là <c>provisional</c> và
+    /// <see cref="IsCertified"/> là <c>false</c>. Ước lượng vẫn dùng để xếp hạng, ưu tiên thử
+    /// và báo cáo — những việc sai một chút vẫn ổn — nhưng không được một mình nó quyết định
+    /// bỏ qua full encode rồi kết luận giữ bản gốc.</para>
+    /// </remarks>
+    public bool IsCertified => string.Equals(Status, CertifiedStatus, StringComparison.Ordinal);
+}
 
 /// <summary>Ước lượng dung lượng tệp đầu ra toàn tệp, kèm các giả định đã dùng.</summary>
 public sealed record SizeEstimate

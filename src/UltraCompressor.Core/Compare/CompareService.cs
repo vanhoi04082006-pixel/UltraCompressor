@@ -344,7 +344,9 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         var cached = workspace.Root + Path.DirectorySeparatorChar + $"thumb-{cacheKey}.jpg";
         if (TryReadDataUri(cached, out var hit)) return hit;
 
-        var temp = workspace.CreatePath("thumb", ".jpg");
+        // Ảnh thu nhỏ luôn là JPEG: đây là ảnh để SO SÁNH trong giao diện, không phải ảnh đầu ra
+        // mà người dùng nhận, nên không bám theo container của nguồn.
+        var temp = workspace.CreatePath(OutputContainer.Jpeg);
 
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
 
@@ -395,7 +397,9 @@ public sealed class CompareService(ToolLocator locator, TempWorkspace workspace,
         var cached = workspace.Root + Path.DirectorySeparatorChar + $"thumb-{cacheKey}.jpg";
         if (TryReadDataUri(cached, out var hit)) return hit;
 
-        var temp = workspace.CreatePath("thumb", ".jpg");
+        // Ảnh thu nhỏ luôn là JPEG: đây là ảnh để SO SÁNH trong giao diện, không phải ảnh đầu ra
+        // mà người dùng nhận, nên không bám theo container của nguồn.
+        var temp = workspace.CreatePath(OutputContainer.Jpeg);
 
         // Ghostscript đặt tệp đích bằng -sOutputFile và không có tùy chọn resize như ffmpeg.
         // -r72 cho trang A4 khoảng 595px, vừa đủ cho một nửa màn hình.

@@ -1254,6 +1254,77 @@ H264/1280×720/crf18 (VMAF đoạn tệ nhất 90,1); đầu ra 32,4 MB (tiết 
 ACCEPTED với VMAF 90,3 (P5 88,7). Âm thanh giữ nguyên, không nâng bitrate. Temp cleanup: 0
 file, 0 thư mục search còn lại.
 
+### Phase 5B.1 — Siết bằng chứng, cô lập container, đủ mã lý do
+
+Ba lỗi nặng, đều có bằng chứng, đều đo được.
+
+**1. Biên ước lượng KHÔNG phải chứng minh, nên không được tự kết luận giữ bản gốc.**
+`SizeCalibrationProvenance.IsCertified` là ranh giới. Bằng chứng đã loại giả định cũ: nguồn nhiễu
+720p crf 32 (84,13 MB) cho ước 87,8 MB còn tệp thật 122,3 MB — lệch **−28%, ra NGOÀI chính
+khoảng 0,61…0,89**. Sai số không chỉ lớn hơn dự kiến mà **không bị khoảng bao trọn**. Nên
+`OriginalComparison` chỉ cho phép kết luận giữ bản gốc khi bằng chứng kích thước **được chứng
+nhận**; hiện tại là `provisional` nên chưa đạt, và kết quả là **thiếu bằng chứng → encode** →
+lưới 5A quyết định bằng byte thật. Không thêm hệ số an toàn, không mở rộng khoảng, không bịa
+khoảng tin cậy. Báo cáo ghi rõ bằng cờ
+`EARLY ORIGINAL OPTIMIZATION DISABLED PENDING STRONGER SIZE EVIDENCE`.
+
+**Đo lại trên media thật — kết quả người dùng KHÔNG đổi, chỉ đổi ai quyết định:**
+
+| nguồn | trước | sau |
+|---|---|---|
+| `testsrc2` crf 40 (1,35 MB) | search tự kết luận giữ bản gốc, **không encode** | encode 2,61 MB → 5A loại `OUTPUT_LARGER_THAN_SOURCE` → **giữ bản gốc** |
+| `testsrc2` crf 30 (2,53 MB) | như trên | encode 3,72 MB → 5A loại → **giữ bản gốc** |
+| nhiễu crf 32 (84,13 MB) | encode, 5A loại | không đổi |
+
+Cùng kết quả cuối cùng, nhưng giờ nó dựa trên **byte thật** thay vì một biên đã bị chứng minh là
+không đúng. Đổi lại là một lần encode bị bỏ phí — đánh đổi có chủ đích của correctness trước
+compute.
+
+**2. Container đầu ra bị kế thừa từ phần mở rộng tệp nguồn.** `TempWorkspace.CreatePath` sao
+chép đuôi của nguồn, còn lệnh encode mang `-movflags +faststart` — tuỳ chọn riêng của muxer
+mov/mp4. Đo trên ffmpeg thật, cùng một lệnh, chỉ khác đuôi đầu ra:
+
+| đuôi đầu ra | container thật | faststart |
+|---|---|---|
+| `.mp4` | `ftyp isom` | có |
+| `.mov` | `ftyp qt` | có |
+| `.mkv` | **Matroska** | **bị bỏ qua** |
+| `.ts` | **MPEG-TS** | **bị bỏ qua** |
+
+Exit code 0, tệp tạo ra thành công, không có lỗi nào được báo. Tệp ra không có faststart nên mất
+khả năng phát trực tiếp trên web. Và nghiêm trọng hơn: nguồn `.webm` **có tiếng hỏng hẳn**
+(`-c:a aac` mà WebM chỉ nhận Vorbis/Opus → ffmpeg trả về −22).
+
+`OutputContainer` là nguồn sự thật duy nhất: **video luôn ra MP4** bất kể nguồn là gì (vì
+đó là container mà lệnh encode đặt ra); audio/ảnh/GIF/PDF bám theo nguồn (các lệnh đó không có
+`-f`, và gifsicle cần `.gif`, Ghostscript cần `.pdf`). `TempWorkspace.CreatePath` nay **từ chối**
+phần mở rộng không có dấu chấm, và clip thử nghiệm + clip tham chiếu cũng lấy đuôi từ đó.
+
+Kiểm chứng lại bằng **byte thật**, không tin tên tệp: nguồn `.ts`, `.mkv`, `.mp4` đều ra
+`ftyp isom`.
+
+**3. Hai nhánh giữ bản gốc thoát sớm mà không để lại mã lý do.** `item.DecisionReason` chỉ được
+gán ở lưới 5A, còn nhánh `!result.Success` thoát trước đó — nên báo cáo không phân biệt được
+"bản gốc thắng" với "không tìm được gì đạt", đúng hai thứ 5B sinh ra để phân biệt.
+`TerminalReason` giải quyết: lấy mã của pipeline khi có, dựng mã `SKIP_*` từ lý do bỏ qua khi
+không, và engine gán **một lần** ngay sau khi pipeline trả về nên không đường nào lọt.
+
+**4. Lưu cấu hình tắt cờ thử nghiệm.** `EnableAdaptiveSearch` không có trong danh sách trường
+được chép, mà giao diện không có ô bật cho nó — nên mỗi lần bấm "Lưu" sẽ tắt cờ đang bật, và
+vì thao tác lưu ghi lại đúng đối tượng đó, giá trị tắt còn nằm trong tệp. Nay quy tắc chép nằm
+ở `AppConfig.CopyRuntimeSettingsFrom` **trong Core** — kiểm thử được mà không cần đổi TFM của
+cả bộ kiểm thử, đóng nợ của 5B.
+
+### Nợ kỹ thuật còn lại
+
+- **Container đầu ra khi XUẤT ra thư mục khác**: `BuildOutputPath` vẫn đặt tên tệp đích theo
+  đường dẫn nguồn, nên nguồn `.ts` xuất ra vẫn tên `.ts` dù nội dung là MP4. Đây là quyết định
+  đặt tên theo nguồn (giữ bố cục tương đối), chưa đổi vì nó thuộc hành vi người dùng thấy.
+- **MPEG-TS**: đường đo vẫn bị hạ mức tin cậy (`IsMpegTs`). Đo mới: nguồn `.ts` làm một nhánh
+  `852x480` báo phi đơn điệu — bằng chứng thêm cho việc dấu thời gian MPEG-TS không đáng tin.
+- **`AppConfig.ExperimentalFlags`** liệt kê cờ phải giữ khi lưu; cờ mới phải tự quyết định có đi
+  qua giao diện hay không.
+
 ### Ma trận kho kiểm thử và khoảng trống còn lại
 
 Chưa được phép tuyên bố "đã hiệu chỉnh tổng quát". Những gì **đã** đo:
@@ -1311,5 +1382,5 @@ ngưỡng cảnh báo 50%. Kết quả chọn vẫn đúng và 5A vẫn ACCEPTED
 mà bước 10 yêu cầu phải điều tra (đường cắt clip, dấu thời gian của nguồn 1080p → 720p).
 Không nới phạm vi căn để làm nó im.
 
-612 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
+665 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
 Không đổi ngưỡng VMAF, không làm giai đoạn 5B tiếp.

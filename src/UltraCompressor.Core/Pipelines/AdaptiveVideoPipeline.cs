@@ -222,9 +222,12 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
 
                 // Cả hai nhánh giữ bản gốc đều hợp lệ và đều không encode. Khác nhau ở chỗ
                 // đã thử được gì, và `Describe` ghi rõ điều đó — kể cả khi hai nhánh này cùng
-                // trả về `NotWorthIt`, người đọc vẫn phân biệt được.
+                // trả về `NotWorthIt`, người đọc vẫn phân biệt được. Mã kết cục đi kèm để
+                // `item.DecisionReason` không bị trống trên đường thoát sớm này.
                 SearchDecision.KeepOriginal or SearchDecision.KeepOriginalNoFeasible =>
-                    PipelineResult.NotWorthIt(SkipReason.NotWorthIt, 0, Describe(result)),
+                    PipelineResult.NotWorthIt(SkipReason.NotWorthIt, 0, Describe(result))
+                        with
+                    { Reason = OutcomeFor(result.Status) },
 
                 _ => await FallbackAsync(
                     context, onProgress, $"{result.Outcome.Reason}: {result.Outcome.Message}", token)
@@ -355,8 +358,13 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
         // Ghi mã lý do GỐC, không chỉ "đã dùng đường cũ". Người đọc cần biết tìm kiếm hỏng ở
         // đâu; nếu chỉ thấy LEGACY_FALLBACK_USED thì không sửa được gì.
         var marker = $"{LegacyFallbackMarker} ({rootCause})";
+
+        // `Reason` ghi kèm để `item.DecisionReason` không bị trống: khi đường cũ chạy được
+        // thì kết quả là thành công và lưới 5A sẽ gán mã của nó, nhưng khi đường cũ cũng bỏ
+        // qua thì đây là lý do duy nhất còn lại để giải thích.
         return legacyResult with
         {
+            Reason = LegacyFallbackMarker,
             Message = string.IsNullOrWhiteSpace(legacyResult.Message)
             ? marker
             : $"{marker} | {legacyResult.Message}"
@@ -495,13 +503,14 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                 + $"ước lượng {(selected.Estimate.TotalBytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)} MB)";
         }
 
-        if (result.OriginalComparison is { FullEncodeAvoided: true } comparison)
+        if (result.OriginalComparison is { } comparison)
         {
-            summary +=
-                $"; bỏ qua 1 lần encode toàn tệp, tiết kiệm "
-                + $"{comparison.SourceBytes.ToString("N0", CultureInfo.InvariantCulture)} B "
-                + $"({(comparison.SourceBytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)} MB) "
-                + $"và toàn bộ thời gian encode";
+            summary += comparison.FullEncodeAvoided
+                ? $"; bỏ qua 1 lần encode toàn tệp, tiết kiệm "
+                    + $"{comparison.SourceBytes.ToString("N0", CultureInfo.InvariantCulture)} B "
+                    + $"({(comparison.SourceBytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)} MB) "
+                    + "và toàn bộ thời gian encode"
+                : $"; đã so với bản gốc: {comparison.Message}";
         }
 
         if (s.BranchesNonMonotonic > 0)

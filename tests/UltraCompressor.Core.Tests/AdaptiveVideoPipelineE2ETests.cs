@@ -138,19 +138,21 @@ public class AdaptiveVideoPipelineE2ETests
     }
 
     /// <summary>
-    /// Case B của giai đoạn 5B, trên media thật do ffmpeg sinh ra.
+    /// Ứng viên đạt chất lượng nhưng không chứng minh được lợi ích: 5A quyết định bằng byte thật.
     /// </summary>
     /// <remarks>
-    /// <para>Nguồn <c>testsrc2</c> mã hoá ở <b>crf 40</b>: đã bị bóp tới mức mã hoá lại chỉ
-    /// thêm nhiễu, và tệp chỉ còn ~1,35 MB. Đây đúng là tình huống mà đường cũ hay "nén" theo
-    /// bảng tra cứu CRF.</para>
+    /// <para>Nguồn <c>testsrc2</c> mã hoá ở <b>crf 40</b>: đã bị bóp tới mức mã hoá lại chỉ thêm
+    /// nhiễu, và tệp chỉ còn ~1,35 MB. Đây đúng là tình huống mà đường cũ hay "nén" theo bảng tra
+    /// cứu CRF.</para>
     ///
-    /// <para>Đo thực tế trên nguồn này: 4 ứng viên <b>đạt</b> chất lượng, nhưng ngay cả ở biên
-    /// nhỏ nhất của khoảng ước lượng thì cũng không nhỏ hơn nguồn đủ xa — nên không có bằng
-    /// chứng nào rằng mã hoá lại đáng làm.</para>
+    /// <para><b>Kết quả người dùng thấy KHÔNG đổi: giữ bản gốc.</b> Điều đổi là ai quyết
+    /// định. Trước đây tầng tìm kiếm tự kết luận giữ bản gốc dựa trên một biên ước lượng
+    /// chưa được chứng nhận — biên đó đã được chứng minh là không bao trọn thực tế (nguồn nhiễu:
+    /// ước 87,8 MB, thật 122,3 MB). Nay tầng tìm kiếm nói "chưa chứng minh được" rồi encode,
+    /// và lưới 5A giữ bản gốc vì tệp đầu ra thật lớn hơn nguồn.</para>
     /// </remarks>
     [RequiresFFmpeg]
-    public async Task Ban_goc_thang_khi_ung_vien_dat_chung_nhung_khong_du_loi_ich()
+    public async Task Khong_chung_minh_duoc_loi_ich_thi_lui_5a_quyet_dinh_bang_byte_that()
     {
         var ffmpeg = Ffmpeg();
         var work = Directory.CreateTempSubdirectory("uc-e2e-original-").FullName;
@@ -167,34 +169,54 @@ public class AdaptiveVideoPipelineE2ETests
                 _ => { },
                 CancellationToken.None);
 
-            // KHÔNG rơi về đường cũ: giữ bản gốc là một quyết định của ta, dựa trên số đo —
-            // không phải hạ tầng hỏng. Rơi về đường cũ ở đây sẽ âm thầm nén một tệp mà ta
-            // vừa kết luận là không đáng nén.
+            // KHÔNG rơi về đường cũ: đây là quyết định dựa trên số đo, không phải hạ tầng hỏng.
             Assert.DoesNotContain(AdaptiveVideoPipeline.LegacyFallbackMarker, result.Message ?? string.Empty);
 
-            Assert.False(result.Success);
-            Assert.Equal(SkipReason.NotWorthIt, result.Skip);
-            Assert.StartsWith(
-                SearchDecisionReasons.OriginalSelected,
-                result.Message ?? string.Empty,
-                StringComparison.Ordinal);
-
-            // Đây là điểm mấu chốt của giai đoạn: KHÔNG tạo ra tệp đầu ra nào. Bỏ qua được
-            // một lần encode toàn tệp là toàn bộ giá trị của giai đoạn này.
-            Assert.False(File.Exists(temp), "giữ bản gốc thì không được tạo tệp đầu ra");
-
-            // Câu chữ phải nêu cả hai điều: đã thử được gì, và vì sao không đáng nén. Cụ thể
-            // là KHÔNG được tuyên bố tệp nguồn đã tối ưu — ta không có căn cứ để nói vậy.
-            Assert.Contains("bỏ qua 1 lần encode toàn tệp", result.Message ?? string.Empty, StringComparison.Ordinal);
+            // Tầng tìm kiếm KHÔNG tự kết luận giữ bản gốc, và phải nói rõ nhánh đó đang bị
+            // tắt chờ bằng chứng kích thước mạnh hơn.
+            Assert.True(result.Success, result.Message);
             Assert.Contains(
-                "không phải kết luận tệp nguồn đã tối ưu",
+                SearchDecisionReasons.PilotSelected,
                 result.Message ?? string.Empty,
                 StringComparison.Ordinal);
+            Assert.Contains(
+                OriginalComparison.PendingEvidenceMarker,
+                result.Message ?? string.Empty,
+                StringComparison.Ordinal);
+            Assert.True(File.Exists(temp));
 
-            // Dọn sạch: không có tệp đầu ra thì còn lại đúng một tệp là nguồn.
+            // Lưới 5A là authority cuối, và nó quyết định bằng byte THẬT.
+            var gate = new QualityGate(
+                new AppConfig { MinSavingPercent = 1.0, QualityCheckEnabled = true },
+                new QualityProbe(ffmpeg, work),
+                new TimelineScanner(ffmpeg, work),
+                new ReferenceWindowExtractor(ffmpeg, work));
+
+            var decision = await gate.EvaluateAsync(
+                sourceSize, result.NewSize, CompressionLevel.Balanced, MediaKind.Video,
+                source, temp,
+                durationSeconds: (await new MediaProbe(ffmpeg).ProbeAsync(source)).Duration?.TotalSeconds,
+                displayWidth: 1280, displayHeight: 720,
+                token: CancellationToken.None);
+
+            // Bất biến quan trọng nhất của cả hệ thống: người dùng không bao giờ nhận một tệp
+            // lớn hơn bản gốc. Hoặc lưới nhận (và tệp nhỏ hơn thật), hoặc lưới loại và giữ
+            // bản gốc.
+            if (decision.Accept)
+            {
+                Assert.True(result.NewSize < sourceSize);
+            }
+            else
+            {
+                Assert.Equal(DecisionReasons.OutputLargerThanSource, decision.Reason);
+                Assert.Equal(SkipReason.NoSizeGain, decision.Skip);
+            }
+
+            // Dọn sạch: chỉ còn nguồn và tệp đầu ra.
             var leftovers = Directory
                 .GetFiles(work, "*", SearchOption.AllDirectories)
-                .Where(f => !string.Equals(f, source, StringComparison.OrdinalIgnoreCase))
+                .Where(f => !string.Equals(f, source, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(f, temp, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             Assert.True(leftovers.Count == 0,

@@ -49,6 +49,16 @@ public sealed record PipelineResult
 
     public string? Message { get; init; }
 
+    /// <summary>
+    /// Mã kết cục máy đọc được, để đưa vào <c>item.DecisionReason</c> và gom số liệu.
+    /// </summary>
+    /// <remarks>
+    /// Rỗng khi pipeline không biết nói gì tử tế; <see cref="TerminalReason"/> sẽ dựng mã thay
+    /// thế từ <see cref="Skip"/>. Pipeline biết bốn kết cục của đường thích ứng thì đặt mã
+    /// <see cref="SearchDecisionReasons"/> tại đây.
+    /// </remarks>
+    public string? Reason { get; init; }
+
     public static PipelineResult NotWorthIt(SkipReason reason, long newSize, string? message = null)
         => new() { Success = false, Skip = reason, NewSize = newSize, Message = message };
 

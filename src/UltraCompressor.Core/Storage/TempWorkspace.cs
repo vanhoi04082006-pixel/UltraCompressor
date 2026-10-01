@@ -22,11 +22,35 @@ public sealed class TempWorkspace : IDisposable
 
     public string Root => _root;
 
-    /// <summary>Đường dẫn tệp tạm giữ đúng phần mở rộng của nguồn (một số bộ lọc ffmpeg dựa vào nó).</summary>
-    public string CreatePath(string sourcePath, string? suffix = null)
+    /// <summary>
+    /// Đường dẫn tệp tạm cho một tệp ĐẦU RA.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Phần mở rộng phải là của tệp đầu ra, không phải của tệp nguồn.</b> Bản trước
+    /// nhận <c>sourcePath</c> và sao chép phần mở rộng của nó — tức để nguồn quyết định
+    /// container mà ffmpeg sẽ ghi ra. Đo được: cùng một lệnh, chỉ khác phần mở rộng đầu ra,
+    /// thì <c>.mkv</c> ra Matroska và <c>.ts</c> ra MPEG-TS, còn <c>-movflags +faststart</c>
+    /// bị bỏ qua lặng lẽ. Nguyên tắc và số đo: <see cref="OutputContainer"/>.</para>
+    ///
+    /// <para>Hàm <b>không</b> chấp nhận phần mở rộng không có dấu chấm. Đó là lỗi gọi sai ở
+    /// chỗ chọn container, và im lặng chấp nhận nó thì lỗi đó chỉ lộ ra ở tệp đầu ra hỏng
+    /// hàng giờ sau — lúc đó rất khó truy ngược.</para>
+    /// </remarks>
+    /// <param name="outputExtension">Phần mở rộng đầu ra, lấy từ <see cref="OutputContainer"/>.</param>
+    /// <param name="suffix">Chèn thêm trước phần mở rộng, để phân biệt các giai đoạn.</param>
+    public string CreatePath(string outputExtension, string? suffix = null)
     {
-        var ext = Path.GetExtension(sourcePath);
-        var name = $"{Guid.NewGuid():N}{suffix}{ext}";
+        if (string.IsNullOrEmpty(outputExtension)
+            || outputExtension[0] != '.'
+            || outputExtension.Length < 2)
+        {
+            throw new ArgumentException(
+                $"Phần mở rộng đầu ra phải có dấu chấm, ví dụ \"{OutputContainer.Mp4}\"; "
+                + $"nhận được \"{outputExtension}\". Lấy từ OutputContainer, đừng chép từ tệp nguồn.",
+                nameof(outputExtension));
+        }
+
+        var name = $"{Guid.NewGuid():N}{suffix}{outputExtension}";
         var path = Path.Combine(_root, name);
         lock (_gate) _created.Add(path);
         return path;

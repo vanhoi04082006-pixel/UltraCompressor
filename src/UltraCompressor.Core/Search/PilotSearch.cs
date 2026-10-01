@@ -26,6 +26,11 @@ public enum SearchStatus
     /// đạt, ta chỉ không thấy lý do để làm tốn công mã hoá lại — nói về <i>tệp đầu ra</i>.
     /// Gộp hai thứ lại thì người đọc không phân biệt được "không có gì tốt hơn bản gốc"
     /// với "bản gốc thắng", và hai trường hợp đó cần hành xử khác nhau khi báo cáo.
+    ///
+    /// <para><b>Hiện chưa xảy ra, và đó là chủ đích.</b> Kết luận giữ bản gốc đòi hỏi bằng
+    /// chứng kích thước <b>được chứng nhận</b>; bộ hiệu chỉnh hiện tại là
+    /// <c>provisional</c> nên chưa đạt. Xem <see cref="OriginalComparison"/>. Nhánh này được
+    /// giữ nguyên trong bảng quyết định để khi bằng chứng tới, không phải sửa lại kiến trúc.</para>
     /// </remarks>
     OriginalSelected,
 

@@ -86,9 +86,12 @@ public sealed class ReferenceWindowExtractor(string ffmpegPath, string tempDirec
         // Tên tệp phải duy nhất theo từng lần cắt. Tên theo vai trò + mốc sẽ va nhau khi
         // hai tệp cùng được xử lý song song trong một workspace, và clip sau ghi đè clip
         // trước giữa lúc đang đo.
+        // Clip tham chiếu luôn là MP4, kể cả khi nguồn là Matroska hay MPEG-TS: lệnh cắt mang
+        // `-movflags +faststart`, và clip tham chiếu phải cùng container với clip ứng viên
+        // để phép đo so được hai tệp cùng điều kiện. Nguồn sự thật: `OutputContainer`.
         var output = Path.Combine(
             tempDirectory,
-            $"ref-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}-{Guid.NewGuid():N}.mp4");
+            $"ref-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}-{Guid.NewGuid():N}{OutputContainer.Mp4}");
 
         // CÙNG CẤU TRÚC LỆNH với PilotEncoder: -ss trước -i, cùng -t. Đây là toàn bộ lý do
         // class này tồn tại — hai bên phải đi qua cùng một đường để điểm khung hình đầu

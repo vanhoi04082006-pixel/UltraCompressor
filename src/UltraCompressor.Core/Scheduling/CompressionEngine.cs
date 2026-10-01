@@ -599,7 +599,10 @@ public sealed class CompressionEngine : IAsyncDisposable
                 return;
             }
 
-            var temp = _workspace.CreatePath(item.FilePath);
+            // Container đầu ra do CHÍNH LỆNH ENCODE quyết định, không sao chép từ tệp nguồn: xem
+            // `OutputContainer`. Nguồn `.mkv`/`.ts` trước đây tạo ra tệp tạm Matroska/MPEG-TS
+            // và nuốt lặng lẽ `-movflags +faststart`.
+            var temp = _workspace.CreatePath(OutputContainer.ExtensionFor(item.Kind, item.FilePath));
             var context = new PipelineContext
             {
                 Item = item,
@@ -629,12 +632,19 @@ public sealed class CompressionEngine : IAsyncDisposable
             item.ElapsedSeconds = watch.Elapsed.TotalSeconds;
             item.Message = result.Message;
 
+            // MỌI ĐƯỜNG KẾT THÚC phải có mã lý do trước khi trả về. Pipeline có thể im: đường cũ không
+            // gắn mã, còn hai nhánh giữ bản gốc của đường thích ứng thoát sớm ở đây. Gán MỘT
+            // lần ngay sau khi pipeline trả về thì không đường nào lọt; `TerminalReason` lấy
+            // mã của pipeline khi có, và dựng mã mặc định từ lý do bỏ qua khi không — để không
+            // bao giờ còn NULL. Nhánh thành công thì lưới 5A ghi đè bằng mã của lưới.
+            item.DecisionReason = TerminalReason.For(result);
+
             if (!result.Success)
             {
                 item.Skip = result.Skip;
                 item.NewSize = item.OldSize;
                 item.IsComplete = true;
-                _log.LogSkipped(result.Skip.ToString(), item.FilePath, job.Id);
+                _log.LogSkipped($"{item.DecisionReason}: {result.Message}", item.FilePath, job.Id);
                 return;
             }
 
@@ -737,6 +747,7 @@ public sealed class CompressionEngine : IAsyncDisposable
         catch (SkipException ex)
         {
             item.Skip = ex.Reason;
+            item.DecisionReason = TerminalReason.ForSkip(ex.Reason);
             item.IsComplete = true;
             item.NewSize = item.OldSize;
             item.Message = ex.Message;

@@ -1,6 +1,7 @@
 using UltraCompressor.Core.Encoders;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
+using UltraCompressor.Core.Pipelines;
 using UltraCompressor.Core.Planning;
 using UltraCompressor.Core.Search;
 using Xunit;
@@ -762,41 +763,45 @@ public class PilotSearchOrchestrationTests
     // thật mâu thuẫn trong cùng một suite.
 
     [Fact]
-    public async Task Ban_goc_thang_khi_ung_vien_dat_nhung_khong_chung_minh_duoc_loi_ich()
+    public async Task Khong_chung_minh_duoc_loi_ich_thi_tiep_tuc_encode_chu_khong_tu_ket_luan_original()
     {
-        // Case B của giai đoạn 5B. Ứng viên ĐẠT chất lượng, nhưng nguồn nhỏ tới mức ngay cả
-        // cách đọc có lợi nhất của ước lượng (biên dưới) vẫn không nhỏ hơn nguồn đủ xa. Vậy
-        // không có bằng chứng rằng mã hoá lại đáng làm → giữ bản gốc, KHÔNG encode toàn tệp.
+        // Khi không ứng viên nào chứng minh được lợi ích, lớp so bản gốc KHÔNG được tự kết
+        // luận giữ bản gốc — vì bằng chứng kích thước hiện tại chỉ là biên heuristics trên 7
+        // tệp, và đã có mẫu thật cho thấy nó ra ngoài chính biên (nguồn nhiễu: ước 87,8 MB,
+        // thật 122,3 MB). Điều đó là chủ đích của checkpoint này.
+        //
+        // Hệ quả: ở đây KHÔNG còn ứng viên nào đạt mà bản gốc thắng. Kết quả là encode, rồi
+        // lưới 5A quyết định bằng byte thật.
         var encoder = new FakeEncoder();
         var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 91));
 
         var result = await search.RunAsync(
             Request([.. Branch5()]) with { SourceSizeBytes = 5_000_000 });
 
-        Assert.Equal(SearchStatus.OriginalSelected, result.Status);
-        Assert.Equal(SearchDecisionReasons.OriginalSelected, result.Outcome.Reason);
-        Assert.Null(result.Selected);
-        Assert.False(result.HasSelection);
+        Assert.Equal(SearchStatus.SelectedCandidate, result.Status);
+        Assert.Equal(SearchDecisionReasons.PilotSelected, result.Outcome.Reason);
+        Assert.NotNull(result.Selected);
+        Assert.True(result.Evaluated.Count > 0, "co ung vien dat chat luong");
 
-        // Chỉ có encode thử nghiệm; không có lần encode toàn tệp nào (đó là việc của tầng trên).
-        Assert.Equal(["b/p0", "b/p4"], encoder.Encoded);
-
+        // Báo cáo phải nói rõ nhánh giữ bản gốc sớm đang bị tắt, và vì sao. Im lặng thì
+        // người đọc sẽ tưởng tính năng chưa bao giờ có.
         var comparison = Assert.IsType<OriginalComparison>(result.OriginalComparison);
-        Assert.True(comparison.FullEncodeAvoided);
-        Assert.Equal(SearchDecisionReasons.OriginalSelected, comparison.Reason);
-        Assert.True(comparison.FeasibleCount > 0, "truong hop nay phai co ung vien DAT chay luong");
+        Assert.False(comparison.FullEncodeAvoided);
+        Assert.Contains(
+            OriginalComparison.PendingEvidenceMarker,
+            comparison.Message,
+            StringComparison.Ordinal);
 
-        // Câu chữ phải nói rõ đây là thiếu bằng chứng, KHÔNG phải tuyên bố tệp nguồn tối ưu.
-        Assert.Contains("không phải kết luận tệp nguồn đã tối ưu", comparison.Message, StringComparison.Ordinal);
+        // Encode thử nghiệm vẫn chạy bình thường — việc này không hề làm hỏng tìm kiếm.
+        Assert.Equal(["b/p0", "b/p4"], encoder.Encoded);
     }
 
     [Fact]
     public async Task Khong_ung_vien_nao_dat_thi_khong_duoc_goi_la_original_selected()
     {
         // Case C. Ở đây KHÔNG có ứng viên khả thi nào, nên đây là
-        // NO_FEASIBLE_CANDIDATE — khác hẳn ORIGINAL_SELECTED ở test trên, dù cả hai đều giữ
-        // bản gốc. Gộp hai mã là mất khả năng đếm "lần nén này có bỏ được việc mã hoá lại
-        // không, và vì sao".
+        // NO_FEASIBLE_CANDIDATE — nói về các ứng viên encode. Khác hẳn ORIGINAL_SELECTED,
+        // vốn nói về tệp đầu ra cuối. Gộp hai mã là mất khả năng đếm.
         var encoder = new FakeEncoder();
         var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 80));
 
@@ -810,11 +815,13 @@ public class PilotSearchOrchestrationTests
     }
 
     [Fact]
-    public async Task Hai_ke_tuc_giu_ban_goc_phai_khac_nhau()
+    public async Task Ban_goc_thang_early_hien_tai_dang_bi_tat_cho_den_khi_co_bang_chung()
     {
-        // Cùng một nguồn nhỏ (nên bản gốc có thể thắng), nhưng hai kết quả tìm kiếm khác
-        // nhau, và hai kết cục phải khác nhau.
-        var feasible = await new PilotSearch(
+        // Hai mã giữ bản gốc vẫn khác nhau và cả hai vẫn còn trong hệ thống, nhưng trạng thái
+        // ORIGINAL_SELECTED hiện KHÔNG xảy ra — bằng chứng kích thước chưa được chứng nhận.
+        // Bảng quyết định giữ nguyên cả hai hàng để khi bằng chứng tới không phải sửa lại kiến
+        // trúc; điều đang bị chặn phải nói ra, không để người đọc tưởng là chưa có tính năng.
+        var feasibleButUnproven = await new PilotSearch(
                 new FakeEncoder(), new FakeReferences(), new FakeMeasurer(_ => 91))
             .RunAsync(Request([.. Branch5()]) with { SourceSizeBytes = 5_000_000 });
 
@@ -822,13 +829,20 @@ public class PilotSearchOrchestrationTests
                 new FakeEncoder(), new FakeReferences(), new FakeMeasurer(_ => 80))
             .RunAsync(Request([.. Branch5()]) with { SourceSizeBytes = 5_000_000 });
 
-        Assert.Equal(SearchStatus.OriginalSelected, feasible.Status);
+        // Có ứng viên đạt nhưng chưa chứng minh được lợi ích → encode, KHÔNG phải
+        // ORIGINAL_SELECTED.
+        Assert.Equal(SearchStatus.SelectedCandidate, feasibleButUnproven.Status);
+
+        // Không có ứng viên nào đạt → NO_FEASIBLE_CANDIDATE.
         Assert.Equal(SearchStatus.NoFeasibleCandidate, nothingFeasible.Status);
+
+        // Hai mã vẫn phải khác nhau, và cả hai vẫn là kết cục thật trong hệ thống.
         Assert.NotEqual(
             SearchDecisionReasons.OriginalSelected,
-            nothingFeasible.Outcome.Reason);
-        Assert.NotEqual(SearchStatus.SelectedCandidate, feasible.Status);
-        Assert.NotEqual(SearchStatus.SelectedCandidate, nothingFeasible.Status);
+            SearchDecisionReasons.NoFeasibleCandidate);
+        Assert.NotEqual(
+            AdaptiveVideoPipeline.SearchDecision.KeepOriginal,
+            AdaptiveVideoPipeline.SearchDecision.KeepOriginalNoFeasible);
     }
 
     [Fact]

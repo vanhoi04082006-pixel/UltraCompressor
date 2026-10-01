@@ -62,6 +62,11 @@ public enum MeasurementConfidence
 /// <param name="Confidence">
 /// Mức độ tin cậy của phép đo. Khi không chắc thì lớp này <b>không</b> kết luận giữ bản gốc.
 /// </param>
+/// <param name="SizeEvidenceCertified">
+/// Bộ hiệu chỉnh kích thước có đủ căn cứ để ra kết luận không hoàn tác được không. Chỉ khi
+/// <c>true</c> thì lớp này mới cho phép kết luận giữ bản gốc; xem
+/// <see cref="Decision"/>.
+/// </param>
 /// <remarks>
 /// <para><b>Không có điểm số tổng hợp.</b> Không có dạng <c>VMAF × a + tiết kiệm × b</c>, vì
 /// trọng số <c>a</c> và <c>b</c> chưa được chứng minh bằng gì: tra một tỉ số tuỳ ý vào
@@ -80,19 +85,21 @@ public enum MeasurementConfidence
 /// <item><description><b>Chi phí tính toán</b> — chỉ để phá thế hoà, sau cùng.</description></item>
 /// </list>
 ///
-/// <para><b>Điều kiện để giữ bản gốc là "không chứng minh được", không phải "ước lượng
-/// không đẹp".</b> Ứng viên chỉ bị bác khi ngay cả ở cách đọc <b>có lợi nhất có thể</b> —
-/// tức biên dưới của khoảng quan sát — nó vẫn không nhỏ hơn nguồn đủ xa. Nghĩa là để bác ta
-/// phải có lý do mạnh nhất; chỉ cần một ước lượng hơi lạc quan là không đủ để bỏ qua một
-/// cơ hội tiết kiệm thật.</para>
+/// <para><b>Ước lượng KHÔNG BAO GIỜ tự nó kết luận giữ bản gốc.</b> Đây là điều chỉnh quan
+/// trọng nhất của lớp này. `HeuristicEstimateBounds` là biên dựng từ độ lan tỉa quan sát
+/// trên 7 tệp, không phải chứng minh toán học — và đã có bằng chứng nó <b>không bao trọn thực
+/// tế</b>: nguồn nhiễu 720p crf 32 cho ước lượng 87,8 MB với tệp thật 122,3 MB, lệch −28%,
+/// ra ngoài chính khoảng 0,61…0,89.</para>
 ///
-/// <para>Hướng thiên lệch là cố ý và một chiều: <b>nghiêng về giữ bản gốc khi không chắc,
-/// nghiêng về encode khi có dấu hiệu lợi ích</b>. Báo động đối lập — encode rồi hóa ra không
-/// đáng — vẫn an toàn tuyệt đối, vì lưới 5A giữ bản gốc khi tệp đầu ra không đủ nhỏ. Cái ta
-/// không thể để xảy ra là bỏ mất một khoản tiết kiệm thật chỉ vì ước lượng hơi lạc quan.
+/// <para>Nên quy tắc là: chỉ khi bộ hiệu chỉnh được chứng nhận (status = <c>certified</c>)
+/// thì "không ứng viên nào chứng minh được lợi ích" mới đủ để bỏ full encode. Chưa chứng
+/// nhận thì kết quả là <b>thiếu bằng chứng → encode</b>: encode rồi để lưới 5A quyết định
+/// bằng <b>byte thật</b> của tệp đầu ra. Tốn công hơn, nhưng đó là cách duy nhất không dùng một
+/// con số chưa chứng minh để quyết định không hoàn tác được.</para>
 ///
-/// Vì vậy hàm này <b>không</b> phải nơi quyết định cuối: nó chỉ tránh một lần encode khi
-/// bằng chứng đủ rõ. Mọi thứ sau đó vẫn thuộc lưới 5A.</para>
+/// <para><b>Hướng thiên lệch là cố ý và một chiều</b>: báo động đối lập — encode rồi hóa ra
+/// không đáng — vẫn an toàn tuyệt đối, vì lưới 5A giữ bản gốc khi tệp đầu ra không đủ nhỏ. Cái
+/// ta không thể để xảy ra là bỏ mất một khoản tiết kiệm thật chỉ vì ước lượng sai.</para>
 ///
 /// <para><b>Thiếu khoảng thì không kết luận.</b> Ứng viên không dựng được
 /// <see cref="SizeEstimate.Bounds"/> thì không dùng để bác được: không có khoảng nghĩa là
@@ -118,6 +125,19 @@ public sealed record OriginalComparison(
     /// <summary>Mô tả ngắn cho báo cáo một dòng.</summary>
     public string Summary =>
         $"{Decision}: {Message}";
+
+    /// <summary>
+    /// Cờ báo cáo cho biết nhánh giữ bản gốc sớm đang bị tắt vì chưa có bằng chứng kích
+    /// thước đủ mạnh.
+    /// </summary>
+    /// <remarks>
+    /// <para>Đây không phải hồi quy correctness — đây là hậu quả có chủ đích của việc thừa nhận
+    /// rằng biên ước lượng chưa được chứng nhận. Nó phải nằm trong báo cáo, vì nếu im lặng thì
+    /// người đọc sẽ tưởng tính năng chưa bao giờ có, thay vì là "có nhưng bị tạm khoá cho
+    /// tới khi có bằng chứng".</para>
+    /// </remarks>
+    public const string PendingEvidenceMarker =
+        "EARLY ORIGINAL OPTIMIZATION DISABLED PENDING STRONGER SIZE EVIDENCE";
 
     /// <summary>
     /// So bản gốc với các ứng viên đã đo và đạt chất lượng.
@@ -149,6 +169,7 @@ public sealed record OriginalComparison(
                 sourceBytes * (1.0 - savingPercent / 100.0), MidpointRounding.AwayFromZero);
 
         var withBounds = 0;
+        var certified = true;
         var bestOptimistic = long.MaxValue;
         var bestEstimated = long.MaxValue;
         var bestId = string.Empty;
@@ -161,6 +182,11 @@ public sealed record OriginalComparison(
             }
 
             withBounds++;
+
+            // Biên của ứng viên này có đủ căn cứ để ra kết luận không hoàn tác được không?
+            // Quyết định giữ bản gốc dựa trên TẤT CẢ ứng viên đã xét, nên một ứng viên có
+            // biên chưa chứng nhận làm toàn bộ kết luận mất chứng cứ.
+            certified &= IsCertified(candidate.Estimate);
 
             // Nhỏ nhất theo khoảng quan sát — đây là cách đọc có lợi nhất cho ứng viên, nên
             // dùng nó để bác cũng là cách khó bác nhất.
@@ -205,12 +231,39 @@ public sealed record OriginalComparison(
                 confidence);
         }
 
+        // Không ứng viên nào chứng minh được lợi ích. HAI trường hợp phải phân biệt, và cả hai
+        // đều không được dùng ước lượng để kết luận.
+        if (!certified)
+        {
+            // Bộ hiệu chỉnh kích thước chưa được chứng nhận. Biên heuristics chỉ là độ lan tỉa
+            // quan sát trên một bộ mẫu nhỏ, và đã có bằng chứng nó ra ngoài chính biên (nguồn
+            // nhiễu: ước 87,8 MB, thật 122,3 MB). "Không chứng minh được lợi ích" khi đó chỉ
+            // có nghĩa là TA CHƯA CHỨNG MINH ĐƯỢC — chứ không phải là không có lợi ích — nên đi
+            // đường an toàn: encode rồi để lưới 5A quyết định bằng byte thật.
+            return new OriginalComparison(
+                OriginalDecision.KeepEncoded,
+                SearchDecisionReasons.PilotSelected,
+                $"không ứng viên nào chứng minh được lợi ích: kể cả {bestId} "
+                    + $"(nhỏ nhất có thể {Format(bestOptimistic)} B) vẫn không nhỏ hơn mức cần có "
+                    + $"({Format(requiredBytes)} B). Nhưng bộ hiệu chỉnh kích thước chưa được chứng nhận "
+                    + $"(trạng thái \"{SizeEstimator.Calibration.Status}\"), và biên ước lượng KHÔNG phải "
+                    + "chứng minh — đã đo thấy một nguồn lệch −28%, ra ngoài chính khoảng đã hiệu "
+                    + $"chỉnh. Nên không dùng nó để kết luận giữ bản gốc: {PendingEvidenceMarker} — "
+                    + "encode và để lưới chất lượng cuối quyết định bằng kích thước thật",
+                sourceBytes,
+                requiredBytes,
+                bestOptimistic,
+                bestEstimated,
+                savingPercent,
+                feasible.Count,
+                feasible.Count - withBounds,
+                confidence);
+        }
+
         if (confidence == MeasurementConfidence.Uncertain)
         {
-            // Phép đo không chắc, nên "không chứng minh được lợi ích" ở đây chỉ có nghĩa là
-            // TA CHƯA CHỨNG MINH ĐƯỢC — chứ không phải là không có lợi ích. Kết luận đó không
-            // đủ chắc để bỏ một lần encode, nên đi đường an toàn: encode rồi để lưới 5A
-            // quyết định bằng kích thước và số đo thật của tệp đầu ra.
+            // Phép đo chất lượng không chắc (container có dấu thời gian đáng ngờ) thì "không
+            // chứng minh được" cũng không đủ. Đi đường an toàn.
             return new OriginalComparison(
                 OriginalDecision.KeepEncoded,
                 SearchDecisionReasons.PilotSelected,
@@ -227,8 +280,9 @@ public sealed record OriginalComparison(
                 confidence);
         }
 
-        // Không ứng viên nào chứng minh được. Nói rõ đây là kết luận về BẰNG CHỨNG, không
-        // phải tuyên bố tệp nguồn đã tối ưu — ta không có căn cứ để nói điều đó.
+        // Đã tới đây thì mới thật sự đủ: biên được chứng nhận VÀ phép đo đáng tin. Nói rõ đây
+        // là kết luận về BẰNG CHỨNG, không phải tuyên bố tệp nguồn đã tối ưu — ta không có
+        // căn cứ để nói điều đó.
         return new OriginalComparison(
             OriginalDecision.KeepOriginal,
             SearchDecisionReasons.OriginalSelected,
@@ -247,6 +301,17 @@ public sealed record OriginalComparison(
             feasible.Count - withBounds,
             confidence);
     }
+
+    /// <summary>
+    /// Bộ hiệu chỉnh của một ước lượng đã được chứng nhận chưa.
+    /// </summary>
+    /// <remarks>
+    /// Thiếu danh sách nguồn gốc thì coi như <b>chưa</b> chứng nhận. Ước lượng không kèm dấu
+    /// vết hiệu chỉnh không cho ta bất kỳ căn cứ nào để tin, và thiếu bằng chứng thì phải đi
+    /// đường an toàn chứ không phải đường không hoàn tác được.
+    /// </remarks>
+    private static bool IsCertified(SizeEstimate estimate) =>
+        estimate.Calibration.Count > 0 && estimate.Calibration.All(p => p.IsCertified);
 
     private static string Format(long bytes) =>
         bytes.ToString("N0", CultureInfo.InvariantCulture);

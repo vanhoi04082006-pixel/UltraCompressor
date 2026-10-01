@@ -841,33 +841,14 @@ public sealed class AppHost : IAsyncDisposable
 
     internal static void CopyConfig(AppConfig from, AppConfig to)
     {
-        // `EnableAdaptiveSearch` cố ý KHÔNG lấy từ `from`.
+        // Quy tắc chọn trường nằm ở `AppConfig.CopyRuntimeSettingsFrom` trong Core, không ở đây.
+        // Lý do: đó là ngữ nghĩa của cấu hình, và ở đây nó không kiểm thử được — dự án kiểm thử
+        // không tham chiếu được dự án WinForms này mà không phải đổi TFM của cả bộ kiểm thử.
         //
-        // Giao diện không có ô bật cho đường thích ứng, nên `from` không mang trường này và
-        // giá trị của nó luôn là mặc định `false`. Nếu gán thẳng như các trường khác thì mỗi
-        // lần bấm "Lưu cấu hình" sẽ TẮT cờ đang bật — và vì `SaveAsync` ghi lại đúng đối
-        // tượng đó, giá trị tắt còn được lưu xuống đĩa. Người dùng bật cờ thủ công trong
-        // tệp cấu hình rồi lưu một thứ khác trên giao diện là mất cờ, mà không có dấu hiệu
-        // gì cho biết.
-        //
-        // Giữ nguyên thay vì gán: cờ chỉ đổi khi ai đó sửa tệp cấu hình, tức là chủ ý.
-        var adaptive = to.EnableAdaptiveSearch;
-
-        to.Level = from.Level;
-        to.DryRunDefault = from.DryRunDefault;
-        to.MaxConcurrent = from.MaxConcurrent;
-        to.Tools = from.Tools;
-        to.MinSavingPercent = from.MinSavingPercent;
-        to.MinFileSizeBytes = from.MinFileSizeBytes;
-        to.IncludeSubfolders = from.IncludeSubfolders;
-        to.ExcludePatterns = from.ExcludePatterns;
-        to.MeasureQuality = from.MeasureQuality;
-        to.CheckFreeSpace = from.CheckFreeSpace;
-        to.ConcurrencyScale = from.ConcurrencyScale;
-        to.LogLevel = from.LogLevel;
-        to.Theme = from.Theme;
-
-        to.EnableAdaptiveSearch = adaptive;
+        // Lỗi đã mắc phải: `EnableAdaptiveSearch` không có trong danh sách trường được chép,
+        // nên mỗi lần bấm "Lưu cấu hình" đã tắt cờ đang bật — và vì thao tác lưu ghi lại đúng
+        // đối tượng này, giá trị tắt còn được ghi xuống đĩa.
+        to.CopyRuntimeSettingsFrom(from);
     }
 
     private static LogLevel ParseLogLevel(string? value) => value?.ToLowerInvariant() switch

@@ -19,42 +19,11 @@ namespace UltraCompressor.Core.Tests;
 /// </summary>
 public class ReferenceWindowAlignmentTests
 {
-    private static string? FindFFmpeg()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "UltraCompressor.slnx")))
-            {
-                foreach (var rel in new[] { "app/ffmpeg.exe", "tools/ffmpeg.exe", "../app/ffmpeg.exe" })
-                {
-                    try
-                    {
-                        var p = Path.GetFullPath(Path.Combine(dir.FullName, rel));
-                        if (File.Exists(p))
-                        {
-                            return p;
-                        }
-                    }
-                    catch (ArgumentException)
-                    {
-                    }
-                    catch (NotSupportedException)
-                    {
-                    }
-                }
-            }
-
-            dir = dir.Parent;
-        }
-
-        return null;
-    }
 
     [RequiresFFmpeg]
     public async Task Cat_ca_hai_thanh_clip_khong_lay_di_chinh_nguon()
     {
-        var ffmpeg = FindFFmpeg()!;
+        var ffmpeg = TestFFmpeg.Require();
         var work = Directory.CreateTempSubdirectory("uc-align-").FullName;
 
         try
@@ -144,7 +113,7 @@ public class ReferenceWindowAlignmentTests
         //
         // Lệch chính xác một chu kỳ khung hình, và nội dung có cạnh sắc + chuyển động mạnh
         // để độ nhạy lộ ra (testsrc2 hay nội dung mượt không lộ).
-        var ffmpeg = FindFFmpeg()!;
+        var ffmpeg = TestFFmpeg.Require();
         var work = Directory.CreateTempSubdirectory("uc-frame-").FullName;
 
         try
@@ -198,7 +167,7 @@ public class ReferenceWindowAlignmentTests
     [RequiresFFmpeg]
     public async Task Clip_tham_chieu_co_dung_thoi_luong_doan()
     {
-        var ffmpeg = FindFFmpeg()!;
+        var ffmpeg = TestFFmpeg.Require();
         var work = Directory.CreateTempSubdirectory("uc-align2-").FullName;
 
         try
@@ -239,7 +208,7 @@ public class ReferenceWindowAlignmentTests
     [RequiresFFmpeg]
     public async Task Khong_cat_duoc_tham_chieu_thi_bao_lo_roi_thay_vi_do_vao_tep_rong()
     {
-        var ffmpeg = FindFFmpeg()!;
+        var ffmpeg = TestFFmpeg.Require();
         var work = Directory.CreateTempSubdirectory("uc-align3-").FullName;
 
         try

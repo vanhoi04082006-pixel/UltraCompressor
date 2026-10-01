@@ -106,9 +106,12 @@ public sealed class PilotEncoder(string ffmpegPath, string tempDirectory) : IPil
     {
         Directory.CreateDirectory(tempDirectory);
 
+        // Tên tệp phải duy nhất theo từng lần encode. Tên theo ứng viên + đoạn sẽ va nhau
+        // khi hai tệp cùng được xử lý song song trong một workspace, và clip sau ghi đè
+        // clip trước giữa lúc đang đo.
         var output = Path.Combine(
             tempDirectory,
-            $"pilot-{Sanitize(candidate.Id)}-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}.mp4");
+            $"pilot-{Sanitize(candidate.Id)}-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}-{Guid.NewGuid():N}.mp4");
 
         // Clip thử nghiệm là bản CẮT của đúng đoạn này, nên nó bắt đầu tại 0. Giữ điều này
         // ở dạng hằng số thay vì suy ra từ đầu, để không ai vô tình truyền nhầm mốc của

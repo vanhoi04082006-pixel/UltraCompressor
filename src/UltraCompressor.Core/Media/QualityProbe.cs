@@ -82,6 +82,16 @@ public interface IQualityMeasure
     /// <para>Với ứng viên đã encode toàn tệp thì truyền bằng <paramref name="referenceWindow"/>.
     /// </para>
     /// </param>
+    /// <param name="candidateStartFrame">
+    /// Bỏ qua bấy nhiêu khung hình đầu của luồng ứng viên trước khi so. Mặc định 0.
+    ///
+    /// <para>Tham số này tồn tại vì timestamp KHÔNG đủ để căn hai tệp khác nhau. Tệp nguồn
+    /// (timebase 90k, mốc bắt đầu 0,021s) và tệp đầu ra (timebase 24k, mốc 0,041s) có cùng
+    /// số khung hình, nhưng cùng một mốc giây lại trỏ vào hai khung hình khác nhau — đã đo
+    /// trên tệp thật: cùng mốc cho VMAF 7,0, còn bỏ một khung ứng viên thì lên 90+. Vì vậy
+    /// việc căn phải làm bằng <b>chỉ số khung hình</b>, không phải bằng mốc thời gian.</para>
+    /// </param>
+    /// <param name="referenceStartFrame">Tương tự, cho luồng tham chiếu. Mặc định 0.</param>
     Task<QualityResult?> MeasureAsync(
         string referencePath,
         string candidatePath,
@@ -92,6 +102,8 @@ public interface IQualityMeasure
         int candidateWidth,
         int candidateHeight,
         VmafModel model,
+        int candidateStartFrame = 0,
+        int referenceStartFrame = 0,
         CancellationToken token = default);
 }
 
@@ -127,15 +139,21 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQua
         int candidateWidth,
         int candidateHeight,
         VmafModel model,
+        int candidateStartFrame = 0,
+        int referenceStartFrame = 0,
         CancellationToken token = default)
     {
         if (token.IsCancellationRequested) return null;
+
+        ArgumentOutOfRangeException.ThrowIfNegative(candidateStartFrame);
+        ArgumentOutOfRangeException.ThrowIfNegative(referenceStartFrame);
 
         var key = string.Join('|',
             referencePath, candidatePath,
             referenceWindow.StartText, referenceWindow.LengthText,
             candidateWindow.StartText, candidateWindow.LengthText,
             displayWidth, displayHeight, model.Id,
+            candidateStartFrame, referenceStartFrame,
             StampOf(candidatePath));
 
         lock (CacheLock)
@@ -150,7 +168,8 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQua
 
         var sample = await MeasureCoreAsync(
             referencePath, candidatePath, referenceWindow, candidateWindow,
-            displayWidth, displayHeight, model, token)
+            displayWidth, displayHeight, model,
+            candidateStartFrame, referenceStartFrame, token)
             .ConfigureAwait(false);
 
         lock (CacheLock)
@@ -171,6 +190,8 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQua
         int displayWidth,
         int displayHeight,
         VmafModel model,
+        int candidateStartFrame,
+        int referenceStartFrame,
         CancellationToken token)
     {
         var logName = $"vmaf-{Guid.NewGuid():N}.json";
@@ -217,10 +238,20 @@ public sealed class QualityProbe(string ffmpegPath, string tempDirectory) : IQua
             // nhan khong nam o moc thoi gian ma o noi dung khung hinh bi lech sau khi giai
             // ma. Cung loai loi voi loi seek lech mot khung da gap o giai doan truoc. Giu o
             // day de khong quen, chua sua.
+            // Bỏ khung hình đầu theo chỉ số, KHÔNG theo timestamp. `trim` chạy trên thứ tự
+            // khung hình đã giải mã nên không phụ thuộc timebase hay mốc bắt đầu của
+            // container — đúng thứ mà timestamp không làm được khi hai tệp khác timebase.
+            var referenceTrim = referenceStartFrame > 0
+                ? $"trim=start_frame={referenceStartFrame},setpts=PTS-STARTPTS,"
+                : string.Empty;
+            var candidateTrim = candidateStartFrame > 0
+                ? $"trim=start_frame={candidateStartFrame},setpts=PTS-STARTPTS,"
+                : string.Empty;
+
             var filter =
-                $"[0:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
+                $"[0:v]{referenceTrim}format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
                     + "settb=AVTB,setpts=PTS-STARTPTS[ref];"
-                    + $"[1:v]format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
+                    + $"[1:v]{candidateTrim}format=yuv420p10le,scale={width}:{height}:flags=lanczos,"
                     + "settb=AVTB,setpts=PTS-STARTPTS[dis];"
                     + $"[dis][ref]{libvmaf}";
 

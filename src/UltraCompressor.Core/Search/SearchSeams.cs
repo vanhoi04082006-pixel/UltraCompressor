@@ -29,24 +29,6 @@ public interface IPilotEncodeRunner
 }
 
 /// <summary>
-/// Seam cho việc cắt đoạn tham chiếu thành clip.
-///
-/// <para>Cùng lý do với <see cref="IPilotEncodeRunner"/>: phần điều phối phải kiểm thử
-/// được không cần ffmpeg.</para>
-///
-/// <para>Clip tham chiếu là <b>điểm neo thời gian</b> cho mọi ứng viên của đoạn đó: mọi
-/// ứng viên đều bắt đầu từ cùng khung hình đầu, nên phép so đo không phụ thuộc vào việc
-/// hai bên có seek trùng nhau hay không.</para>
-/// </summary>
-public interface IReferenceWindowSource
-{
-    Task<IReadOnlyList<WindowReference>> ExtractAsync(
-        string sourcePath, IReadOnlyList<RepresentativeWindow> windows, CancellationToken token);
-
-    void Release(IReadOnlyList<WindowReference> references);
-}
-
-/// <summary>
 /// Seam đo chất lượng dùng cho giai đoạn tìm kiếm là <see cref="IQualityMeasure"/>, đã có
 /// sẵn trong <c>UltraCompressor.Core.Media</c> và do <see cref="QualityProbe"/> hiện thực.
 ///

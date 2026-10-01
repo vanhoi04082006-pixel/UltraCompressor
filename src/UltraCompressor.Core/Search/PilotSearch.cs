@@ -529,6 +529,11 @@ public sealed class PilotSearch(
                     // Cả hai cửa sổ đều là `[0, d]` vì cả tham chiếu lẫn clip ứng viên đều
                     // đã được cắt riêng. Truyền cửa sổ của nguồn vào đây là lỗi đã mắc phải:
                     // nó seek quá cuối clip ứng viên và đo ra rỗng.
+                    //
+                    // Offset căn là (0,0) tường minh: cả hai clip đều từ cùng một tệp nguồn
+                    // bằng cùng một lệnh cắt, nên khung đầu đã trùng nhau theo cách xây dựng.
+                    // Việc căn ±1 khung chỉ cần ở lưới cuối, nơi hai clip đến từ hai tệp
+                    // có timebase khác nhau.
                     var measured = await measurer.MeasureAsync(
                         reference.Path,
                         candidatePath,
@@ -539,6 +544,8 @@ public sealed class PilotSearch(
                         target.Width,
                         target.Height,
                         request.Model,
+                        candidateStartFrame: 0,
+                        referenceStartFrame: 0,
                         token).ConfigureAwait(false);
 
                     sample = measured?.Sample;

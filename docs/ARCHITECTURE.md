@@ -1085,3 +1085,61 @@ giữ bản gốc là kết quả đúng.
 
 Không nối `VideoPipeline`, không nối `CompressionEngine`, không thêm feature flag, không
 đo nguồn low-bpppf, không làm giai đoạn 5B.
+
+## Giai đoạn 4B — Nối tìm kiếm thích ứng vào runtime, sau cờ tắt
+
+`AdaptiveVideoPipeline` bọc `VideoPipeline`. Cờ `AppConfig.EnableAdaptiveSearch` tắt là mặc
+định; tắt thì chuyển thẳng cho đường cũ, từng bít không đổi. Bật thì:
+`CandidatePlanner` → `PilotSearch` → encode toàn tệp bằng `BuildFullArguments` (dùng CHUNG
+phép biến đổi với phần thử) → lưới Phase 5A của engine giữ bất biến như mọi đường khác.
+
+Ba trạng thái, ba hành vi — bảng này được kiểm trọn vẹn bằng `DecideFor`, không nằm ẩn
+trong `switch`:
+
+- `SelectedCandidate` → encode toàn tệp.
+- `NoFeasibleCandidate` → giữ bản gốc, KHÔNG rơi về đường cũ.
+- `SearchInfrastructureFailure` → rơi về đường cũ, kèm mã lý do GỐC (không chỉ
+  `LEGACY_FALLBACK_USED`, vì chỉ thấy tên mã thì không sửa được gì).
+
+### Hai phát hiện về căn thời gian, cả hai đều đo bằng ffmpeg thật
+
+**1. Seek thẳng hai lần có thể lệch một khung hình.** Cùng một cửa sổ, clip tham chiếu cho
+VMAF 90,32 còn seek thẳng vào nguồn chỉ 85,07 (thậm chí 73 khung so với 72). Vì vậy lưới
+Phase 5A cũng phải đo clip-vs-clip từ cùng mốc 0 như giai đoạn thử — `QualityGate` nhận
+thêm `IReferenceWindowSource` (đặt ở tầng media để cả hai tầng dùng chung), và khi cắt clip
+hỏng thì fail-open như cũ.
+
+**2. Clip-vs-clip vẫn chưa đủ: timebase khác nhau đẩy lệch nửa khung.** Tệp nguồn (timebase
+90k, mốc 0,021s) và tệp đầu ra (timebase 24k, mốc 0,041s) có cùng 2879 khung hình, nhưng
+cùng một mốc giây lại trỏ vào hai khung khác nhau — đã đo: cùng mốc cho VMAF 7,0, còn bỏ
+một khung ứng viên thì SSIM lên 0,99. Vì vậy sau khi cắt clip còn thử ba cách căn (0,0),
+(bỏ 1 khung ứng viên), (bỏ 1 khung tham chiếu) và lấy điểm cao nhất. Chỉ ±1 khung: lệch hơn
+thế là lỗi khác (rớt khung, sai FPS) và không được hấp thụ lặng lẽ. Cách căn được ghi vào
+thông báo để tái lập được phép đo.
+
+### Hiệu chỉnh ước lượng dung lượng trên encode toàn tệp thật
+
+Nguồn 1920×1080 h264, 120,1 s, 34,0 MB, ba đoạn 3 s, x264 preset medium:
+
+| ứng viên | ước lượng | thật | sai lệch |
+|---|---|---|---|
+| crf16 | 78,4 MB | 61,9 MB | thừa 26,7% |
+| crf24 | 34,4 MB | 28,0 MB | thừa 23,0% |
+| crf32 | 14,4 MB | 12,8 MB | thừa 12,4% |
+
+Sai lệch không phải hệ số cố định nên không hiệu chỉnh bằng hằng số được — nhưng thứ tự
+xếp hạng giữ đúng cả ba, và đó là điều duy nhất ước lượng được phép làm. Giữ hướng THỪA
+(trung bình thì thiếu 21–26%): thiếu nói dối rằng tiết kiệm nhiều hơn sự thật, thừa chỉ bi
+tiết kiệm. Sửa hai lỗi lân cận: bitrate âm thanh bị dùng nhầm bitrate tổng (thêm
+`MediaInfo.AudioBitrateKbps`, đọc riêng luồng audio), và vỏ container bị nhân với số đoạn
+thử nghiệm (tệp đầu ra là một tệp).
+
+### Kiểm chứng E2E trên media thật
+
+Bản sao 120 s có tiếng (39,4 MB): search đo 6/6 ứng viên, 12 phép VMAF, chọn
+H264/1280×720/crf18 (VMAF đoạn tệ nhất 90,1); đầu ra 32,4 MB (tiết kiệm 17,8%); lưới cuối
+ACCEPTED với VMAF 90,3 (P5 88,7). Âm thanh giữ nguyên, không nâng bitrate. Temp cleanup: 0
+file, 0 thư mục search còn lại.
+
+517 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
+Không đổi ngưỡng VMAF, không làm giai đoạn 5B.

@@ -3,6 +3,7 @@ using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Pipelines;
 using UltraCompressor.Core.Planning;
+using UltraCompressor.Core.Search;
 using UltraCompressor.Core.Storage;
 using UltraCompressor.Core.Toolchain;
 
@@ -804,7 +805,8 @@ public sealed class CompressionEngine : IAsyncDisposable
             _qualityGate = new QualityGate(
                 _config,
                 ffmpeg is null ? null : new QualityProbe(ffmpeg, _workspace.Root),
-                ffmpeg is null ? null : new TimelineScanner(ffmpeg, _workspace.Root));
+                ffmpeg is null ? null : new TimelineScanner(ffmpeg, _workspace.Root),
+                ffmpeg is null ? null : new ReferenceWindowExtractor(ffmpeg, _workspace.Root));
         }
 
         return _qualityGate!;

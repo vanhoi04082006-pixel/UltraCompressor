@@ -94,3 +94,38 @@ public sealed record WindowSelection(
         IReadOnlyList<RepresentativeWindow> windows, ScanStats stats)
         => new(windows, [], stats);
 }
+
+/// <summary>Một đoạn tham chiếu đã được cắt thành clip.</summary>
+/// <param name="Role">Vai trò đoạn.</param>
+/// <param name="Path">Tệp clip tham chiếu.</param>
+/// <param name="OriginSeconds">Mốc đoạn trên tệp nguồn, để truy vết.</param>
+/// <param name="LengthSeconds">Thời lượng đoạn.</param>
+/// <param name="Bytes">Kích thước clip.</param>
+/// <param name="Elapsed">Thời gian cắt.</param>
+public sealed record WindowReference(
+    WindowRole Role,
+    string Path,
+    double OriginSeconds,
+    double LengthSeconds,
+    long Bytes,
+    TimeSpan Elapsed);
+
+/// <summary>
+/// Seam cho việc cắt đoạn tham chiếu thành clip.
+///
+/// <para>Clip tham chiếu là <b>điểm neo thời gian</b> cho mọi ứng viên của đoạn đó: mọi
+/// ứng viên đều bắt đầu từ cùng khung hình đầu, nên phép so đo không phụ thuộc vào việc
+/// hai bên có seek trùng nhau hay không.</para>
+///
+/// <para>Seam đặt ở tầng media, không phải tầng tìm kiếm, vì cả đo thử lẫn lưới an toàn
+/// cuối cùng đều cần cùng một điểm neo. Nếu hai tầng dùng hai cách cắt khác nhau, một
+/// ứng viên có thể đạt ở giai đoạn thử rồi rớt ở lưới cuối vì lý do căn khung hình —
+/// đúng lỗi đã đo được trên tệp thật.</para>
+/// </summary>
+public interface IReferenceWindowSource
+{
+    Task<IReadOnlyList<WindowReference>> ExtractAsync(
+        string sourcePath, IReadOnlyList<RepresentativeWindow> windows, CancellationToken token);
+
+    void Release(IReadOnlyList<WindowReference> references);
+}

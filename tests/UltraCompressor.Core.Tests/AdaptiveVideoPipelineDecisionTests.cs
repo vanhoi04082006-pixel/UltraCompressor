@@ -235,4 +235,78 @@ public class AdaptiveVideoPipelineDecisionTests
 
         Assert.Equal(3, reasons.Distinct(StringComparer.Ordinal).Count());
     }
+
+    /// <summary>
+    /// Bảng trạng thái → hành động, kiểm tra TRỌN VẸN.
+    ///
+    /// <para>Đây là hợp đồng quan trọng nhất của đường thích ứng. Nhầm hai hàng đầu thì
+    /// hoặc ta nén một tệp vừa kết luận là không nén được, hoặc ta bỏ qua cơ hội nén khi
+    /// đáng lẽ phải nén — và cả hai đều im lặng.</para>
+    /// </summary>
+    [Fact]
+    public void Bang_trang_thai_dan_toi_dung_nghi_dinh()
+    {
+        Assert.Equal(
+            AdaptiveVideoPipeline.SearchDecision.EncodeFull,
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.SelectedCandidate));
+
+        // Dòng này là điều kiện chính của cả giai đoạn: KHÔNG ứng viên nào đạt thì giữ bản
+        // gốc, tuyệt đối không rơi về đường cũ.
+        Assert.Equal(
+            AdaptiveVideoPipeline.SearchDecision.KeepOriginal,
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.NoFeasibleCandidate));
+
+        // Và chỉ hạ tầng hỏng mới được rơi về đường cũ.
+        Assert.Equal(
+            AdaptiveVideoPipeline.SearchDecision.FallBackToLegacy,
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.SearchInfrastructureFailure));
+    }
+
+    [Fact]
+    public void Chi_mot_trang_thai_duoc_phep_roi_ve_duong_cu()
+    {
+        var fallbacks = Enum.GetValues<SearchStatus>()
+            .Where(s => AdaptiveVideoPipeline.DecideFor(s)
+                == AdaptiveVideoPipeline.SearchDecision.FallBackToLegacy)
+            .ToList();
+
+        Assert.Equal([SearchStatus.SearchInfrastructureFailure], fallbacks);
+    }
+
+    [Fact]
+    public void Muc_tieu_am_thanh_giong_duong_cu_va_khong_nang_qua_nguon()
+    {
+        // Phạm vi tìm kiếm là video. Âm thanh phải giữ đúng trần mục tiêu của mức nén đã
+        // chọn, và không bao giờ nâng một nguồn vốn đã nhỏ hơn.
+        static PipelineContext AudioContext(CompressionLevel level, double? sourceAudioKbps) =>
+            new()
+            {
+                Item = new JobItem
+                {
+                    FilePath = "video.mp4",
+                    Kind = MediaKind.Video,
+                    HasAudio = true,
+                },
+                TempPath = Path.Combine(Path.GetTempPath(), "uc-audio-test", "out.mp4"),
+                Level = level,
+                Config = new AppConfig(),
+                Tools = new ToolResolution(null, null, null, null),
+                Probe = new MediaInfo { HasVideo = true, HasAudio = true, AudioBitrateKbps = sourceAudioKbps },
+            };
+
+        Assert.Equal(320, AdaptiveVideoPipeline.AudioTargetFor(AudioContext(CompressionLevel.Light, null)));
+        Assert.Equal(192, AdaptiveVideoPipeline.AudioTargetFor(AudioContext(CompressionLevel.Balanced, 250)));
+        Assert.Equal(96, AdaptiveVideoPipeline.AudioTargetFor(AudioContext(CompressionLevel.Balanced, 96)));
+        Assert.Equal(128, AdaptiveVideoPipeline.AudioTargetFor(AudioContext(CompressionLevel.Strong, null)));
+    }
+
+    [Fact]
+    public void Trang_thai_la_o_trong_bang()
+    {
+        // Trạng thái thêm về sau không được lọt vào hành vi mặc định "encode bừa".
+        foreach (var status in Enum.GetValues<SearchStatus>())
+        {
+            Assert.True(Enum.IsDefined(AdaptiveVideoPipeline.DecideFor(status)));
+        }
+    }
 }

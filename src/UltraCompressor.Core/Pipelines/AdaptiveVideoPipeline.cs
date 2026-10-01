@@ -109,65 +109,115 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                 $"planner không sinh được ứng viên nào: {plan.Diagnostics}", token).ConfigureAwait(false);
         }
 
-        var windows = await ChooseWindowsAsync(context, token).ConfigureAwait(false);
-        if (windows.Count == 0)
-        {
-            return await FallbackAsync(
-                context, onProgress, "không chọn được đoạn đại diện nào", token).ConfigureAwait(false);
-        }
+        // Thư mục làm việc RIÊNG cho phép đo. KHÔNG dùng `context.TempPath` — đó là đường
+        // dẫn tệp ĐẦU RA, không phải thư mục. Đưa nhầm vào bất kỳ công cụ nào (scanner,
+        // encoder, probe) thì nó tạo một thư mục mang tên `out.mp4`, rồi bước encode toàn
+        // tệp không ghi được tệp vào chính cái thư mục đó.
+        //
+        // Lỗi này chỉ lộ ra khi thật sự chạy: mọi unit test đều xanh vì không hề có tệp
+        // nào được ghi.
+        var searchDirectory = Path.Combine(
+            Path.GetDirectoryName(context.TempPath) ?? Path.GetTempPath(),
+            $"uc-adaptive-{Guid.NewGuid():N}");
 
-        var search = new PilotSearch(
-            new PilotEncoder(ffmpeg, context.TempPath),
-            new ReferenceWindowExtractor(ffmpeg, context.TempPath),
-            new QualityProbe(ffmpeg, context.TempPath));
+        Directory.CreateDirectory(searchDirectory);
 
-        SearchResult result;
         try
         {
-            result = await search.RunAsync(
-                new SearchRequest
-                {
-                    SourcePath = context.SourcePath,
-                    SourceSizeBytes = SourceFileBytes(context.SourcePath),
-                    SourceWidth = sourceWidth,
-                    SourceHeight = sourceHeight,
-                    SourceDurationSeconds = probe.Duration?.TotalSeconds ?? 0,
-                    SourceAudioBitrateKbps = probe.AudioBitrateKbps,
-                    HasAudio = probe.HasAudio,
-                    Windows = windows,
-                    Candidates = candidates,
-                    Level = context.Level,
-                    Model = VmafModels.Default,
-                    MaxEvaluations = context.Config.MaxSearchEvaluations,
-                },
-                token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // Không lường trước được hỏng hạ tầng, nên bắt rộng ở đây rồi hạ cấp thành
-            // fallback. Ném ra ngoài sẽ làm job chết mà không nén được gì.
-            return await FallbackAsync(
-                context, onProgress, $"tìm kiếm ném ngoại lệ: {ex.Message}", token).ConfigureAwait(false);
-        }
+            var windows = await ChooseWindowsAsync(context, searchDirectory, token).ConfigureAwait(false);
+            if (windows.Count == 0)
+            {
+                return await FallbackAsync(
+                    context, onProgress, "không chọn được đoạn đại diện nào", token).ConfigureAwait(false);
+            }
 
-        return result.Status switch
+            SearchResult result;
+            try
+            {
+                var search = new PilotSearch(
+                    new PilotEncoder(ffmpeg, searchDirectory),
+                    new ReferenceWindowExtractor(ffmpeg, searchDirectory),
+                    new QualityProbe(ffmpeg, searchDirectory));
+
+                result = await search.RunAsync(
+                    new SearchRequest
+                    {
+                        SourcePath = context.SourcePath,
+                        SourceSizeBytes = SourceFileBytes(context.SourcePath),
+                        SourceWidth = sourceWidth,
+                        SourceHeight = sourceHeight,
+                        SourceDurationSeconds = probe.Duration?.TotalSeconds ?? 0,
+                        SourceAudioBitrateKbps = probe.AudioBitrateKbps,
+                        HasAudio = probe.HasAudio,
+                        Windows = windows,
+                        Candidates = candidates,
+                        Level = context.Level,
+                        Model = VmafModels.Default,
+                        MaxEvaluations = context.Config.MaxSearchEvaluations,
+                    },
+                    token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Không lường trước được hỏng hạ tầng, nên bắt rộng ở đây rồi hạ cấp thành
+                // fallback. Ném ra ngoài sẽ làm job chết mà không nén được gì.
+                return await FallbackAsync(
+                    context, onProgress, $"tìm kiếm ném ngoại lệ: {ex.Message}", token).ConfigureAwait(false);
+            }
+
+            return result.Status switch
+            {
+                // Quyết định hợp lệ rằng không nén được. KHÔNG rơi về đường cũ.
+                SearchStatus.NoFeasibleCandidate => PipelineResult.NotWorthIt(
+                    SkipReason.NotWorthIt, 0, Describe(result)),
+
+                _ when DecideFor(result.Status) == SearchDecision.FallBackToLegacy => await FallbackAsync(
+                    context, onProgress, $"{result.Outcome.Reason}: {result.Outcome.Message}", token)
+                    .ConfigureAwait(false),
+
+                _ => await EncodeFullAsync(context, onProgress, result, token).ConfigureAwait(false),
+            };
+        }
+        finally
         {
-            // Chỉ nhánh này rơi về đường cũ. Hai nhánh còn lại giữ nguyên quyết định của ta.
-            SearchStatus.SearchInfrastructureFailure => await FallbackAsync(
-                context, onProgress,
-                $"{result.Outcome.Reason}: {result.Outcome.Message}", token).ConfigureAwait(false),
-
-            // Quyết định hợp lệ rằng không nén được. KHÔNG rơi về đường cũ.
-            SearchStatus.NoFeasibleCandidate => PipelineResult.NotWorthIt(
-                SkipReason.NotWorthIt, 0, Describe(result)),
-
-            _ => await EncodeFullAsync(context, onProgress, result, token).ConfigureAwait(false),
-        };
+            // Dọn cả thư mục, không chỉ các tệp: `Release` của encoder xoá clip, nhưng thư
+            // mục rỗng thì tích luỹ lại tới hàng trăm thư mục rỗng trong workspace.
+            TryDeleteDirectory(searchDirectory);
+        }
     }
+
+    /// <summary>Hành động mà mỗi trạng thái tìm kiếm dẫn tới.</summary>
+    public enum SearchDecision
+    {
+        /// <summary>Có ứng viên đo được và đạt: encode toàn tệp rồi để lưới cuối giữ.</summary>
+        EncodeFull,
+
+        /// <summary>Không ứng viên nào đạt: giữ bản gốc, không rơi về đường cũ.</summary>
+        KeepOriginal,
+
+        /// <summary>Không đo được gì: rơi về đường cũ, kèm mã lý do gốc.</summary>
+        FallBackToLegacy,
+    }
+
+    /// <summary>
+    /// Bảng ánh xạ trạng thái tìm kiếm sang hành động. Tách riêng để bảng quyết định quan
+    /// trọng nhất của đường này được kiểm thử trọn vẹn, thay vì nằm ẩn trong một biểu
+    /// thức <c>switch</c> chỉ chạy được khi có ffmpeg.
+    ///
+    /// <para>Hàm cố tình dùng <c>_</c> cho trạng thái lạ thay vì ném lỗi: trạng thái mới
+    /// thêm vào về sau mặc định phải an toàn (không nén bừa), và <c>EncodeFull</c> thì không
+    /// phải mặc định an toàn.</para>
+    /// </summary>
+    public static SearchDecision DecideFor(SearchStatus status) => status switch
+    {
+        SearchStatus.SelectedCandidate => SearchDecision.EncodeFull,
+        SearchStatus.NoFeasibleCandidate => SearchDecision.KeepOriginal,
+        _ => SearchDecision.FallBackToLegacy,
+    };
 
     private static async Task<PipelineResult> EncodeFullAsync(
         PipelineContext context,
@@ -255,22 +305,49 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
         }
     }
 
-    private static int? AudioTargetFor(PipelineContext context)
+    private static void TryDeleteDirectory(string path)
+    {
+        // Dọn dẹp KHÔNG được làm hỏng kết quả nén, nên nuốt lỗi. Thường là ffmpeg chưa
+        // thoát hẳn và Windows còn giữ handle; thư mục tạm, sẽ được dọn ở lượt sau.
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    internal static int? AudioTargetFor(PipelineContext context)
     {
         if (context.Item.HasAudio is false) return null;
 
-        // `JobItem` không mang bitrate âm thanh riêng, và `SourceBitrateKbps` là bitrate
-        // TỔNG của cả tệp — dùng nó làm trần âm thanh sẽ cho phép nâng âm thanh lên tới
-        // mức vô lý. Ước lượng phần âm thanh chỉ dùng cho XẾP HẠNG, nên giá trị mặc định
-        // ở đây là hợp lý; nếu sau này `JobItem` mang thêm bitrate âm thanh thì nối vào đó.
-        const int DefaultAudioKbps = 128;
-        return DefaultAudioKbps;
+        // Cùng trần mục tiêu theo mức nén như đường cũ: Nhẹ 320k, Cân bằng 192k, Mạnh 128k.
+        // Đường thích ứng không được tự phát minh một mục tiêu âm thanh khác, vì âm thanh
+        // không thuộc phạm vi tìm kiếm video.
+        var target = CompressionProfile.For(context.Level).AudioBitrateKbps;
+
+        // Không nâng bitrate của nguồn vốn đã nhỏ hơn mục tiêu. Dùng bitrate âm thanh thật
+        // từ probe, không dùng bitrate tổng của tệp: tổng 2.612 kb/s không phải là trần
+        // hợp lý cho một luồng âm thanh 250 kb/s.
+        if (context.Probe?.AudioBitrateKbps is { } source && source > 0 && source < target)
+        {
+            target = (int)Math.Round(source);
+        }
+
+        return target;
     }
 
     private static async Task<IReadOnlyList<RepresentativeWindow>> ChooseWindowsAsync(
-        PipelineContext context, CancellationToken token)
+        PipelineContext context, string tempDirectory, CancellationToken token)
     {
-        var scanner = new TimelineScanner(context.Tools.FFmpeg!, context.TempPath);
+        var scanner = new TimelineScanner(context.Tools.FFmpeg!, tempDirectory);
         var duration = context.Item.DurationSeconds is { } d && d > 0
             ? TimeSpan.FromSeconds(d)
             : (TimeSpan?)null;

@@ -85,7 +85,7 @@ public class PilotSearchOrchestrationTests
             string referencePath, string candidatePath,
             TimeWindow referenceWindow, TimeWindow candidateWindow,
             int displayWidth, int displayHeight, int candidateWidth, int candidateHeight,
-            VmafModel model, CancellationToken token = default)
+            VmafModel model, int candidateStartFrame = 0, int referenceStartFrame = 0, CancellationToken token = default)
         {
             var role = RoleOf(candidatePath);
             Measured.Add(role);
@@ -360,7 +360,7 @@ public class PilotSearchOrchestrationTests
             string referencePath, string candidatePath,
             TimeWindow referenceWindow, TimeWindow candidateWindow,
             int displayWidth, int displayHeight, int candidateWidth, int candidateHeight,
-            VmafModel model, CancellationToken token = default)
+            VmafModel model, int candidateStartFrame = 0, int referenceStartFrame = 0, CancellationToken token = default)
         {
             Calls.Add(new MeasureCall(
                 referenceWindow, candidateWindow,

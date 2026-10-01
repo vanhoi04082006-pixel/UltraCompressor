@@ -70,13 +70,19 @@ public sealed class QualityGate
     private readonly AppConfig _config;
     private readonly IQualityMeasure? _probe;
     private readonly TimelineScanner? _scanner;
+    private readonly IReferenceWindowSource? _references;
     private readonly VmafModel _model = VmafModels.Default;
 
-    public QualityGate(AppConfig config, IQualityMeasure? probe, TimelineScanner? scanner = null)
+    public QualityGate(
+        AppConfig config,
+        IQualityMeasure? probe,
+        TimelineScanner? scanner = null,
+        IReferenceWindowSource? references = null)
     {
         _config = config;
         _probe = probe;
         _scanner = scanner;
+        _references = references;
     }
 
     /// <summary>Ngưỡng chất lượng của mode, theo model sẽ dùng để đo.</summary>
@@ -127,18 +133,18 @@ public sealed class QualityGate
         }
 
         // ---- 2. Chất lượng: chỉ khi tệp đủ lớn để việc đo đáng giá, và chỉ cho video.
-        if (!_config.QualityCheckEnabled) return Accept(level, null, 0, null);
+        if (!_config.QualityCheckEnabled) return Accept(level, null, 0, null, string.Empty);
 
         if (kind != MediaKind.Video)
         {
             // Ảnh/GIF/âm thanh/PDF: chưa có metric cảm nhận nào đo được bằng VMAF, nên
             // không giả vờ có. Chỉ còn lưới kích thước ở trên.
-            return Accept(level, null, 0, null);
+            return Accept(level, null, 0, null, string.Empty);
         }
 
         if (_probe is null || displayWidth is not { } width || displayHeight is not { } height || width <= 0 || height <= 0)
         {
-            return Accept(level, null, 0, null);
+            return Accept(level, null, 0, null, string.Empty);
         }
 
         // Chọn đoạn theo nội dung, không phải theo phần trăm thời lượng. Trước đây chỉ lấy
@@ -151,38 +157,44 @@ public sealed class QualityGate
         // định ở đây — quyết định vẫn là: đoạn nào dưới ngưỡng thì loại, đoạn nào đạt thì qua.
         QualitySample? worst = null;
         WindowRole? worstRole = null;
+        string worstAlignment = string.Empty;
         var measuredCount = 0;
 
         foreach (var window in selection.Windows)
         {
             if (token.IsCancellationRequested) break;
 
-            var measured = await _probe.MeasureAsync(
-                sourcePath, candidatePath,
-                new TimeWindow(window.StartSeconds, window.DurationSeconds),
-                new TimeWindow(window.StartSeconds, window.DurationSeconds),
-                width, height,
-                candidateWidth: width, candidateHeight: height,
-                model: _model, token)
-                .ConfigureAwait(false);
-
-            if (measured is null) continue;
+            var (sample, alignment) = await MeasureWindowAsync(
+                sourcePath,
+                candidatePath,
+                window,
+                width,
+                height,
+                _model,
+                token).ConfigureAwait(false);
+            if (sample is null) continue;
 
             measuredCount++;
-            if (worst is null || measured.Sample.Mean < worst.Mean)
+            if (worst is null || sample.Mean < worst.Mean)
             {
-                worst = measured.Sample;
+                worst = sample;
                 worstRole = window.Role;
+                worstAlignment = alignment;
             }
 
-            if (floor.Accepts(measured.Sample)) continue;
+            if (floor.Accepts(sample)) continue;
+
+            // Cách căn được ghi vào thông báo khi khác mặc định: đó là dấu vết duy nhất cho
+            // biết con số này đến từ cặp khung hình nào. Không có nó, lần sau không tái lập
+            // được phép đo.
+            var aligned = alignment.Length > 0 ? $" ({alignment})" : string.Empty;
 
             return GateDecision.Reject(
                 DecisionReasons.QualityFloorNotMet,
                 SkipReason.BelowMinSaving,
                 $"Đoạn {window.Role} lúc {window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}s "
-                + $"chỉ đạt VMAF {measured.Sample.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}) — giữ bản gốc.",
-                measured.Sample);
+                + $"chỉ đạt VMAF {sample.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}){aligned} — giữ bản gốc.",
+                sample);
         }
 
         // Không đo được đoạn nào thì KHÔNG loại. Công cụ hỏng hay quá giờ thì mọi tệp
@@ -193,8 +205,118 @@ public sealed class QualityGate
         // với mọi tệp được chấp nhận, và nhìn vào log không phân biệt được "đo rồi đạt" với
         // "không đo được". Quyết định thì không sai, chỉ là mất khả năng quan sát — và mất
         // telemetry thì sai số liệu ở các giai đoạn sau.
-        return Accept(level, worst, measuredCount, worstRole);
+        return Accept(level, worst, measuredCount, worstRole, worstAlignment);
     }
+
+    /// <summary>
+    /// Đo một đoạn bằng cùng điểm neo thời gian với giai đoạn thử, rồi căn khung hình.
+    /// </summary>
+    /// <remarks>
+    /// <para>Hai lớp căn, vì hai loại lệch khác nhau. Đo trực tiếp bằng hai lần seek vào
+    /// nguồn và tệp đã nén có thể lệch nhau một khung hình, và trên tệp thật điều đó làm
+    /// VMAF của cùng một ứng viên rơi từ 90,3 xuống 85,1 — nên lưới cuối phải đo
+    /// clip-vs-clip từ cùng mốc 0 như giai đoạn thử. Nhưng clip-vs-clip vẫn chưa đủ: tệp
+    /// nguồn (timebase 90k, mốc 0,021s) và tệp đầu ra (timebase 24k, mốc 0,041s) có cùng số
+    /// khung hình mà cùng một mốc giây lại trỏ vào hai khung khác nhau — đã đo: cùng mốc
+    /// cho VMAF 7,0, còn bỏ một khung ứng viên thì lên đúng nội dung gốc.</para>
+    ///
+    /// <para>Vì vậy sau khi cắt clip, còn thử ba cách căn — (0,0), (bỏ 1 khung ứng viên),
+    /// (bỏ 1 khung tham chiếu) — và lấy điểm cao nhất. Chỉ ±1 khung, vì lệch nửa khung do
+    /// timebase/mốc bắt đầu không thể đẩy lệch quá một khung; lệch hơn thế là lỗi khác
+    /// (rớt khung, sai FPS) và KHÔNG được hấp thụ lặng lẽ. Chọn điểm cao nhất ở đây là
+    /// đăng ký thời gian (registration), không phải nâng điểm chất lượng: ứng viên kém
+    /// thật thì mọi cách căn đều thấp.</para>
+    ///
+    /// <para>Khi không có nguồn cắt clip, giữ hành vi đo trực tiếp cũ để các test không cần
+    /// ffmpeg vẫn kiểm được logic quyết định. Khi cắt clip hỏng, đoạn đó được coi là
+    /// <b>không đo được</b> và lưới fail-open như cũ.</para>
+    /// </remarks>
+    private async Task<(QualitySample? Sample, string Alignment)> MeasureWindowAsync(
+        string sourcePath,
+        string candidatePath,
+        RepresentativeWindow window,
+        int width,
+        int height,
+        VmafModel model,
+        CancellationToken token)
+    {
+        if (_probe is null) return (null, string.Empty);
+
+        if (_references is null)
+        {
+            var direct = await _probe.MeasureAsync(
+                sourcePath, candidatePath,
+                new TimeWindow(window.StartSeconds, window.DurationSeconds),
+                new TimeWindow(window.StartSeconds, window.DurationSeconds),
+                width, height,
+                candidateWidth: width, candidateHeight: height,
+                model: model, token: token)
+                .ConfigureAwait(false);
+
+            return (direct?.Sample, string.Empty);
+        }
+
+        IReadOnlyList<WindowReference>? sourceClips = null;
+        IReadOnlyList<WindowReference>? candidateClips = null;
+
+        try
+        {
+            sourceClips = await _references.ExtractAsync(sourcePath, [window], token).ConfigureAwait(false);
+            candidateClips = await _references.ExtractAsync(candidatePath, [window], token).ConfigureAwait(false);
+
+            var sourceClip = sourceClips.Count > 0 ? sourceClips[0] : null;
+            var candidateClip = candidateClips.Count > 0 ? candidateClips[0] : null;
+            if (sourceClip is null || candidateClip is null) return (null, string.Empty);
+
+            // Ba cách căn: giữ nguyên, bỏ 1 khung ứng viên, bỏ 1 khung tham chiếu.
+            // Thứ tự cố ý: (0,0) trước để khi mọi cách bằng nhau thì không ghi căn chỉnh
+            // vào báo cáo — chỉ lệch thật mới để lại dấu vết.
+            (QualitySample? Sample, string Alignment)? best = null;
+
+            foreach (var (candidateDrop, referenceDrop, label) in AlignmentCandidates)
+            {
+                var measured = await _probe.MeasureAsync(
+                    sourceClip.Path, candidateClip.Path,
+                    new TimeWindow(0, sourceClip.LengthSeconds),
+                    new TimeWindow(0, candidateClip.LengthSeconds),
+                    width, height,
+                    candidateWidth: width, candidateHeight: height,
+                    model: model,
+                    candidateStartFrame: candidateDrop,
+                    referenceStartFrame: referenceDrop,
+                    token)
+                    .ConfigureAwait(false);
+
+                if (measured?.Sample is not { } sample) continue;
+
+                if (best is null || sample.Mean > best.Value.Sample!.Mean)
+                {
+                    best = (sample, label);
+                }
+            }
+
+            return best ?? (null, string.Empty);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, string.Empty);
+        }
+        finally
+        {
+            if (sourceClips is not null) _references.Release(sourceClips);
+            if (candidateClips is not null) _references.Release(candidateClips);
+        }
+    }
+
+    /// <summary>
+    /// Các cách căn khung hình được phép thử, theo thứ tự ưu tiên.
+    /// </summary>
+    private static readonly (int CandidateDrop, int ReferenceDrop, string Label)[] AlignmentCandidates =
+    [
+        (0, 0, string.Empty),
+        (1, 0, "căn −1 khung ứng viên"),
+        (0, 1, "căn −1 khung tham chiếu"),
+    ];
 
     /// <summary>
     /// Quét rồi chọn đoạn. Bọc thử: mọi lỗi quét rơi về chiến lược vị trí chia đều.
@@ -251,7 +373,8 @@ public sealed class QualityGate
         CompressionLevel level,
         QualitySample? worst,
         int measuredCount,
-        WindowRole? worstRole)
+        WindowRole? worstRole,
+        string worstAlignment)
     {
         if (worst is null)
         {
@@ -261,6 +384,7 @@ public sealed class QualityGate
 
         var floor = QualityPolicy.For(level, VmafModels.Default);
         var where = worstRole is null ? string.Empty : $" ở đoạn {worstRole}";
+        var aligned = worstAlignment.Length > 0 ? $" ({worstAlignment})" : string.Empty;
 
         return GateDecision.Keep(
             DecisionReasons.Accepted,
@@ -268,7 +392,7 @@ public sealed class QualityGate
             $"VMAF {worst.Mean.ToString("0.0", CultureInfo.InvariantCulture)}"
                 + $" (P5 {worst.P5.ToString("0.0", CultureInfo.InvariantCulture)}){where}"
                 + $", ngưỡng {floor}"
-                + $" — đo {measuredCount.ToString(CultureInfo.InvariantCulture)} đoạn, đoạn tệ nhất.",
+                + $" — đo {measuredCount.ToString(CultureInfo.InvariantCulture)} đoạn, đoạn tệ nhất{aligned}.",
             worst);
     }
 }

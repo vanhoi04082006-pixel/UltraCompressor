@@ -5,21 +5,6 @@ using UltraCompressor.Core.Processes;
 
 namespace UltraCompressor.Core.Search;
 
-/// <summary>Một đoạn tham chiếu đã được cắt thành clip.</summary>
-/// <param name="Role">Vai trò đoạn.</param>
-/// <param name="Path">Tệp clip tham chiếu.</param>
-/// <param name="OriginSeconds">Mốc đoạn trên tệp nguồn, để truy vết.</param>
-/// <param name="LengthSeconds">Thời lượng đoạn.</param>
-/// <param name="Bytes">Kích thước clip.</param>
-/// <param name="Elapsed">Thời gian cắt.</param>
-public sealed record WindowReference(
-    WindowRole Role,
-    string Path,
-    double OriginSeconds,
-    double LengthSeconds,
-    long Bytes,
-    TimeSpan Elapsed);
-
 /// <summary>
 /// Cắt các đoạn đại diện thành clip tham chiếu, dùng chung cho mọi ứng viên.
 ///
@@ -70,17 +55,27 @@ public sealed class ReferenceWindowExtractor(string ffmpegPath, string tempDirec
 
         var references = new List<WindowReference>(windows.Count);
 
-        foreach (var window in windows)
+        try
         {
-            if (token.IsCancellationRequested)
+            foreach (var window in windows)
             {
-                break;
+                if (token.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                references.Add(await ExtractOneAsync(sourcePath, window, token).ConfigureAwait(false));
             }
 
-            references.Add(await ExtractOneAsync(sourcePath, window, token).ConfigureAwait(false));
+            return references;
         }
-
-        return references;
+        catch
+        {
+            // Cắt hỏng giữa chừng không được để lại các clip đã cắt xong. Người gọi chỉ
+            // nhận được ngoại lệ, không nhận được danh sách, nên chính nơi này phải dọn.
+            Release(references);
+            throw;
+        }
     }
 
     private async Task<WindowReference> ExtractOneAsync(
@@ -88,9 +83,12 @@ public sealed class ReferenceWindowExtractor(string ffmpegPath, string tempDirec
         RepresentativeWindow window,
         CancellationToken token)
     {
+        // Tên tệp phải duy nhất theo từng lần cắt. Tên theo vai trò + mốc sẽ va nhau khi
+        // hai tệp cùng được xử lý song song trong một workspace, và clip sau ghi đè clip
+        // trước giữa lúc đang đo.
         var output = Path.Combine(
             tempDirectory,
-            $"ref-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}.mp4");
+            $"ref-{window.Role}-{window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}-{Guid.NewGuid():N}.mp4");
 
         // CÙNG CẤU TRÚC LỆNH với PilotEncoder: -ss trước -i, cùng -t. Đây là toàn bộ lý do
         // class này tồn tại — hai bên phải đi qua cùng một đường để điểm khung hình đầu

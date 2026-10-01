@@ -22,33 +22,8 @@ namespace UltraCompressor.Core.Tests;
 /// </summary>
 public class QualityProbeTimelineTests
 {
-    private static string? FindFFmpeg()
-    {
-        foreach (var relative in new[] { "app/ffmpeg.exe", "tools/ffmpeg.exe", "../app/ffmpeg.exe" })
-        {
-            try
-            {
-                var candidate = Path.GetFullPath(Path.Combine(FindRepoRoot(), relative));
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-            catch (ArgumentException)
-            {
-                // Đường dẫn không hợp lệ trên nền tảng này — thử phần tiếp theo.
-            }
-            catch (NotSupportedException)
-            {
-            }
-        }
 
-        return null;
-    }
-
-    private static string Ffmpeg() =>
-        FindFFmpeg() ?? throw new InvalidOperationException(
-            "Test được gắn RequiresFFmpeg nên phải tìm thấy ffmpeg. Nếu gặp lỗi này thì attribute đã bị cấu hình sai.");
+    private static string Ffmpeg() => TestFFmpeg.Require();
 
     private static string FindRepoRoot()
     {

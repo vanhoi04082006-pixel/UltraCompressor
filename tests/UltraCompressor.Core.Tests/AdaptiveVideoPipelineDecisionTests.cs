@@ -210,30 +210,59 @@ public class AdaptiveVideoPipelineDecisionTests
     }
 
     [Fact]
-    public void C_bao_hoi_chi_quyet_dinh_giua_ba_trang_thay()
+    public void Bon_trang_thai_dan_toi_bon_nghi_dinh_khac_nhau()
     {
-        // Ba trạng thái phải dẫn tới ba hành vi KHÁC NHAU. Nếu hai trong ba cùng hành vi
+        // Bốn trạng thái phải dẫn tới bốn hành vi KHÁC NHAU. Nếu hai trong bốn cùng hành vi
         // thì phân biệt trạng thái là vô nghĩa, và việc giữ nó chỉ tốn công.
-        Assert.Equal(3, Enum.GetValues<SearchStatus>().Length);
+        //
+        // Riêng hai trạng thái "giữ bản gốc" tách nhau dù thi hành giống nhau, vì chúng nói
+        // khác nhau: một cái là "có ứng viên đạt mà vẫn không đáng encode", cái kia là "không
+        // ứng viên nào đạt". Gộp lại thì báo cáo không còn trả lời được lần nén này có bỏ
+        // được việc mã hoá lại hay không.
+        Assert.Equal(4, Enum.GetValues<SearchStatus>().Length);
+        Assert.Equal(4, Enum.GetValues<AdaptiveVideoPipeline.SearchDecision>().Length);
 
-        // Chỉ hạ tầng mới được rơi về đường cũ. Hai trạng thái còn lại là quyết định của ta.
+        // Chỉ hạ tầng mới được rơi về đường cũ. Ba trạng thái còn lại là quyết định của ta.
         Assert.NotEqual(SearchStatus.NoFeasibleCandidate, SearchStatus.SearchInfrastructureFailure);
         Assert.NotEqual(SearchStatus.SelectedCandidate, SearchStatus.SearchInfrastructureFailure);
+        Assert.NotEqual(SearchStatus.OriginalSelected, SearchStatus.SearchInfrastructureFailure);
     }
 
     [Fact]
-    public void Phan_biet_ba_trang_thai_la_phan_biet_luong_y_theo_ma_ly_do()
+    public void Bon_ma_ly_do_cua_ke_tuc_phai_khac_nhau()
     {
-        // Ba mã lý do phải khác nhau, vì báo cáo và bộ lọc log dựa vào chúng để tách
-        // "tệp không nén được" khỏi "công cụ hỏng".
-        var reasons = new[]
-        {
-            SearchDecisionReasons.PilotNoCandidates,
-            SearchDecisionReasons.PilotAllCandidatesRejected,
-            SearchDecisionReasons.PilotEncodeFailed,
-        };
+        // Bốn kết cục phải có bốn mã khác nhau, vì báo cáo và bộ lọc log dựa vào chúng để tách
+        // "encode được" khỏi "bản gốc thắng", "không có gì đạt" và "công cụ hỏng". Trùng mã là
+        // mất khả năng đếm.
+        Assert.Equal(4, SearchDecisionReasons.Outcomes.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(
+            SearchDecisionReasons.Outcomes,
+            Enum.GetValues<SearchStatus>()
+                .Select(AdaptiveVideoPipeline.OutcomeFor)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray());
+    }
 
-        Assert.Equal(3, reasons.Distinct(StringComparer.Ordinal).Count());
+    [Fact]
+    public void Ma_luong_thich_ung_van_tat_mac_dinh()
+    {
+        // Giai đoạn 5B KHÔNG mở cờ này. Người dùng bật bằng tay trong tệp cấu hình; bật mặc
+        // định là thay đổi hành vi nén của mọi người dùng mà chưa ai xin.
+        Assert.False(new AppConfig().EnableAdaptiveSearch);
+    }
+
+    [Fact]
+    public void Ma_luong_thich_ung_thuoc_ve_viec_bat_duoc_bien_doi()
+    {
+        // Vì không có ô bật trên giao diện, cờ chỉ đổi khi ai đó sửa tệp cấu hình — tức là
+        // chủ ý. Cờ phải sống sót qua mọi thao tác cấu hình thường.
+        //
+        // `AppHost.CopyConfig` cố tình KHÔNG chép cờ này (vì giao diện không gửi nó, nên chép
+        // sẽ tắt cờ mỗi lần lưu). Không kiểm thử được trực tiếp vì dự án kiểm thử không
+        // tham chiếu dự án WinForms; hợp đồng được bảo vệ ở đây: cờ mặc định tắt, và bộ chọn
+        // đường chạy tôn trọng đúng giá trị của nó.
+        Assert.True(Config(false).EnableAdaptiveSearch == false);
+        Assert.True(Config(true).EnableAdaptiveSearch);
     }
 
     /// <summary>
@@ -250,16 +279,52 @@ public class AdaptiveVideoPipelineDecisionTests
             AdaptiveVideoPipeline.SearchDecision.EncodeFull,
             AdaptiveVideoPipeline.DecideFor(SearchStatus.SelectedCandidate));
 
-        // Dòng này là điều kiện chính của cả giai đoạn: KHÔNG ứng viên nào đạt thì giữ bản
-        // gốc, tuyệt đối không rơi về đường cũ.
+        // Có ứng viên đạt nhưng không chứng minh được lợi ích: giữ bản gốc, bỏ encode.
         Assert.Equal(
             AdaptiveVideoPipeline.SearchDecision.KeepOriginal,
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.OriginalSelected));
+
+        // Đã thử mà không ứng viên nào đạt: giữ bản gốc, tuyệt đối không rơi về đường cũ.
+        Assert.Equal(
+            AdaptiveVideoPipeline.SearchDecision.KeepOriginalNoFeasible,
             AdaptiveVideoPipeline.DecideFor(SearchStatus.NoFeasibleCandidate));
 
         // Và chỉ hạ tầng hỏng mới được rơi về đường cũ.
         Assert.Equal(
             AdaptiveVideoPipeline.SearchDecision.FallBackToLegacy,
             AdaptiveVideoPipeline.DecideFor(SearchStatus.SearchInfrastructureFailure));
+    }
+
+    [Fact]
+    public void Hai_trang_thai_giu_ban_goc_phai_tach_biet_nhau()
+    {
+        // Cùng hành vi thi hành (giữ bản gốc, không encode, không rơi về đường cũ) nhưng phải là
+        // hai hàng khác nhau — vì người đọc báo cáo cần biết ta đã bỏ qua một lần encode vì
+        // không đáng, hay vì không tìm được gì đạt.
+        Assert.NotEqual(
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.OriginalSelected),
+            AdaptiveVideoPipeline.DecideFor(SearchStatus.NoFeasibleCandidate));
+
+        Assert.NotEqual(
+            AdaptiveVideoPipeline.OutcomeFor(SearchStatus.OriginalSelected),
+            AdaptiveVideoPipeline.OutcomeFor(SearchStatus.NoFeasibleCandidate));
+
+        // Cả hai vẫn là quyết định hợp lệ, không phải hạ tầng.
+        foreach (var status in new[] { SearchStatus.OriginalSelected, SearchStatus.NoFeasibleCandidate })
+        {
+            Assert.NotEqual(
+                AdaptiveVideoPipeline.SearchDecision.FallBackToLegacy,
+                AdaptiveVideoPipeline.DecideFor(status));
+        }
+    }
+
+    [Fact]
+    public void Ma_ror_ve_duong_cu_phai_trung_ma_ly_do_chinh_thuc()
+    {
+        // `LegacyFallbackMarker` và mã trong `SearchDecisionReasons` từng là hai chuỗi riêng
+        // cùng giá trị. Hai nguồn sự thật thì sớm muộn lệch nhau, và lúc đó thống kê đếm một
+        // chỗ mà log ghi chỗ kia.
+        Assert.Equal(SearchDecisionReasons.LegacyFallbackUsed, AdaptiveVideoPipeline.LegacyFallbackMarker);
     }
 
     [Fact]

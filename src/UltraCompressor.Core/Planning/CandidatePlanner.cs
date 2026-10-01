@@ -21,6 +21,20 @@ public sealed record VideoSourceProfile
     public ContentProfile Content { get; init; } = ContentProfile.Unknown;
 
     public ContentComplexity? Complexity { get; init; }
+
+    /// <summary>
+    /// Byte thật của tệp nguồn. Không phải ưu tiên — mà là <b>sự thật</b> mà nhánh
+    /// <see cref="OriginalCandidate"/> khai báo. Thiếu thì nhánh đó không sinh ra, vì một
+    /// ứng viên mà không biết kích thước thì không so được với bất cứ ứng viên nào.
+    /// </summary>
+    public long? SizeBytes { get; init; }
+
+    /// <summary>Codec của nguồn, để mô tả. Không dùng để quyết định.</summary>
+    public string? CodecName { get; init; }
+
+    public bool HasAudio { get; init; }
+
+    public double? AudioBitrateKbps { get; init; }
 }
 
 /// <summary>
@@ -41,6 +55,10 @@ public sealed record VideoSourceProfile
 /// mở nhánh hình nhỏ hơn không. Nó không được tuyên bố ứng viên nào "chắc chắn đạt chất
 /// lượng", và không được dùng để kết luận "giữ nguyên bản gốc" — đó là việc của
 /// <c>QualityProbe</c> ở giai đoạn sau.</item>
+/// <item><b>Nhánh giữ nguyên bản gốc là ứng viên ngang hàng.</b> Nó nằm trong
+/// <see cref="CandidatePlan.Candidates"/> từ đầu, có định danh ổn định, và chỉ được thắng
+/// bằng <b>số đo thật</b> ở <c>OriginalComparison</c> — không bằng bất kỳ ngưỡng metadata
+/// nào.</item>
 /// </list>
 /// </summary>
 public static class CandidatePlanner
@@ -207,7 +225,13 @@ public static class CandidatePlanner
 
         return new CandidatePlan
         {
-            Candidates = candidates,
+            // Nhánh không-nén đứng ĐẦU danh sách, vì nó là ứng viên hợp lệ và phải được nhìn
+            // thấy cùng các ứng viên khác — không phải một nhánh phụ sinh ra sau.
+            //
+            // Thêm SAU khi cắt giới hạn, cố ý: nhánh này không tốn encode nào, nên nó không
+            // được phép bị loại chỉ vì danh sách ứng viên encode chạm trần. Bỏ nhánh không-nén
+            // vì cấu hình hẹp là đúng cái lỗi mà giai đoạn này sinh ra để chữa.
+            Candidates = PrependOriginal(candidates, source),
             Diagnostics = new CandidateDiagnostics
             {
                 ResolutionBranches = branches.Count,
@@ -219,6 +243,39 @@ public static class CandidatePlanner
                 Notes = notes,
             },
         };
+    }
+
+    /// <summary>
+    /// Sinh nhánh giữ nguyên bản gốc, hoặc không sinh gì nếu chưa biết byte nguồn.
+    /// </summary>
+    /// <remarks>
+    /// <b>Không dùng metadata để quyết định</b> ở đây, và đó là điểm mấu chốt: điều kiện duy
+    /// nhất là "biết tệp nguồn nặng bao nhiêu byte". Không hề có <c>bpppf &lt; x</c>, không có
+    /// <c>bitrate &lt; y</c>, không có <c>codec == AV1 thì giữ nguyên</c>. Những thứ đó là
+    /// điều ta <i>đoán</i>, và đoán thì không được phép ra quyết định không hoàn tác được.
+    /// Nhánh này chỉ được thắng sau khi có số đo thật, ở <c>OriginalComparison</c>.
+    /// </remarks>
+    private static IReadOnlyList<CompressionCandidate> PrependOriginal(
+        List<VideoEncodeCandidate> encodes, VideoSourceProfile source)
+    {
+        if (source.SizeBytes is not { } bytes || bytes <= 0)
+        {
+            return [.. encodes];
+        }
+
+        return
+        [
+            new OriginalCandidate(OriginalCandidate.StableId, bytes)
+            {
+                Width = source.Width,
+                Height = source.Height,
+                Fps = source.Fps,
+                CodecName = source.CodecName,
+                HasAudio = source.HasAudio,
+                AudioBitrateKbps = source.AudioBitrateKbps,
+            },
+            .. encodes,
+        ];
     }
 
     // ---------------------------------------------------------------- nhánh hình

@@ -3,6 +3,63 @@ using UltraCompressor.Core.Media;
 
 namespace UltraCompressor.Core.Search;
 
+/// <summary>
+/// Khoảng byte <b>hợp lý</b> cho một ước lượng, suy ra từ độ lan tỉa quan sát được trên
+/// bộ mẫu hiệu chỉnh.
+/// </summary>
+/// <remarks>
+/// <para><b>Đây KHÔNG phải khoảng tin cậy thống kê.</b> Không có gì trong bộ mẫu cho ta
+/// phân phối xác suất, nên không có cơ sở để nói "95% rơi vào đây". Cái thật duy nhất biết
+/// được là: trên <i>N</i> tệp đã đo, tỉ số nằm trong khoảng này. Gọi nó là khoảng tin cậy
+/// 95% là nói dối, và hậu quả là ai đó sẽ dựa vào độ chắc chắn không có thật để ra quyết
+/// định không thể hoàn tác. Vì vậy tên và ý nghĩa là "biên heuristics" — đủ để <b>giữ mình
+/// bên thận trọng</b>, không đủ để <b>tuyên bố</b>.</para>
+///
+/// <para>Khoảng này dùng để làm gì: khi so một ứng viên với bản gốc, ta hỏi cả ứng viên có
+/// thể nhỏ tới đâu chứ không chỉ ước lượng nó nhỏ bao nhiêu. Không có khoảng thì chỉ còn
+/// cách so một con số điểm, và một sai số 15% đủ để lật ngược kết luận.</para>
+/// </remarks>
+/// <param name="MinBytes">Nhỏ nhất trong khoảng quan sát được — ứng viên có thể nhỏ tới đây.</param>
+/// <param name="MaxBytes">Lớn nhất trong khoảng quan sát được.</param>
+public readonly record struct HeuristicEstimateBounds(long MinBytes, long MaxBytes)
+{
+    /// <summary>Có dùng được để ra quyết định bảo thủ không.</summary>
+    public bool IsUsable => MaxBytes > 0 && MinBytes >= 0 && MinBytes <= MaxBytes;
+
+    /// <summary>
+    /// Ngay cả ở biên nhỏ nhất, ứng viên có còn nhỏ hơn <paramref name="referenceBytes"/>
+    /// không — tức lợi ích dung lượng có đủ chắc chắn để hành động không.
+    /// </summary>
+    public bool BeatsAtBest(long referenceBytes) => IsUsable && MinBytes < referenceBytes;
+}
+
+/// <summary>
+/// Nguồn gốc của các hằng số hiệu chỉnh: đo trên đâu, bao nhiêu mẫu, trạng thái, và tài liệu.
+/// </summary>
+/// <remarks>
+/// <para>Tách riêng khỏi con số vì con số không nói được mình đáng tin bao nhiêu. Một
+/// hệ số trông chính xác mà không kèm số mẫu thì y như không có hệ số — người đọc không biết
+/// đó là trung bình 7 tệp hay 7 tệp của cùng một người quay.</para>
+/// </remarks>
+/// <param name="Component">Tên thành phần, ví dụ "video".</param>
+/// <param name="Status">
+/// Trạng thái hiệu chỉnh. <c>provisional</c> nghĩa là số đúng với bộ mẫu đã đo và <b>chưa</b>
+/// được xác nhận trên tệp ngoài bộ mẫu đó.
+/// </param>
+/// <param name="SampleCount">Số tệp đo độc lập.</param>
+/// <param name="ObservedMin">Tỉ số nhỏ nhất từng đo.</param>
+/// <param name="ObservedMax">Tỉ số lớn nhất từng đo.</param>
+/// <param name="Corpus">Bộ mẫu gồm những gì.</param>
+/// <param name="Documentation">Nơi ghi bảng số đo đầy đủ.</param>
+public sealed record SizeCalibrationProvenance(
+    string Component,
+    string Status,
+    int SampleCount,
+    double ObservedMin,
+    double ObservedMax,
+    string Corpus,
+    string Documentation);
+
 /// <summary>Ước lượng dung lượng tệp đầu ra toàn tệp, kèm các giả định đã dùng.</summary>
 public sealed record SizeEstimate
 {
@@ -28,6 +85,24 @@ public sealed record SizeEstimate
 
     /// <summary>Các giả định, đọc được bởi người chẩn đoán. Không rỗng khi có điều bất định.</summary>
     public required IReadOnlyList<string> Assumptions { get; init; }
+
+    /// <summary>
+    /// Khoảng byte hợp lý, hoặc <c>null</c> khi không đủ dữ liệu để dựng.
+    /// </summary>
+    /// <remarks>
+    /// <c>null</c> nghĩa là "không có ý kiến" chứ không phải "hẹp". Người gọi phải xử lý nó
+    /// như vậy: thiếu biên thì không được kết luận từ ước lượng, chỉ được xếp hạng.
+    /// </remarks>
+    public HeuristicEstimateBounds? Bounds { get; init; }
+
+    /// <summary>
+    /// Nguồn gốc hiệu chỉnh đã dùng để dựng ước lượng này.
+    /// </summary>
+    /// <remarks>
+    /// Rỗng khi ước lượng hỏng (không có clip thành công) — lúc đó không có con số nào để
+    /// mà truy vết.
+    /// </remarks>
+    public IReadOnlyList<SizeCalibrationProvenance> Calibration { get; init; } = [];
 
     /// <summary>Tỉ lệ tiết kiệm so với nguồn, phần trăm. Âm nghĩa là ước lượng ra lớn hơn nguồn.</summary>
     public double SavingPercent(long sourceBytes) =>
@@ -142,6 +217,91 @@ public static class SizeEstimator
     public const long ContainerBytesPerSecond = 678;
 
     /// <summary>
+    /// Nguồn gốc, số mẫu và trạng thái của toàn bộ hằng số hiệu chỉnh ở trên.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Đặt ở đây, cạnh chính các hằng số, là chủ đích.</b> Yêu cầu là không được
+    /// rải 0,72 / 0,98 / 1208 / 678 ra nhiều nơi: hằng số nằm ở <see cref="SizeEstimator"/>
+    /// và <b>mọi thứ nói về chúng</b> cũng nằm ở đây. Tách sang file khác chỉ để "cho gọn"
+    /// là làm mất đúng thứ ta cần giữ: số mẫu và trạng thái hiệu chỉnh đi cùng con số.</para>
+    ///
+    /// <para><b>Trạng thái là <c>provisional</c>, không phải <c>calibrated</c>.</b> Bộ mẫu
+    /// nhỏ và thiên lệch về một dạng nội dung; xem ma trận khoảng trống trong
+    /// <c>docs/ARCHITECTURE.md</c>. Con số này chưa được kiểm chứng ngoài bộ mẫu đó, và gọi
+    /// nó là "đã hiệu chỉnh" là nói quá.</para>
+    /// </remarks>
+    public static class Calibration
+    {
+        /// <summary>
+        /// Trạng thái hiệu chỉnh. Đổi sang chuỗi khác khi nhiều dạng nội dung được đo.
+        /// </summary>
+        public const string Status = "provisional-calibrated-on-limited-corpus";
+
+        /// <summary>Số tệp đo được hệ số video: 3 tệp đợt đầu + 4 tệp đợt hai.</summary>
+        public const int VideoSampleCount = 7;
+
+        /// <summary>Số tệp đo được hệ số audio (2 nguồn × 2 CRF, cùng mục tiêu 192 kb/s).</summary>
+        public const int AudioSampleCount = 4;
+
+        /// <summary>Số lần đo vỏ container (2 tệp 60 s + 1 tệp 120 s).</summary>
+        public const int ContainerSampleCount = 3;
+
+        /// <summary>Tỉ số video nhỏ nhất từng đo — dùng làm biên dưới.</summary>
+        public const double VideoObservedMin = 0.61;
+
+        /// <summary>Tỉ số video lớn nhất từng đo — dùng làm biên trên.</summary>
+        public const double VideoObservedMax = 0.89;
+
+        /// <summary>Tỉ số audio nhỏ nhất từng đo (0,975), làm tròn xuống cho biên.</summary>
+        public const double AudioObservedMin = 0.975;
+
+        /// <summary>Tỉ số audio lớn nhất từng đo (0,989), làm tròn lên cho biên.</summary>
+        public const double AudioObservedMax = 0.989;
+
+        /// <summary>Bộ mẫu dùng để hiệu chỉnh, mô tả ngắn gọn.</summary>
+        public const string Corpus =
+            "2 nguồn 1080p dài 60,1s và 1 nguồn 120,1s; x264 preset medium; 3 đoạn pilot 3,0s; "
+            + "cùng cấu hình cho pilot và cho encode toàn tệp";
+
+        /// <summary>Nơi ghi bảng số đo đầy đủ.</summary>
+        public const string Documentation =
+            "docs/ARCHITECTURE.md — mục \"Hiệu chỉnh ước lượng dung lượng trên encode toàn tệp thật (đợt 2)\"";
+
+        /// <summary>Nguồn gốc của hệ số video.</summary>
+        public static SizeCalibrationProvenance Video { get; } = new(
+            "video",
+            Status,
+            VideoSampleCount,
+            VideoObservedMin,
+            VideoObservedMax,
+            Corpus,
+            Documentation);
+
+        /// <summary>Nguồn gốc của hệ số audio.</summary>
+        public static SizeCalibrationProvenance Audio { get; } = new(
+            "audio",
+            Status,
+            AudioSampleCount,
+            AudioObservedMin,
+            AudioObservedMax,
+            Corpus,
+            Documentation);
+
+        /// <summary>Nguồn gốc của phần vỏ container.</summary>
+        public static SizeCalibrationProvenance Container { get; } = new(
+            "container",
+            Status,
+            ContainerSampleCount,
+            0,
+            0,
+            "đo bằng Mp4TrackSizes trên encode thật, 2 tệp 60 s và 1 tệp 120 s",
+            Documentation);
+
+        /// <summary>Toàn bộ nguồn gốc, để đính kèm vào một ước lượng.</summary>
+        public static IReadOnlyList<SizeCalibrationProvenance> All { get; } = [Video, Audio, Container];
+    }
+
+    /// <summary>
     /// Ước lượng từ các clip thử nghiệm của một ứng viên.
     /// </summary>
     /// <param name="artifacts">
@@ -180,6 +340,8 @@ public static class SizeEstimator
                 DurationSeconds = fullDurationSeconds,
                 IsReliable = false,
                 Assumptions = ["không có clip thử nghiệm nào thành công để ước lượng"],
+                Bounds = null,
+                Calibration = [],
             };
         }
 
@@ -198,8 +360,17 @@ public static class SizeEstimator
         var videoBytesPerSecond = reference.Bytes / reference.ReferenceWindow.LengthSeconds;
 
         var duration = fullDurationSeconds > 0 ? fullDurationSeconds : 0;
+        var rawVideoBytes = videoBytesPerSecond * duration;
         var videoBytes = (long)Math.Round(
-            videoBytesPerSecond * duration * VideoBytesCalibrationFactor, MidpointRounding.AwayFromZero);
+            rawVideoBytes * VideoBytesCalibrationFactor, MidpointRounding.AwayFromZero);
+
+        // Biên heuristic: dùng độ lan tỉa QUAN SÁT ĐƯỢC, không phải sai số thống kê. Đây là
+        // câu hỏi "ứng viên này có thể nhỏ tới đâu", và câu trả lời phải thành thật về phía
+        // nhỏ để người quyết định không hành động theo một ước lượng có thể sai.
+        var videoLow = (long)Math.Round(
+            rawVideoBytes * Calibration.VideoObservedMin, MidpointRounding.AwayFromZero);
+        var videoHigh = (long)Math.Round(
+            rawVideoBytes * Calibration.VideoObservedMax, MidpointRounding.AwayFromZero);
 
         assumptions.Add(
             $"video: {videoBytesPerSecond.ToString("0", CultureInfo.InvariantCulture)} B/s "
@@ -212,13 +383,24 @@ public static class SizeEstimator
         var reliable = true;
 
         long audioBytes = 0;
+        long audioLow = 0;
+        long audioHigh = 0;
         if (hasAudio)
         {
             if (sourceAudioBitrateKbps is { } kbps and > 0)
             {
+                var rawAudioBytes = kbps * 1000.0 / 8.0 * duration;
                 audioBytes = (long)Math.Round(
-                    kbps * 1000.0 / 8.0 * duration * AudioBytesCalibrationFactor,
-                    MidpointRounding.AwayFromZero);
+                    rawAudioBytes * AudioBytesCalibrationFactor, MidpointRounding.AwayFromZero);
+
+                // Sai số audio hẹp hơn nhiều (0,975…0,989) nên biên cũng hẹp — nhưng vẫn dựng
+                // từ số đo chứ không gộp vào video, để khi đọc thì biết phần nào rộng phần nào
+                // hẹp thay vì giả định cả hai đều chắc như nhau.
+                audioLow = (long)Math.Round(
+                    rawAudioBytes * Calibration.AudioObservedMin, MidpointRounding.AwayFromZero);
+                audioHigh = (long)Math.Round(
+                    rawAudioBytes * Calibration.AudioObservedMax, MidpointRounding.AwayFromZero);
+
                 assumptions.Add(
                     $"audio: {kbps.ToString("0", CultureInfo.InvariantCulture)} kb/s × {duration.ToString("0", CultureInfo.InvariantCulture)}s — "
                     + "đây phải là bitrate mục tiêu của bản full encode (đã lấy min với nguồn), "
@@ -260,6 +442,16 @@ public static class SizeEstimator
 
         var total = videoBytes + audioBytes + containerBytes;
 
+        // Vỏ container đo trực tiếp bằng Mp4TrackSizes trên encode thật nên được cộng vào CẢ HAI
+        // đầu: điểm ước lượng có nó, thì khoảng bao quanh điểm ước lượng cũng phải có. Chỉ dựng
+        // khoảng khi thời lượng hợp lệ và âm thanh đã biết — thiếu một trong hai thì khoảng sẽ
+        // thành "chắc chắn 0" và đó là khẳng định sai, nên để null thành "không có ý kiến".
+        var bounds = duration > 0 && (!hasAudio || sourceAudioBitrateKbps is > 0)
+            ? new HeuristicEstimateBounds(
+                Math.Max(0, videoLow + audioLow + containerBytes),
+                Math.Max(0, videoHigh + audioHigh + containerBytes))
+            : (HeuristicEstimateBounds?)null;
+
         return new SizeEstimate
         {
             TotalBytes = Math.Max(0, total),
@@ -269,6 +461,8 @@ public static class SizeEstimator
             DurationSeconds = duration,
             IsReliable = reliable,
             Assumptions = assumptions,
+            Bounds = bounds,
+            Calibration = Calibration.All,
         };
     }
 }

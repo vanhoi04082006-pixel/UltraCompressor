@@ -40,6 +40,102 @@ public class SizeEstimatorTests
     }
 
     [Fact]
+    public void Khoang_heuristic_boc_duoc_ua_uoc_luong()
+    {
+        // 100.000 B/s × 100s = 10.000.000 B thô. Biên dưới = ×0,61, biên trên = ×0,89.
+        var result = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0)], fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
+
+        var bounds = Assert.IsType<HeuristicEstimateBounds>(result.Bounds);
+        Assert.Equal(6_100_000 + result.ContainerBytes, bounds.MinBytes);
+        Assert.Equal(8_900_000 + result.ContainerBytes, bounds.MaxBytes);
+
+        // Điểm ước lượng phải NẰM TRONG khoảng — hệ số trung bình phải là con số đo được,
+        // không phải con số bịa ra ngoài khoảng.
+        Assert.InRange(result.TotalBytes, bounds.MinBytes, bounds.MaxBytes);
+        Assert.True(bounds.IsUsable);
+    }
+
+    [Fact]
+    public void Khong_du_lieu_thi_khong_co_khoang()
+    {
+        // `null` nghĩa là "không có ý kiến", KHÔNG phải "hẹp". Khoảng rộng bằng 0 ở đây sẽ
+        // biến thành khẳng định sai là tệp nhỏ hơn mọi thứ.
+        var result = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0)], fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: true);
+
+        Assert.Null(result.Bounds);
+        Assert.False(result.IsReliable);
+    }
+
+    [Fact]
+    public void Uoc_luong_hong_khong_co_khoang()
+    {
+        var result = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0, ok: false)],
+            fullDurationSeconds: 100, sourceAudioBitrateKbps: 128, hasAudio: true);
+
+        Assert.Null(result.Bounds);
+        Assert.Empty(result.Calibration);
+    }
+
+    [Fact]
+    public void Khoang_khong_phai_khoang_tin_cay_thong_ke()
+    {
+        // Biên phải bao quanh cả hai đầu quan sát được, đúng hệ số đã đo.
+        var result = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0)], fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
+
+        var bounds = Assert.IsType<HeuristicEstimateBounds>(result.Bounds);
+        var raw = 10_000_000d;
+
+        Assert.Equal(raw * SizeEstimator.Calibration.VideoObservedMin + result.ContainerBytes, bounds.MinBytes, 0);
+        Assert.Equal(raw * SizeEstimator.Calibration.VideoObservedMax + result.ContainerBytes, bounds.MaxBytes, 0);
+
+        // Và phải nói rõ mình chỉ có N mẫu, chưa hiệu chỉnh rộng.
+        Assert.Contains(
+            SizeEstimator.Calibration.Status,
+            result.Calibration.Select(c => c.Status),
+            StringComparer.Ordinal);
+        Assert.Equal(SizeEstimator.Calibration.VideoSampleCount, result.Calibration[0].SampleCount);
+    }
+
+    [Fact]
+    public void Nguon_goc_hieu_chinh_phai_ghi_so_mau_va_trang_thai()
+    {
+        // Con số mà không kèm số mẫu thì y như không có con số: người đọc không biết đó là
+        // trung bình 7 tệp hay 7 tệp của cùng một người quay.
+        var video = SizeEstimator.Calibration.Video;
+
+        Assert.Equal(SizeEstimator.Calibration.Status, video.Status);
+        Assert.Equal(SizeEstimator.Calibration.VideoSampleCount, video.SampleCount);
+        Assert.True(video.ObservedMin < video.ObservedMax);
+        Assert.Contains("provisional", video.Status, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(video.Corpus));
+        Assert.False(string.IsNullOrWhiteSpace(video.Documentation));
+    }
+
+    [Fact]
+    public void He_so_hieu_chinh_phai_boc_trong_do_lang_quan_sat_duoc()
+    {
+        // Hệ số dùng để tính phải nằm trong khoảng đo được — nếu không thì "biên" được dựng
+        // từ độ lan tỉa mà điểm ước lượng lại nằm ngoài, tức tự mâu thuẫn.
+        Assert.InRange(
+            SizeEstimator.VideoBytesCalibrationFactor,
+            SizeEstimator.Calibration.VideoObservedMin,
+            SizeEstimator.Calibration.VideoObservedMax);
+
+        Assert.InRange(
+            SizeEstimator.AudioBytesCalibrationFactor,
+            SizeEstimator.Calibration.AudioObservedMin,
+            SizeEstimator.Calibration.AudioObservedMax);
+
+        Assert.Equal(SizeEstimator.Calibration.VideoObservedMin, 0.61);
+        Assert.Equal(SizeEstimator.Calibration.VideoObservedMax, 0.89);
+        Assert.Equal(7, SizeEstimator.Calibration.VideoSampleCount);
+    }
+
+    [Fact]
     public void Lay_doan_dat_nhat_chu_phai_trung_binh()
     {
         // Một đoạn rẻ bất thường (cảnh tĩnh) kéo trung bình xuống, làm ứng viên trông

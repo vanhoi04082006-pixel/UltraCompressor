@@ -8,8 +8,19 @@ public sealed record CandidatePlan
     public required CandidateDiagnostics Diagnostics { get; init; }
 
     /// <summary>Chỉ lấy phần ứng viên encode, theo đúng thứ tự nên dò.</summary>
+    /// <remarks>
+    /// <see cref="OriginalCandidate"/> <b>không</b> nằm trong đây, và đó là chủ đích: tìm kiếm
+    /// không encode gì thì không dò được nhánh không-nén. Nhánh đó được so ở tầng quyết định,
+    /// sau tìm kiếm, bằng ngữ nghĩa riêng.
+    /// </remarks>
     public IEnumerable<VideoEncodeCandidate> EncodeCandidates =>
         Candidates.OfType<VideoEncodeCandidate>();
+
+    /// <summary>
+    /// Nhánh giữ nguyên bản gốc, nếu có. Đây là ứng viên ngang hàng, nên nó nằm trong
+    /// <see cref="Candidates"/> chứ không phải một ngoại lệ ở cuối đường ống.
+    /// </summary>
+    public OriginalCandidate? Original => Candidates.OfType<OriginalCandidate>().FirstOrDefault();
 
     /// <summary>Các nhánh (codec × kích thước) có mặt, theo thứ tự dò.</summary>
     public IEnumerable<string> Branches => EncodeCandidates

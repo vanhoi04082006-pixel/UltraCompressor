@@ -9,8 +9,25 @@ namespace UltraCompressor.Core.Search;
 /// <summary>Kết quả cuối của một lần tìm kiếm.</summary>
 public enum SearchStatus
 {
-    /// <summary>Có ứng viên đạt chất lượng, sẵn sàng encode toàn tệp.</summary>
+    /// <summary>
+    /// Có ứng viên đạt chất lượng <b>và chứng minh được lợi ích dung lượng</b> so với bản
+    /// gốc — sẵn sàng encode toàn tệp.
+    /// </summary>
     SelectedCandidate,
+
+    /// <summary>
+    /// Có ứng viên đạt chất lượng, nhưng không ứng viên nào chứng minh được lợi ích dung
+    /// lượng đủ ý nghĩa so với bản gốc. Giữ nguyên bản gốc và <b>bỏ qua</b> một lần encode
+    /// toàn tệp.
+    /// </summary>
+    /// <remarks>
+    /// <b>Khác <see cref="NoFeasibleCandidate"/>, và phải khác.</b> Ở kia ta thử rồi không
+    /// ứng viên nào đạt chất lượng — nói về <i>những ứng viên encode</i>. Ở đây có ứng viên
+    /// đạt, ta chỉ không thấy lý do để làm tốn công mã hoá lại — nói về <i>tệp đầu ra</i>.
+    /// Gộp hai thứ lại thì người đọc không phân biệt được "không có gì tốt hơn bản gốc"
+    /// với "bản gốc thắng", và hai trường hợp đó cần hành xử khác nhau khi báo cáo.
+    /// </remarks>
+    OriginalSelected,
 
     /// <summary>
     /// Tìm kiếm chạy đúng nhưng không ứng viên nào đạt. <b>Đây là kết quả hợp lệ</b>, không
@@ -36,14 +53,23 @@ public enum SearchStage
 }
 
 /// <summary>
-/// Máy trạng thái tìm kiếm nhị phân cho MỘT nhánh (cùng codec × kích thước).
+/// Máy trạng thái tìm kiếm nhị phân cho MỘT nhánh — nhánh là nhóm ứng viên có <b>cùng
+/// dấu vân tay phép biến đổi</b> (xem <see cref="TransformFingerprint"/>), không phải
+/// "cùng tên".
 ///
-/// <para>Các điểm trong nhánh xếp từ chất lượng cao xuống thấp theo
-/// <c>PointIndex</c>, và chất lượng đo được GIẢ ĐỊNH đơn điệu theo thứ tự đó: điểm cao
-/// rớt thì điểm thấp hơn chắc chắn rớt, điểm thấp đạt thì điểm cao hơn chắc chắn đạt.
-/// Mọi lần cắt (prune) trong class này đều dựa trên giả định đó — nếu nhiễu đo phá vỡ
-/// tính đơn điệu ở một nguồn nào đó, cắt sẽ sai. Giả định được ghi ở đây để khi có bằng
-/// chứng ngược thì biết phải sửa chỗ nào, thay vì đi tìm trong cả vòng lặp.</para>
+/// <para>Các điểm trong nhánh xếp từ chất lượng cao xuống thấp theo <c>PointIndex</c>, và
+/// chất lượng đo được <b>giả định</b> đơn điệu theo thứ tự đó: điểm cao rớt thì điểm thấp
+/// hơn chắc chắn rớt, điểm thấp đạt thì điểm cao hơn chắc chắn đạt. Mọi lần cắt trong
+/// class này đều dựa trên giả định đó, nên nó chỉ chạy trên một nhánh đã khoá phép biến
+/// đổi — đổi codec, đổi kích thước, đổi FPS, đổi định dạng pixel hay đổi chuỗi bộ lọc
+/// giữa hai điểm thì chất lượng không còn đơn điệu và mọi lần cắt sẽ sai.</para>
+///
+/// <para><b>Mọi lần cắt phải có hai chứng cứ, không phải một.</b> Bản trước cắt ngay khi
+/// điểm đầu rớt — tức dựa vào <i>một</i> phép đo để khẳng định cả nhánh rớt. Điều đó sai
+/// với phong cảnh chất lượng không đơn điệu: một clip có thể rớt ở đoạn đầu trong khi điểm
+/// giữa vẫn đạt, và bản trước <b>không tìm ra</b> ứng viên dù đó. Nay điểm đầu rớt chỉ đặt
+/// biên, còn phải dò điểm cuối để xác nhận; hai đầu cùng rớt mới cắt được, và nếu điểm cuối
+/// lại đạt thì đó là bằng chứng trái chiều — chuyển dò tuyến tính, không cắt gì.</para>
 ///
 /// <para>Thứ tự đo: điểm đầu (chất lượng cao nhất), rồi điểm cuối (sâu nhất), rồi chia
 /// đôi khoảng còn lại cho tới khi tìm được cặp biên (đạt / rớt kề nhau). Mỗi lần đo đều
@@ -54,7 +80,6 @@ internal sealed class BranchSearch
 {
     private readonly List<VideoEncodeCandidate> _points;
     private readonly QualityFloor _floor;
-    private readonly CompressionLevel _level;
     private readonly HashSet<int> _evaluated = [];
     private readonly HashSet<int> _failed = [];
     private readonly List<RejectedCandidate> _pruned = [];
@@ -64,15 +89,15 @@ internal sealed class BranchSearch
     private bool _topFeasible;
     private bool _linearMode;
     private bool _closed;
+    private bool _awaitCorroboration;
+    private string? _nonMonotonicReason;
 
-    public BranchSearch(
-        IReadOnlyList<VideoEncodeCandidate> points, QualityFloor floor, CompressionLevel level)
+    public BranchSearch(IReadOnlyList<VideoEncodeCandidate> points, QualityFloor floor)
     {
         // Sắp phòng thủ: người gọi đã xếp, nhưng thứ tự sai ở đây là sai toàn bộ chiến
         // lược mà không báo lỗi nào. Rẻ hơn là xếp lại chắc chắn.
         _points = [.. points.OrderBy(c => c.PointIndex)];
         _floor = floor;
-        _level = level;
         _closed = _points.Count == 0;
     }
 
@@ -81,6 +106,19 @@ internal sealed class BranchSearch
     public bool IsClosed => _closed;
 
     public IReadOnlyList<RejectedCandidate> Pruned => _pruned;
+
+    /// <summary>
+    /// Có bằng chứng trái chiều với giả định đơn điệu trong nhánh này không.
+    /// </summary>
+    /// <remarks>
+    /// <para>Đây là thứ người đọc nhật ký cần để biết phép đo VMAF có đáng tin ở nguồn này
+    /// hay không. Giả định bị bác bỏ không phải lỗi của thuật toán — thuật toán đã phản ứng
+    /// đúng bằng cách bỏ cắt — nhưng nó là tín hiệu đáng điều tra về phía phép đo.</para>
+    /// </remarks>
+    public bool NonMonotonicObserved => _nonMonotonicReason is not null;
+
+    /// <summary>Lý do vi phạm, bằng tiếng Việt để ghép vào báo cáo.</summary>
+    public string? NonMonotonicReason => _nonMonotonicReason;
 
     /// <summary>
     /// Điểm cần đo kế tiếp, hoặc null khi nhánh đã đóng. Trả null cũng đồng nghĩa đóng —
@@ -103,6 +141,26 @@ internal sealed class BranchSearch
         if (!Attempted(last))
         {
             return (_points[last], SearchStage.Bracket);
+        }
+
+        // Đã có hai đầu rớt và đang chờ một điểm xác nhận thứ ba trước khi cắt cả nhánh.
+        if (_awaitCorroboration)
+        {
+            var mid = last / 2;
+            for (var d = 0; d <= last; d++)
+            {
+                if (mid + d <= last && !Attempted(mid + d))
+                {
+                    return (_points[mid + d], SearchStage.Bracket);
+                }
+
+                if (d > 0 && mid - d >= 0 && !Attempted(mid - d))
+                {
+                    return (_points[mid - d], SearchStage.Bracket);
+                }
+            }
+
+            _awaitCorroboration = false;
         }
 
         if (!_linearMode && _loFeasible is { } lo && _hiInfeasible is { } hi)
@@ -180,28 +238,63 @@ internal sealed class BranchSearch
         // lại tuyến tính — đúng yêu cầu "đo không được thì thử ứng viên khác".
         if (!result.IsFeasible && result.Aggregate.FailingWindow is null)
         {
-            _linearMode = true;
+            NoteLinear("không đo được chất lượng ở điểm này — không có thông tin để dịch chuyển biên");
             return;
         }
 
+        var lastIndex = _points.Count - 1;
+        var confirming = _awaitCorroboration;
+        _awaitCorroboration = false;
+
         if (!result.IsFeasible)
         {
-            if (index == 0)
+            // Điểm xác nhận thứ ba cũng rớt: ba điểm trải khắp nhánh đều không đạt. Đây là
+            // chứng cứ mạnh nhất mà ta mua được với giá rẻ — và vẫn không phải chứng minh.
+            // Xem ghi chú ở `HasUnattemptedInterior` về giới hạn của nó.
+            if (confirming)
             {
-                // Điểm cao nhất đã RỚT THẬT (có mẫu đo dưới ngưỡng) thì mọi điểm thấp hơn
-                // chắc chắn rớt.
-                _hiInfeasible = 0;
-                Close("điểm chất lượng cao nhất đã rớt — các điểm thấp hơn chắc chắn rớt",
-                    "điểm chất lượng cao nhất đã rớt — các điểm thấp hơn chắc chắn rớt");
+                Close(
+                    "ba điểm trải khắp nhánh đều rớt — mọi điểm giữa chúng nằm dưới ngưỡng",
+                    "ba điểm trải khắp nhánh đều rớt — mọi điểm giữa chúng nằm dưới ngưỡng");
                 return;
             }
 
-            // Điểm này rớt thật. Nếu nó phá vỡ thứ tự đơn điệu với neo đã có (nằm ngoài
-            // khoảng hoặc đảo đầu), bằng chứng đã mâu thuẫn — chuyển tuyến tính.
-            if ((_loFeasible is { } lo && index <= lo)
-                || (_hiInfeasible is { } hi && index >= hi))
+            // Hai đầu cùng rớt. Chưa cắt ngay: cần điểm xác nhận thứ ba ở giữa, vì hai đầu
+            // rớt KHÔNG chứng minh các điểm giữa cũng rớt khi phong cảnh không đơn điệu.
+            if (_hiInfeasible == 0 && index == lastIndex)
             {
-                _linearMode = true;
+                if (HasUnattemptedInterior(lastIndex))
+                {
+                    _awaitCorroboration = true;
+                    return;
+                }
+
+                Close(
+                    "cả hai đầu nhánh đều rớt — đoạn giữa nằm giữa nên không thể đạt",
+                    "cả hai đầu nhánh đều rớt — đoạn giữa nằm giữa nên không thể đạt");
+                return;
+            }
+
+            if (index == 0)
+            {
+                // Chỉ đặt biên, KHÔNG cắt. Cần chứng cứ thứ hai ở khối trên.
+                _hiInfeasible = 0;
+                return;
+            }
+
+            // Điểm này rớt thật. Nếu việc ghi nhận sẽ khiến một biên lùi sai hướng (lùi
+            // biên rớt lên trên, lùi biên đạt xuống dưới) thì mọi lần cắt sau đó sẽ loại
+            // nhầm. Không phải mọi trường hợp ở đây đều là "trái chiều" — chỉ một cách mới
+            // thật sự là trá chiều, và cách đó mới được đánh dấu.
+            if (_loFeasible is { } lo && index <= lo)
+            {
+                NoteLinear($"điểm {index} rớt trong khi điểm {lo} đã đạt — không dòng được biên nữa");
+                return;
+            }
+
+            if (_hiInfeasible is { } hi && index >= hi)
+            {
+                NoteLinear($"điểm rớt {index} nằm trên biên rớt đã biết {hi} — biên sẽ lùi sai hướng");
                 return;
             }
 
@@ -220,27 +313,23 @@ internal sealed class BranchSearch
         {
             _topFeasible = true;
             _loFeasible = 0;
-
-            // DỪNG SỚM. Điểm đầu vượt ngưỡng nhiều thì nhánh này "quá tốt": đào sâu thêm
-            // chỉ để tìm tệp nhỏ hơn trong cùng nhánh. Với Light/Balanced thì dừng để tiết
-            // kiệm encode; với Strong thì KHÔNG — Strong ưu tiên dung lượng nhỏ nhất nên
-            // dừng ở đây là phản lại chính mode.
-            if (_level != CompressionLevel.Strong
-                && PilotSearch.PassesWithMargin(result.Aggregate, _floor))
-            {
-                Close(
-                    "ngoài biên khả thi: chắc chắn rớt",
-                    $"điểm đầu vượt ngưỡng nhiều ở mode {_level} — dừng nhánh để tiết kiệm encode");
-            }
-
             return;
         }
 
-        // Điểm này đạt thật. Nếu nó phá vỡ thứ tự với neo đã có, chuyển tuyến tính.
-        if ((_loFeasible is { } existingLo && index <= existingLo)
-            || (_hiInfeasible is { } existingHi && index >= existingHi))
+        // Điểm này đạt thật. Điểm đã đạt nằm DƯỚI biên rớt đã biết thì đó là bằng chứng trái
+        // chiều thật sự: theo giả định, chất lượng không tăng theo chỉ số, nên không thể có
+        // điểm sau mà lại đạt. Đây là thứ duy nhất được đánh dấu là phi đơn điệu.
+        if (_hiInfeasible is { } existingHi && index >= existingHi)
         {
-            _linearMode = true;
+            NoteLinear(
+                $"điểm {index} đạt trong khi điểm {existingHi} đã rớt — chất lượng không đơn điệu theo chỉ số",
+                nonMonotonic: true);
+            return;
+        }
+
+        if (_loFeasible is { } existingLo && index <= existingLo)
+        {
+            NoteLinear($"điểm đạt {index} nằm dưới biên đạt đã biết {existingLo} — biên sẽ lùi sai hướng");
             return;
         }
 
@@ -284,6 +373,33 @@ internal sealed class BranchSearch
 
     private bool Attempted(int index) => _evaluated.Contains(index) || _failed.Contains(index);
 
+    /// <summary>
+    /// Còn điểm nào ở khoảng giữa chưa thử không?
+    /// </summary>
+    /// <remarks>
+    /// <para>Đây là chỗ mua chứng cứ thứ ba trước khi cắt cả nhánh, và cũng là <b>giới hạn</b>
+    /// thật của thuật toán: ba điểm trải khắp nhánh vẫn không phải chứng minh. Một "đảo ngọc"
+    /// hẹp — chỉ vài điểm ở giữa đạt — vẫn có thể lọt. Chấp nhận được là vì:
+    /// <c>QualityGate</c> ở giai đoạn 5A vẫn kiểm tra tệp đầu ra thật, nên hệ quả tệ nhất là
+    /// bỏ sót một cơ hội, không bao giờ là giao cho người dùng một tệp tệ hơn nguồn.</para>
+    ///
+    /// <para>Muốn có bảo đảm tuyệt đối thì phải đo hết mọi điểm — tức bỏ nhị phân. Đó là
+    /// đánh đổi chi phí, và việc quyết định nó thuộc về chính sách tính toán, không thuộc
+    /// phần sửa lỗi này.</para>
+    /// </remarks>
+    private bool HasUnattemptedInterior(int lastIndex)
+    {
+        for (var i = 1; i < lastIndex; i++)
+        {
+            if (!Attempted(i))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private int IndexOf(string id)
     {
         for (var i = 0; i < _points.Count; i++)
@@ -315,6 +431,25 @@ internal sealed class BranchSearch
         }
 
         _closed = true;
+    }
+
+    /// <summary>
+    /// Bỏ giả định đơn điệu của nhánh này: từ đây chỉ ghi nhận, không cắt gì nữa.
+    /// </summary>
+    /// <param name="reason">Lý do, bằng tiếng Việt để ghép vào báo cáo.</param>
+    /// <param name="nonMonotonic">
+    /// <c>true</c> khi số đo thật sự <b>trái</b> với giả định đơn điệu. Chỉ khi đó mới đánh
+    /// dấu phi đơn điệu — còn "biên lùi sai hướng" thì vẫn là giả định đúng, chỉ là ta
+    /// không dòng được nữa. Gộp hai thứ đó làm mã chẩn đoán mất ý nghĩa.
+    /// </param>
+    private void NoteLinear(string reason, bool nonMonotonic = false)
+    {
+        _linearMode = true;
+
+        if (nonMonotonic)
+        {
+            _nonMonotonicReason ??= reason;
+        }
     }
 }
 
@@ -369,6 +504,26 @@ public sealed record SearchStatistics
 
     public required int CandidatesOnFrontier { get; init; }
 
+    /// <summary>
+    /// Số nhánh tìm kiếm đã dựng. Một nhánh là một <b>dấu vân tay phép biến đổi</b>, không
+    /// phải một "tên nhánh" — xem <see cref="TransformFingerprint"/>.
+    /// </summary>
+    public required int BranchesTotal { get; init; }
+
+    /// <summary>
+    /// Số nhánh có số đo <b>trái chiều</b> với giả định đơn điệu, tức mã
+    /// <see cref="SearchDecisionReasons.NonMonotonicBranchObserved"/>.
+    /// </summary>
+    /// <remarks>
+    /// Không phải lỗi: những nhánh đó đã dò tuyến tính và không bị cắt theo giả định.
+    /// Nhưng đây là thứ duy nhất cho biết phép đo VMAF có đang ra thứ ngoài dự kiến hay
+    /// không, nên phải đếm được chứ không chỉ ghi trong log tiếng Việt.
+    /// </remarks>
+    public required int BranchesNonMonotonic { get; init; }
+
+    /// <summary>Nhánh nào bị đánh dấu, theo thứ tự phát hiện.</summary>
+    public required IReadOnlyList<string> NonMonotonicBranches { get; init; }
+
     public required TimeSpan TotalElapsed { get; init; }
 
     public required TimeSpan EncodeElapsed { get; init; }
@@ -400,6 +555,15 @@ public sealed record SearchResult
     public required SearchStatistics Statistics { get; init; }
 
     public EvaluatedCandidate? Selected { get; init; }
+
+    /// <summary>
+    /// Kết luận so bản gốc với ứng viên encode, nếu đã so.
+    /// </summary>
+    /// <remarks>
+    /// Giữ lại để người đọc báo cáo thấy <i>vì sao</i> bản gốc thắng hoặc thua — kể cả khi
+    /// thắng, vì đó là thông tin thú vị nhất của một lần nén mà không nén.
+    /// </remarks>
+    public OriginalComparison? OriginalComparison { get; init; }
 
     public bool HasSelection => Selected is not null;
 }
@@ -439,6 +603,28 @@ public sealed record SearchRequest
     /// viên và mất thời gian không kiểm soát.
     /// </summary>
     public required int MaxEvaluations { get; init; }
+
+    /// <summary>
+    /// Ngưỡng tiết kiệm tối thiểu của cấu hình, phần trăm — <b>cùng</b> con số mà lưới 5A
+    /// dùng khi kiểm tra tệp đầu ra.
+    /// </summary>
+    /// <remarks>
+    /// Truyền vào đây để so bản gốc với ứng viên encode bằng <b>đúng</b> tiêu chuẩn người
+    /// dùng đã đặt, thay vì một ngưỡng "hợp lý" riêng do lớp này tự chế ra. Hai ngưỡng cùng
+    /// nghĩa mà lệch nhau là cách rất tinh vi để bỏ qua cấu hình mà không ai nhận ra.
+    /// </remarks>
+    public required double MinSavingPercent { get; init; }
+
+    /// <summary>
+    /// Mức độ tin cậy của phép đo trên tệp này.
+    /// </summary>
+    /// <remarks>
+    /// Khi <see cref="MeasurementConfidence.Uncertain"/>, tìm kiếm vẫn chọn ứng viên và encode
+    /// như bình thường, nhưng <b>không</b> kết luận giữ bản gốc từ số đo đáng ngờ — vì một
+    /// số đo sai vì lý do không liên quan tới nén thì không phải bằng chứng cho việc
+    /// "không đáng nén". Xem <see cref="OriginalComparison"/>.
+    /// </remarks>
+    public MeasurementConfidence Confidence { get; init; } = MeasurementConfidence.Trusted;
 }
 
 /// <summary>
@@ -466,19 +652,36 @@ public sealed class PilotSearch(
     IQualityMeasure measurer)
 {
     /// <summary>
-    /// Biên "vượt nhiều" cho dừng sớm: điểm đầu phải qua ngưỡng mean lẫn P5 với dư ít
-    /// nhất bấy nhiêu điểm VMAF.
-    ///
-    /// <para>Con số này <b>chưa hiệu chỉnh</b> — nó là giới hạn chi phí (bao nhiêu dư thì
-    /// đáng để bỏ qua phần còn lại của nhánh), không phải ngưỡng chất lượng. Đặt gấp nhiều
-    /// lần epsilon nhiễu đo (0,5) để "vượt nhiều" không thể là nhiễu.</para>
+    /// Biên "vượt nhiều" của phương án <b>dừng sớm theo nhánh</b>: điểm đầu phải qua ngưỡng mean
+    /// lẫn P5 với dư ít nhất bấy nhiêu điểm VMAF.
     /// </summary>
+    /// <remarks>
+    /// <para><b>ĐÃ BỎ KHỎI ĐƯỜNG CHẠY — giữ lại để ghi nhận, không dùng để quyết định.</b> Lý do
+    /// không phải kỹ thuật mà là ngữ nghĩa: điểm đầu là điểm <b>chất lượng cao nhất, tệp
+    /// lớn nhất</b> của nhánh. Mọi điểm chưa đo còn lại đều chất lượng thấp hơn và tệp
+    /// <b>nhỏ hơn</b>. Vì bộ chọn ưu tiên tệp nhỏ nhất, bỏ qua chúng đồng nghĩa với việc bỏ qua
+    /// ứng viên có thể thắng — dừng sớm làm ta chọn ra tệp <b>lớn hơn</b>, và không có cách nào
+    /// thu hẹp điều kiện bật/tắt để sửa, vì ứng viên bị bỏ qua luôn là ứng viên nhỏ hơn.</para>
+    ///
+    /// <para>Vì vậy nó <b>không phải</b> heuristic tối ưu tính toán trung tính với kết quả: nó
+    /// đánh đổi chất lượng lựa chọn lấy thời gian. Muốn có heuristic như vậy thì phải đổi chính
+    /// sách chọn ứng viên sang ưu tiên chất lượng trước dung lượng — một quyết định khác hẳn,
+    /// và không thuộc phạm vi giai đoạn này.</para>
+    ///
+    /// <para>Giá trị <b>chưa được hiệu chỉnh</b> và không có quyền quyết định nào: nó là
+    /// giới hạn chi phí, không phải ngưỡng chất lượng. Việc chấp nhận chất lượng vẫn thuộc
+    /// hoàn toàn về <see cref="QualityPolicy"/>.</para>
+    /// </remarks>
     public const double EarlyStopMargin = 3.0;
 
     /// <summary>
     /// Điểm đầu có vượt ngưỡng "nhiều" không: ngay cả đoạn tệ nhất cũng qua cả hai ngưỡng
     /// với dư ít nhất <see cref="EarlyStopMargin"/>.
     /// </summary>
+    /// <remarks>
+    /// Giữ lại cùng lý do với <see cref="EarlyStopMargin"/>: dùng để <b>kiểm chứng</b> rằng
+    /// phương án dừng sớm đã bị bỏ có đúng tiêu chí không, chứ không phải để bật lại.
+    /// </remarks>
     internal static bool PassesWithMargin(QualityAggregate aggregate, QualityFloor floor)
     {
         ArgumentNullException.ThrowIfNull(aggregate);
@@ -544,12 +747,19 @@ public sealed class PilotSearch(
         var infrastructure = new List<string>();
         var failed = new List<RejectedCandidate>();
         var pruned = new List<RejectedCandidate>();
+        var nonMonotonic = new List<BranchSearch>();
         var encodeAttempts = 0;
 
+        // Nhánh = NHÓM THEO DẤU VÂN TAY PHÉP BIẾN ĐỔI, không theo tên. Xem
+        // `TransformFingerprint`: nhị phân chỉ hợp lệ khi codec, kích thước, FPS, định
+        // dạng pixel, họ điều khiển tốc độ và chuỗi bộ lọc cùng cố định. Nhóm theo
+        // `BranchId` ("h264/1280x720") là một thoả thuận miệng không có gì chặn vi phạm.
         var branches = request.Candidates
-            .GroupBy(c => c.BranchId, StringComparer.Ordinal)
+            .GroupBy(
+                c => TransformFingerprint.Of(c, request.SourceWidth, request.SourceHeight).Value,
+                StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
-            .Select(g => new BranchSearch([.. g], floor, request.Level))
+            .Select(g => new BranchSearch([.. g], floor))
             .ToList();
 
         try
@@ -619,6 +829,11 @@ public sealed class PilotSearch(
             foreach (var branch in branches)
             {
                 pruned.AddRange(branch.Pruned);
+
+                if (branch.NonMonotonicObserved)
+                {
+                    nonMonotonic.Add(branch);
+                }
             }
         }
         finally
@@ -627,6 +842,10 @@ public sealed class PilotSearch(
         }
 
         watch.Stop();
+
+        // Số liệu về nhánh. Gom vào một kiểu riêng thay vì thêm tham số vào `Build` — hàm
+        // đó đã dài, và đây là nhóm thông tin luôn đi cùng nhau.
+        var diagnostics = SearchDiagnostics.From(branches, nonMonotonic);
 
         // Không đo được ứng viên nào: chưa có quyết định nào để báo cáo. Nếu nguyên nhân là
         // hạ tầng thì đó là `SearchInfrastructureFailure` — vì chỉ trường hợp này được phép
@@ -639,7 +858,7 @@ public sealed class PilotSearch(
                 : $"ngân sách đánh giá bằng 0 (MaxEvaluations = {request.MaxEvaluations})";
 
             return Build(request, watch, encodeWatch, measureWatch, evaluated, EmptyPareto, encodeAttempts,
-                pruned, failed,
+                pruned, failed, diagnostics,
                 SearchStatus.SearchInfrastructureFailure,
                 new SearchOutcome(SearchDecisionReasons.PilotEncodeFailed,
                     $"không đánh giá được ứng viên nào: {detail}"));
@@ -652,24 +871,85 @@ public sealed class PilotSearch(
         {
             var feasibleCount = evaluated.Count(e => e.IsFeasible);
             return Build(request, watch, encodeWatch, measureWatch, evaluated, pareto, encodeAttempts,
-                pruned, failed,
+                pruned, failed, diagnostics,
                 SearchStatus.NoFeasibleCandidate,
                 new SearchOutcome(
                     SearchDecisionReasons.PilotAllCandidatesRejected,
-                    feasibleCount == 0
+                    (feasibleCount == 0
                         ? $"không ứng viên nào đạt chất lượng ({evaluated.Count}/{request.Candidates.Count} đã thử) — giữ bản gốc"
-                        : $"{feasibleCount} ứng viên đạt chất lượng nhưng ước lượng không đủ tin để chọn"));
+                        : $"{feasibleCount} ứng viên đạt chất lượng nhưng ước lượng không đủ tin để chọn")
+                    + diagnostics.NonMonotonicNote));
+        }
+
+        // Bản gốc là một ứng viên ngang hàng, nên nó được so ở ĐÂY — sau khi đã đo, không phải
+        // trước. Metadata của nguồn không được động vào quyết định này (xem `OriginalComparison`).
+        var comparison = OriginalComparison.Decide(
+            request.SourceSizeBytes,
+            request.MinSavingPercent,
+            [.. evaluated.Where(e => e.IsFeasible)],
+            request.Confidence);
+
+        if (comparison.Decision == OriginalDecision.KeepOriginal)
+        {
+            return Build(request, watch, encodeWatch, measureWatch, evaluated, pareto, encodeAttempts,
+                pruned, failed, diagnostics,
+                SearchStatus.OriginalSelected,
+                new SearchOutcome(comparison.Reason, comparison.Message + diagnostics.NonMonotonicNote)) with
+            {
+                Selected = null,
+                OriginalComparison = comparison,
+            };
         }
 
         return Build(request, watch, encodeWatch, measureWatch, evaluated, pareto, encodeAttempts,
-            pruned, failed,
+            pruned, failed, diagnostics,
             SearchStatus.SelectedCandidate,
             new SearchOutcome(SearchDecisionReasons.PilotSelected,
                 $"chọn {selected.CandidateId}: chất lượng {selected.Quality.ToString("0.0", CultureInfo.InvariantCulture)}, "
-                + $"ước lượng {selected.EstimatedBytes} B")) with
+                + $"ước lượng {selected.EstimatedBytes} B"
+                + diagnostics.NonMonotonicNote)) with
         {
             Selected = evaluated.First(e => string.Equals(e.Candidate.Id, selected.CandidateId, StringComparison.Ordinal)),
+            OriginalComparison = comparison,
         };
+    }
+
+    /// <summary>
+    /// Số liệu về các nhánh tìm kiếm, gom lại để không phải thêm tham số vào <c>Build</c>.
+    /// </summary>
+    /// <remarks>
+    /// Riêng phần "phi đơn điệu" thì không phải chi tiết trang trí: đó là tín hiệu đúng nhất
+    /// cho biết phép đo VMAF có đang cho ra thứ mà thuật toán không lường trước được. Một
+    /// nhánh bị đánh dấu này vẫn cho kết quả hợp lệ (ta chỉ dò tuyến tính, không cắt), nhưng
+    /// người đọc nhật ký cần biết nó xảy ra ở tỉ lệ nào.
+    /// </remarks>
+    private readonly record struct SearchDiagnostics(
+        int BranchCount,
+        int NonMonotonicCount,
+        IReadOnlyList<string> NonMonotonicBranches,
+        string NonMonotonicNote)
+    {
+        public static SearchDiagnostics None { get; } = new(0, 0, [], string.Empty);
+
+        public static SearchDiagnostics From(
+            List<BranchSearch> branches, List<BranchSearch> nonMonotonic)
+        {
+            if (nonMonotonic.Count == 0)
+            {
+                return new SearchDiagnostics(branches.Count, 0, [], string.Empty);
+            }
+
+            var detail = string.Join(
+                "; ", nonMonotonic.Select(b => $"{b.BranchId}: {b.NonMonotonicReason}"));
+
+            return new SearchDiagnostics(
+                branches.Count,
+                nonMonotonic.Count,
+                [.. nonMonotonic.Select(b => b.BranchId)],
+                $" — cảnh báo {SearchDecisionReasons.NonMonotonicBranchObserved}: "
+                    + $"{nonMonotonic.Count}/{branches.Count} nhánh có số đo trái chiều với giả định đơn điệu "
+                    + $"({detail}); những nhánh đó đã chuyển sang dò tuyến tính và không bị cắt theo giả định nữa");
+        }
     }
 
     // ---------------------------------------------------------------- chiến lược tìm kiếm
@@ -917,6 +1197,7 @@ public sealed class PilotSearch(
         int encodeAttempts,
         List<RejectedCandidate> pruned,
         List<RejectedCandidate> failed,
+        SearchDiagnostics diagnostics,
         SearchStatus status,
         SearchOutcome outcome)
     {
@@ -948,6 +1229,9 @@ public sealed class PilotSearch(
                 CandidatesRejectedInfeasible = pareto.Infeasible.Count,
                 CandidatesDominated = pareto.Rejected.Count,
                 CandidatesOnFrontier = pareto.Frontier.Count,
+                BranchesTotal = diagnostics.BranchCount,
+                BranchesNonMonotonic = diagnostics.NonMonotonicCount,
+                NonMonotonicBranches = diagnostics.NonMonotonicBranches,
                 TotalElapsed = watch.Elapsed,
                 EncodeElapsed = encodeWatch.Elapsed,
                 MeasureElapsed = measureWatch.Elapsed,
@@ -968,6 +1252,7 @@ public sealed class PilotSearch(
 
         return Build(
             request, watch, encodeWatch, measureWatch, evaluated,
-            ParetoSelector.Select(ToScored(evaluated)), evaluated.Count, [], [], status, outcome);
+            ParetoSelector.Select(ToScored(evaluated)), evaluated.Count, [], [],
+            SearchDiagnostics.None, status, outcome);
     }
 }

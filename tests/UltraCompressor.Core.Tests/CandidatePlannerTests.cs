@@ -757,11 +757,109 @@ public class CandidatePlannerTests
     }
 
     [Fact]
-    public void Planner_hien_tai_khong_sinh_nhanh_original()
+    public void Original_la_ung_vien_ngang_hang_khi_biet_byte_nguon()
     {
-        var plan = Plan(Source(), budget: ComputeBudget.Thorough);
+        // Nhánh "giữ nguyên" là ứng viên thật và đứng trong danh sách, không phải ngoại lệ ở
+        // cuối đường ống. Điều kiện duy nhất để sinh ra là biết tệp nguồn nặng bao nhiêu byte.
+        var plan = Plan(Source() with { SizeBytes = 12_345_678 });
+
+        var original = Assert.Single(plan.Candidates.OfType<OriginalCandidate>());
+        Assert.Equal(OriginalCandidate.StableId, original.Id);
+        Assert.Equal(12_345_678, original.SourceBytes);
+        Assert.Same(original, plan.Original);
+        Assert.Equal(plan.Candidates[0].Id, original.Id);
+    }
+
+    [Fact]
+    public void Khong_biet_byte_nguon_thi_khong_co_nhanh_original()
+    {
+        // Không biết kích thước thì không so được với bất cứ ứng viên nào, nên không sinh.
+        // Tốt hơn là không có nhánh hơn là có một nhánh với số 0 — vì số 0 sẽ thắng mọi thứ
+        // trong mọi phép so.
+        var plan = Plan(Source());
 
         Assert.DoesNotContain(plan.Candidates, c => c is OriginalCandidate);
+        Assert.Null(plan.Original);
+    }
+
+    [Fact]
+    public void Nhanh_original_khong_duoc_tinh_vao_tap_ung_vien_encode()
+    {
+        // Tìm kiếm không encode gì thì không dò được nhánh không-nén. Đưa nhầm vào thì mọi
+        // thứ bên dưới sẽ cố encode một tệp chưa tồn tại.
+        var plan = Plan(Source() with { SizeBytes = 12_345_678 });
+
+        Assert.NotEmpty(plan.EncodeCandidates);
+        Assert.All(plan.EncodeCandidates, c => Assert.IsNotType<OriginalCandidate>(c));
+        Assert.All(plan.Branches, b => Assert.DoesNotContain("ORIGINAL", b, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Nhanh_original_khong_bi_loai_khi_dat_tran_ung_vien()
+    {
+        // Nhánh này không tốn encode nào, nên không được phép bị loại chỉ vì danh sách ứng
+        // viên encode chạm trần cấu hình.
+        var plan = Plan(Source() with { SizeBytes = 999 }, config: new AppConfig { MaxInitialCandidates = 1 });
+
+        Assert.True(plan.Diagnostics.Truncated > 0, "phai co that su cat ung vien encode");
+        Assert.NotNull(plan.Original);
+    }
+
+    [Fact]
+    public void Nhanh_original_khong_co_diem_chat_luong_nao()
+    {
+        // ORIGINAL không được mang bất kỳ điểm chất lượng dự kiến nào. Gắn "VMAF 100" vào đây
+        // để nó thắng mọi ứng viên là tự tạo dữ liệu giả — và cách so thì phải là ngữ nghĩa
+        // riêng (`OriginalComparison`), không đi qua Pareto chung.
+        var properties = typeof(OriginalCandidate).GetProperties()
+            .Select(p => p.Name.ToLowerInvariant())
+            .ToList();
+
+        Assert.DoesNotContain("vmaf", properties);
+        Assert.DoesNotContain("predictedquality", properties);
+        Assert.DoesNotContain("quality", properties);
+        Assert.DoesNotContain("estimatedbytes", properties);
+
+        // Cái nó CÓ thì phải là sự thật đo được, không phải ước lượng.
+        var original = new OriginalCandidate(OriginalCandidate.StableId, 5_000_000)
+        {
+            Width = 1920,
+            Height = 1080,
+            Fps = 23.976,
+            CodecName = "h264",
+            HasAudio = true,
+            AudioBitrateKbps = 192,
+        };
+
+        Assert.Equal(5_000_000, original.SourceBytes);
+        Assert.Equal(0d, OriginalCandidate.GenerationalQualityLoss);
+        Assert.Equal(0d, OriginalCandidate.EncodeComputeCostSeconds);
+        Assert.Equal("1920x1080", original.Dimensions);
+    }
+
+    [Fact]
+    public void Metadata_nguon_khong_duoc_dung_de_loai_nguon_khi_hay_ung_vien()
+    {
+        // Cấm tuyệt đối kiểu `bpppf < x` / `bitrate < y` / `codec == AV1` → giữ nguyên.
+        // Metadata chỉ được mô tả, ưu tiên và điều chỉnh sinh ứng viên — không được ra quyết
+        // định không hoàn tác được.
+        //
+        // Dựng nguồn cực kỳ "hiệu quả" (mật độ bit rất thấp) và cực kỳ "kém hiệu quả" (mật độ
+        // bit rất cao). Cả hai đều phải sinh ra CÙNG một tập ứng viên encode, và cả hai đều
+        // phải có nhánh giữ nguyên — khác nhau ở thứ gì metadata được phép ảnh hưởng, và ở đây
+        // là không được ảnh hưởng gì.
+        var lean = Source(density: 0.001) with { SizeBytes = 5_000_000, CodecName = "av1" };
+        var fat = Source(density: 2.0) with { SizeBytes = 500_000_000, CodecName = "h264" };
+
+        var leanPlan = Plan(lean, budget: ComputeBudget.Thorough);
+        var fatPlan = Plan(fat, budget: ComputeBudget.Thorough);
+
+        Assert.Equal(
+            leanPlan.EncodeCandidates.Select(c => c.Id),
+            fatPlan.EncodeCandidates.Select(c => c.Id));
+
+        Assert.NotNull(leanPlan.Original);
+        Assert.NotNull(fatPlan.Original);
     }
 
     // ================================================================= Ưu tiên nguồn

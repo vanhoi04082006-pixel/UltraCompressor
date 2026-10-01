@@ -16,14 +16,60 @@ namespace UltraCompressor.Core.Planning;
 public abstract record CompressionCandidate(string Id);
 
 /// <summary>
-/// Nhánh "không nén". Không có số đo chất lượng, không có thời gian encode.
+/// Nhánh "không nén": giữ nguyên bản gốc. Một ứng viên ngang hàng, không phải ngoại lệ.
 ///
-/// <para>Chưa dùng để ra quyết định ở giai đoạn này. Nhưng khi nó được dùng, phải biểu
-/// diễn đúng như nó là: kích thước bằng byte thật của nguồn, tổn thất chất lượng bằng 0,
-/// chi phí encode bằng 0 — chứ không phải "encode nguồn với chính nó rồi gắn một con số
-/// VMAF vào", vì cách đó tự tạo ra dữ liệu giả.</para>
-/// </summary>
-public sealed record OriginalCandidate(string Id, long SourceBytes) : CompressionCandidate(Id);
+/// <para><b>Không có điểm chất lượng, và đó là điểm cố ý.</b> ORIGINAL không đi qua VMAF với
+/// chính nó: so 100 với 100 là so với bản thân nó, cho ra 100, rồi mọi ứng viên encode đều
+/// "thua" một thứ không có nghĩa. Nếu ta gắn VMAF 100 vào đây để đưa vào mô hình Pareto
+/// chung thì mô hình đó hỏng theo đúng cách nó trông hợp lý nhất — nên ORIGINAL có
+/// <b>ngữ nghĩa so sánh riêng</b> (xem <c>OriginalComparison</c>), không đi qua Pareto.</para>
+///
+/// <para>Thay vào đó nó khai báo đúng những điều mà mình <b>thật sự</b> có:</para>
+/// <list type="bullet">
+/// <item><description>byte thật của nguồn, kích thước, nhịp khung hình, codec, tính chất
+/// âm thanh — tất cả đều là sự thật đọc được, không phải suy ra;</description></item>
+/// <item><description>tổn thất chất lượng theo thế hệ bằng 0, vì không re-encode;</description></item>
+/// <item><description>chi phí encode toàn tệp bằng 0;</description></item>
+/// <item><description>không tạo rủi ro tương thích mới: container, codec, profile đều giữ
+/// nguyên nên không thể phát sinh thứ mà thiết bị cũ không phát được.</description></item>
+/// </list>
+///
+/// <para>Còn lại là điều nó <b>không</b> có: ước lượng dung lượng (đã biết chính xác rồi),
+/// và bất kỳ điểm chất lượng dự kiến nào. Điểm dự kiến chính là thứ nguy hiểm nhất, vì nó
+/// được đặt vào đúng chỗ mà quyết định sẽ đọc.</para>
+/// </remarks>
+/// <param name="Id">Định danh ổn định, luôn là <see cref="StableId"/>.</param>
+/// <param name="SourceBytes">Byte thật của tệp nguồn — không phải ước lượng.</param>
+public sealed record OriginalCandidate(string Id, long SourceBytes) : CompressionCandidate(Id)
+{
+    /// <summary>
+    /// Định danh ổn định của nhánh này. Hằng số chứ không phải chuỗi dựng ở chỗ gọi, để mã
+    /// lý do và đối chiếu log không phụ thuộc vào việc ai đó viết lại tên.
+    /// </summary>
+    public const string StableId = "ORIGINAL";
+
+    /// <summary>Không re-encode nên không có tổn thất chất lượng theo thế hệ nào.</summary>
+    public const double GenerationalQualityLoss = 0;
+
+    /// <summary>Không encode nên không tốn thời gian encode toàn tệp.</summary>
+    public const double EncodeComputeCostSeconds = 0;
+
+    public int Width { get; init; }
+
+    public int Height { get; init; }
+
+    public double Fps { get; init; }
+
+    /// <summary>Codec của nguồn, đọc từ probe. Rỗng khi không xác định được — không đoán.</summary>
+    public string? CodecName { get; init; }
+
+    public bool HasAudio { get; init; }
+
+    public double? AudioBitrateKbps { get; init; }
+
+    /// <summary>Bề rộng × chiều cao, dùng cho thông báo và đối chiếu.</summary>
+    public string Dimensions => $"{Width}x{Height}";
+}
 
 /// <summary>
 /// Vai trò của điểm này trong <b>quá trình tìm kiếm</b>.

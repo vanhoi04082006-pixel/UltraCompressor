@@ -12,10 +12,12 @@ namespace UltraCompressor.Core.Search;
 /// <i>ứng viên</i> trong lúc tìm, tầng kia nói về <i>tệp đầu ra cuối cùng</i>. Gộp chúng
 /// sẽ không phân biệt được "ứng viên này bị loại" với "tệp cuối bị giữ nguyên".</para>
 ///
-/// <para>Riêng <c>SOURCE_ALREADY_EFFICIENT</c> thuộc giai đoạn 5B — nó nói "tệp này đã ở
-/// dạng tốt rồi, đừng nén", tức là một kết luận về chính tệp nguồn chứ không phải về một
-/// ứng viên. Giai đoạn tìm kiếm không được dùng lại mã đó, vì như vậy nó sẽ biến một
-/// ứng viên đơn lẻ thất bại thành kết luận về toàn bộ tệp.</para>
+/// <para>Riêng <c>SOURCE_ALREADY_EFFICIENT</c> của lưới chất lượng cuối thuộc một tầng khác
+/// và giai đoạn tìm kiếm <b>không được dùng lại</b> mã đó: nó nói "tệp này đã ở dạng tốt
+/// rồi, đừng nén", tức là một kết luận về chính tệp nguồn. Nếu một ứng viên đơn lẻ thất bại
+/// mà được dịch thành mã đó thì ta sẽ biến thất bại của <i>một</i> phương án thành kết
+/// luận về toàn bộ tệp. Giữ nguyên bản gốc ở giai đoạn 5B dùng mã
+/// <see cref="OriginalSelected"/>, và luôn kèm lý do cụ thể trong phần <c>Message</c>.</para>
 /// </summary>
 public static class SearchDecisionReasons
 {
@@ -61,13 +63,73 @@ public static class SearchDecisionReasons
     /// <summary>Không ứng viên nào đạt được chất lượng. Kết quả hợp lệ, không phải lỗi.</summary>
     public const string PilotAllCandidatesRejected = "PILOT_ALL_CANDIDATES_REJECTED";
 
-    /// <summary>Không có ứng viên nào để thử (planner rỗng, hoặc không encoder nào khả dụng).</summary>
+    /// <summary>
+    /// Không có ứng viên nào để thử (planner rỗng, hoặc không encoder nào khả dụng).
+    /// </summary>
     public const string PilotNoCandidates = "PILOT_NO_CANDIDATES";
 
     /// <summary>
-    /// Dùng đường lập kế hoạch cũ. Để giai đoạn B dùng; lượt A chưa nối nên chưa sinh mã này.
+    /// Nhánh đo được số đo <b>phá vỡ giả định đơn điệu</b>: có điểm chỉ số thấp rớt trong
+    /// khi điểm chỉ số cao đạt, hoặc ngược lại.
+    ///
+    /// <para>Mã này nói về <b>tính hợp lệ của phép đo</b>, không nói về chất lượng tệp.
+    /// Khi nó xuất hiện thì nhánh đó chuyển sang dò tuyến tính và <b>không cắt gì thêm</b>
+    /// theo giả định cũ — vì giả định đó vừa bị dữ liệu bác bỏ.</para>
+    ///
+    /// <para>Cần máy đọc được vì đây là tín hiệu đúng nhất cho biết phép đo VMAF có đang
+    /// lệch so với điều ta nghĩ không — thứ mà nếu chỉ ghi trong log tiếng Việt thì không
+    /// ai đếm được.</para>
+    /// </summary>
+    public const string NonMonotonicBranchObserved = "NON_MONOTONIC_BRANCH_OBSERVED";
+
+    /// <summary>
+    /// Giữ nguyên bản gốc vì ứng viên encode <b>không chứng minh được lợi ích đủ ý nghĩa</b>
+    /// so với chính nguồn — hoặc vì không ứng viên nào đạt chất lượng.
+    ///
+    /// <para>Khác <see cref="PilotAllCandidatesRejected"/> ở chỗ: mã đó là kết luận về
+    /// <i>những ứng viên encode</i>, mã này là kết luống về <i>tệp đầu ra cuối cùng</i>.
+    /// Người đọc báo cáo cần biết ta đã bỏ qua một lần encode toàn tệp hay không, và vì
+    /// sao.</para>
+    ///
+    /// <para><b>Không đồng nghĩa "nguồn đã tối ưu".</b> Phần <c>Message</c> luôn nêu rõ điều
+    /// tìm được: ứng viên có đạt chất lượng không, và lợi ích dung lượng có đạt ngưỡng của
+    /// cấu hình không. Ta chưa có bằng chứng nào để tuyên bố tệp nguồn là tối ưu.</para>
+    /// </summary>
+    public const string OriginalSelected = "ORIGINAL_SELECTED";
+
+    /// <summary>
+    /// Tìm kiếm chạy thành công nhưng không ứng viên encode nào đạt chất lượng.
+    /// </summary>
+    /// <remarks>
+    /// Khác <see cref="PilotAllCandidatesRejected"/> ở tầng: mã đó là <i>lý do trong giai
+    /// đoạn tìm</i>, còn mã này là <b>kết cục của đường chạy</b> — thứ người đọc báo cáo cần.
+    /// Hai kết cục giữ bản gốc đều hợp lệ, nhưng một cái là "không có gì đạt", cái kia là
+    /// "có gì đạt mà vẫn không đáng làm", và chúng phải đếm tách bạch.
+    /// </remarks>
+    public const string NoFeasibleCandidate = "NO_FEASIBLE_CANDIDATE";
+
+    /// <summary>
+    /// Dùng đường lập kế hoạch cũ. Chỉ dùng cho <b>lỗi hạ tầng</b>: khi search chạy được
+    /// nhưng không đo được ứng viên nào, hoặc khi thiếu công cụ. Đây là nhánh duy nhất được
+    /// phép rơi về đường cũ.
     /// </summary>
     public const string LegacyFallbackUsed = "LEGACY_FALLBACK_USED";
+
+    /// <summary>
+    /// Bốn kết cục của đường chạy thích ứng, theo đúng thứ tự quyết định.
+    /// </summary>
+    /// <remarks>
+    /// Tách khỏi <see cref="All"/> vì đây là tầng khác: <c>All</c> là mã của <i>một quyết
+    /// định trong tìm kiếm</i>, còn đây là <i>kết cục của cả đường chạy</i>. Trộn hai tầng
+    /// làm mất đúng cái ta cần: biết một lần nén kết thúc thế nào.
+    /// </remarks>
+    public static IReadOnlyList<string> Outcomes { get; } =
+    [
+        PilotSelected,
+        OriginalSelected,
+        NoFeasibleCandidate,
+        LegacyFallbackUsed,
+    ];
 
     /// <summary>Mọi mã, để kiểm tra không trùng nhau và không trùng mã của lưới cuối.</summary>
     public static IReadOnlyList<string> All { get; } =
@@ -82,6 +144,9 @@ public static class SearchDecisionReasons
         PilotSelected,
         PilotAllCandidatesRejected,
         PilotNoCandidates,
+        NonMonotonicBranchObserved,
+        OriginalSelected,
+        NoFeasibleCandidate,
         LegacyFallbackUsed,
     ];
 }

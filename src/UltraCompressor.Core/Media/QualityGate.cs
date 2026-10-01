@@ -36,18 +36,54 @@ public static class DecisionReasons
 /// <param name="Skip">Lý do bỏ qua tương ứng, để hiển thị.</param>
 /// <param name="Message">Thông báo tiếng Việt cho người dùng.</param>
 /// <param name="Quality">Mẫu chất lượng đo được, null nếu không đo được hoặc không cần đo.</param>
+/// <param name="Alignment">Số liệu về việc căn khung hình, để phát hiện lệch khung hệ thống.</param>
 public sealed record GateDecision(
     bool Accept,
     string Reason,
     SkipReason Skip,
     string? Message,
-    QualitySample? Quality)
+    QualitySample? Quality,
+    AlignmentTelemetry? Alignment = null)
 {
-    public static GateDecision Keep(string reason, SkipReason skip, string? message, QualitySample? quality = null)
-        => new(true, reason, skip, message, quality);
+    public static GateDecision Keep(
+        string reason, SkipReason skip, string? message,
+        QualitySample? quality = null, AlignmentTelemetry? alignment = null)
+        => new(true, reason, skip, message, quality, alignment);
 
-    public static GateDecision Reject(string reason, SkipReason skip, string message, QualitySample? quality = null)
-        => new(false, reason, skip, message, quality);
+    public static GateDecision Reject(
+        string reason, SkipReason skip, string message,
+        QualitySample? quality = null, AlignmentTelemetry? alignment = null)
+        => new(false, reason, skip, message, quality, alignment);
+}
+
+/// <summary>
+/// Tần suất phải dùng lệch khung hình khi đăng ký hai tệp.
+/// </summary>
+/// <remarks>
+/// <para>Đoạn nào chỉ khớp được sau khi dịch khung thì nhiều khả năng tệp nguồn và tệp đầu ra
+/// lệch mốc thời gian — một điều kiện đúng đắn ở tần suất thấp, nhưng báo hiệu đường cắt
+/// clip hoặc dấu thời gian sai ở tần suất cao.</para>
+///
+/// <para><b>Tại sao chỉ đo, không hành động.</b> Mở rộng phạm vi căn để làm VMAF đẹp hơn là
+/// cách che một lỗi căn khung hình, và làm hỏng khả năng phát hiện ứng viên hỏng: một ứng
+/// viên lệch thật sẽ tìm được một cách căn "đẹp" và đi qua. Phạm vi vẫn là ±1 khung và không
+/// nới. Số liệu này tồn tại để <i>điều tra</i>, không để tự sửa.</para>
+/// </remarks>
+/// <param name="WindowsMeasured">Số đoạn đo được.</param>
+/// <param name="WindowsNeedingShift">Số đoạn phải lệch khung mới khớp nội dung.</param>
+/// <param name="ShiftedLabels">Nhãn cách căn đã dùng, để tái lập được phép đo.</param>
+public sealed record AlignmentTelemetry(
+    int WindowsMeasured,
+    int WindowsNeedingShift,
+    IReadOnlyList<string> ShiftedLabels)
+{
+    public static AlignmentTelemetry None { get; } = new(0, 0, []);
+
+    public bool AnyShift => WindowsNeedingShift > 0;
+
+    /// <summary>Tỉ lệ đoạn phải lệch khung. 0 khi không đo được gì.</summary>
+    public double ShiftRate =>
+        WindowsMeasured == 0 ? 0 : (double)WindowsNeedingShift / WindowsMeasured;
 }
 
 /// <summary>
@@ -159,6 +195,8 @@ public sealed class QualityGate
         WindowRole? worstRole = null;
         string worstAlignment = string.Empty;
         var measuredCount = 0;
+        var needingShift = 0;
+        var shiftedLabels = new List<string>();
 
         foreach (var window in selection.Windows)
         {
@@ -175,6 +213,14 @@ public sealed class QualityGate
             if (sample is null) continue;
 
             measuredCount++;
+
+            // Đếm tần suất phải lệch khung. Chỉ để điều tra, không ảnh hưởng quyết định.
+            if (alignment.Length > 0)
+            {
+                needingShift++;
+                shiftedLabels.Add($"{window.Role} ({alignment})");
+            }
+
             if (worst is null || sample.Mean < worst.Mean)
             {
                 worst = sample;
@@ -194,7 +240,8 @@ public sealed class QualityGate
                 SkipReason.BelowMinSaving,
                 $"Đoạn {window.Role} lúc {window.StartSeconds.ToString("0", CultureInfo.InvariantCulture)}s "
                 + $"chỉ đạt VMAF {sample.Mean.ToString("0.0", CultureInfo.InvariantCulture)} (ngưỡng {floor}){aligned} — giữ bản gốc.",
-                sample);
+                sample,
+                new AlignmentTelemetry(measuredCount, needingShift, shiftedLabels));
         }
 
         // Không đo được đoạn nào thì KHÔNG loại. Công cụ hỏng hay quá giờ thì mọi tệp
@@ -205,7 +252,9 @@ public sealed class QualityGate
         // với mọi tệp được chấp nhận, và nhìn vào log không phân biệt được "đo rồi đạt" với
         // "không đo được". Quyết định thì không sai, chỉ là mất khả năng quan sát — và mất
         // telemetry thì sai số liệu ở các giai đoạn sau.
-        return Accept(level, worst, measuredCount, worstRole, worstAlignment);
+        var telemetry = new AlignmentTelemetry(measuredCount, needingShift, shiftedLabels);
+
+        return Accept(level, worst, measuredCount, worstRole, worstAlignment, telemetry);
     }
 
     /// <summary>
@@ -311,12 +360,29 @@ public sealed class QualityGate
     /// <summary>
     /// Các cách căn khung hình được phép thử, theo thứ tự ưu tiên.
     /// </summary>
+    /// <remarks>
+    /// <para><b>Phạm vi này là hẹp và cố ý. Không được mở rộng.</b> Thêm ±2, ±3… không phải
+    /// là tăng độ chính xác đăng ký, mà là biến phép đo thành một bộ tìm offset để nâng
+    /// điểm: ứng viên lệch thật sẽ tìm được một cách căn "đẹp" và đi qua, tức là đánh dấu
+    /// đúng cái loại tệp mà lưới sinh ra để chặn.</para>
+    ///
+    /// <para>Nếu một tệp cần lệch quá một khung để khớp, đó là lỗi ở đường cắt clip hoặc ở
+    /// dấu thời gian — không phải lý do để dò rộng hơn. Mốc điều tra là
+    /// <see cref="AlignmentTelemetry"/>.</para>
+    /// </remarks>
     private static readonly (int CandidateDrop, int ReferenceDrop, string Label)[] AlignmentCandidates =
     [
         (0, 0, string.Empty),
         (1, 0, "căn −1 khung ứng viên"),
         (0, 1, "căn −1 khung tham chiếu"),
     ];
+
+    /// <summary>Số cách căn tối đa được thử cho mỗi đoạn.</summary>
+    /// <remarks>
+    /// Hằng số công khai để test ghim: nếu ai đó thêm cách căn thứ tư thì test phải đỏ,
+    /// chứ không lặng lẽ mở rộng phạm vi.
+    /// </remarks>
+    public const int AlignmentSearchWidth = 3;
 
     /// <summary>
     /// Quét rồi chọn đoạn. Bọc thử: mọi lỗi quét rơi về chiến lược vị trí chia đều.
@@ -369,22 +435,31 @@ public sealed class QualityGate
     /// </summary>
     /// <param name="worst">Số đo của đoạn có mean thấp nhất — ràng buộc gắn nhất.</param>
     /// <param name="measuredCount">Số đoạn đo được; phân biệt "đo rồi đạt" với "không đo được".</param>
+    /// <param name="alignment">Số liệu căn khung hình, mang theo để người đọc báo cáo đếm được.</param>
     private static GateDecision Accept(
         CompressionLevel level,
         QualitySample? worst,
         int measuredCount,
         WindowRole? worstRole,
-        string worstAlignment)
+        string worstAlignment,
+        AlignmentTelemetry? alignment = null)
     {
         if (worst is null)
         {
             return GateDecision.Keep(
-                DecisionReasons.Accepted, SkipReason.None, null, null);
+                DecisionReasons.Accepted, SkipReason.None, null, null, alignment);
         }
 
         var floor = QualityPolicy.For(level, VmafModels.Default);
         var where = worstRole is null ? string.Empty : $" ở đoạn {worstRole}";
         var aligned = worstAlignment.Length > 0 ? $" ({worstAlignment})" : string.Empty;
+
+        // Cảnh báo tần suất lệch khung khi nó xảy ra nhiều. Đây là TÍN HIỆU ĐÚNG, không
+        // phải lỗi của lần nén này: nó nói rằng đường cắt clip hoặc dấu thời gian đang lệch,
+        // và phải điều tra ở tầng đó chứ không nới phạm vi căn ở đây.
+        var shiftWarning = alignment is { AnyShift: true } && alignment.ShiftRate >= FrequentShiftRate
+            ? $" Cảnh báo: {alignment.WindowsNeedingShift}/{alignment.WindowsMeasured} đoạn phải lệch khung để khớp — kiểm tra lại đường cắt clip và dấu thời gian."
+            : string.Empty;
 
         return GateDecision.Keep(
             DecisionReasons.Accepted,
@@ -392,7 +467,20 @@ public sealed class QualityGate
             $"VMAF {worst.Mean.ToString("0.0", CultureInfo.InvariantCulture)}"
                 + $" (P5 {worst.P5.ToString("0.0", CultureInfo.InvariantCulture)}){where}"
                 + $", ngưỡng {floor}"
-                + $" — đo {measuredCount.ToString(CultureInfo.InvariantCulture)} đoạn, đoạn tệ nhất{aligned}.",
-            worst);
+                + $" — đo {measuredCount.ToString(CultureInfo.InvariantCulture)} đoạn, đoạn tệ nhất{aligned}."
+                + shiftWarning,
+            worst,
+            alignment);
     }
+
+    /// <summary>
+    /// Tỉ lệ đoạn phải lệch khung đủ để coi là bất thường, chứ không phải nhiễu thời gian.
+    /// </summary>
+    /// <remarks>
+    /// Ngưỡng này chưa hiệu chỉnh — nó là ngưỡng <b>cảnh báo để điều tra</b>, không phải ngưỡng
+    /// chất lượng, và không có quyền quyết định gì. Đặt cao hơn tần suất nhiễu điển hình (vài
+    /// khung trên tệp có timebase lệch) để cảnh báo không bắn liên tục; nếu thấy bắn ở
+    /// mọi tệp thì phải điều tra chứ không phải nới ngưỡng.
+    /// </remarks>
+    public const double FrequentShiftRate = 0.5;
 }

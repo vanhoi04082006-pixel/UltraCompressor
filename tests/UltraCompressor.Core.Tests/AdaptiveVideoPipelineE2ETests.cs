@@ -2,6 +2,7 @@ using System.Globalization;
 using UltraCompressor.Core.Media;
 using UltraCompressor.Core.Models;
 using UltraCompressor.Core.Pipelines;
+using UltraCompressor.Core.Search;
 using Xunit;
 
 namespace UltraCompressor.Core.Tests;
@@ -122,6 +123,83 @@ public class AdaptiveVideoPipelineE2ETests
             Assert.Contains("tìm kiếm:", result.Message);
             Assert.Contains("VMAF", result.Message);
             Assert.Contains("chọn", result.Message);
+
+            // Case A của giai đoạn 5B: ứng viên encode thắng. Câu báo cáo phải mở đầu bằng
+            // đúng mã kết cục, vì người đọc lọc và đếm theo nó.
+            Assert.StartsWith(
+                $"{SearchDecisionReasons.PilotSelected} — ",
+                result.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDelete(work);
+        }
+    }
+
+    /// <summary>
+    /// Case B của giai đoạn 5B, trên media thật do ffmpeg sinh ra.
+    /// </summary>
+    /// <remarks>
+    /// <para>Nguồn <c>testsrc2</c> mã hoá ở <b>crf 40</b>: đã bị bóp tới mức mã hoá lại chỉ
+    /// thêm nhiễu, và tệp chỉ còn ~1,35 MB. Đây đúng là tình huống mà đường cũ hay "nén" theo
+    /// bảng tra cứu CRF.</para>
+    ///
+    /// <para>Đo thực tế trên nguồn này: 4 ứng viên <b>đạt</b> chất lượng, nhưng ngay cả ở biên
+    /// nhỏ nhất của khoảng ước lượng thì cũng không nhỏ hơn nguồn đủ xa — nên không có bằng
+    /// chứng nào rằng mã hoá lại đáng làm.</para>
+    /// </remarks>
+    [RequiresFFmpeg]
+    public async Task Ban_goc_thang_khi_ung_vien_dat_chung_nhung_khong_du_loi_ich()
+    {
+        var ffmpeg = Ffmpeg();
+        var work = Directory.CreateTempSubdirectory("uc-e2e-original-").FullName;
+
+        try
+        {
+            var source = await MakeSourceAsync(work, ffmpeg, compressible: false);
+            var temp = Path.Combine(work, "out.mp4");
+            var sourceSize = new FileInfo(source).Length;
+
+            var pipeline = new AdaptiveVideoPipeline(new VideoPipeline());
+            var result = await pipeline.RunAsync(
+                await ContextAsync(new AppConfig { EnableAdaptiveSearch = true }, source, temp),
+                _ => { },
+                CancellationToken.None);
+
+            // KHÔNG rơi về đường cũ: giữ bản gốc là một quyết định của ta, dựa trên số đo —
+            // không phải hạ tầng hỏng. Rơi về đường cũ ở đây sẽ âm thầm nén một tệp mà ta
+            // vừa kết luận là không đáng nén.
+            Assert.DoesNotContain(AdaptiveVideoPipeline.LegacyFallbackMarker, result.Message ?? string.Empty);
+
+            Assert.False(result.Success);
+            Assert.Equal(SkipReason.NotWorthIt, result.Skip);
+            Assert.StartsWith(
+                SearchDecisionReasons.OriginalSelected,
+                result.Message ?? string.Empty,
+                StringComparison.Ordinal);
+
+            // Đây là điểm mấu chốt của giai đoạn: KHÔNG tạo ra tệp đầu ra nào. Bỏ qua được
+            // một lần encode toàn tệp là toàn bộ giá trị của giai đoạn này.
+            Assert.False(File.Exists(temp), "giữ bản gốc thì không được tạo tệp đầu ra");
+
+            // Câu chữ phải nêu cả hai điều: đã thử được gì, và vì sao không đáng nén. Cụ thể
+            // là KHÔNG được tuyên bố tệp nguồn đã tối ưu — ta không có căn cứ để nói vậy.
+            Assert.Contains("bỏ qua 1 lần encode toàn tệp", result.Message ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains(
+                "không phải kết luận tệp nguồn đã tối ưu",
+                result.Message ?? string.Empty,
+                StringComparison.Ordinal);
+
+            // Dọn sạch: không có tệp đầu ra thì còn lại đúng một tệp là nguồn.
+            var leftovers = Directory
+                .GetFiles(work, "*", SearchOption.AllDirectories)
+                .Where(f => !string.Equals(f, source, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            Assert.True(leftovers.Count == 0,
+                "còn sót tệp tạm: " + string.Join(", ", leftovers.Select(Path.GetFileName)));
+            Assert.Empty(Directory.GetDirectories(work, "uc-adaptive-*"));
         }
         finally
         {

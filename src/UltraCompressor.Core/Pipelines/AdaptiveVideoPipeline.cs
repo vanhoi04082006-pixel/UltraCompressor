@@ -15,18 +15,28 @@ namespace UltraCompressor.Core.Pipelines;
 /// khó nhất của tệp trước khi tốn công encode cả tệp. Người dùng thấy "giữ nguyên" hoặc
 /// "nén" dựa trên số đo, không dựa trên một bảng tra cứu CRF.</para>
 ///
-/// <para><b>Ba kết cục, ba hành vi khác nhau — đây là phần quan trọng nhất của lớp này.</b></para>
+/// <para><b>Bốn kết cục, bốn hành vi khác nhau — đây là phần quan trọng nhất của lớp này.</b></para>
 /// <list type="number">
-/// <item><description><b>Có ứng viên đạt</b> → encode toàn tệp bằng phép biến đổi DÙNG CHUNG
-/// với phép thử, rồi lưới chất lượng cuối (Phase 5A) giữ bất biến
-/// <c>NewSize &lt;= OldSize</c> như mọi đường khác.</description></item>
-/// <item><description><b>Không ứng viên nào đạt</b> → giữ bản gốc, KHÔNG chạy lại bằng đường
-/// cũ. Tệp đã nén hiệu quả là chuyện thường; chạy lại đường cũ ở đây sẽ âm thầm nén một
-/// tệp mà ta vừa kết luận là không nén được.</description></item>
-/// <item><description><b>Hỏng hạ tầng</b> (không đo được ứng viên nào) → rơi về đường cũ, và
-/// ghi kèm mã lý do gốc. Chỉ nhánh này được phép rơi, vì đây là lần duy nhất ta thật sự
-/// <i>không biết</i> và đường cũ là cách duy nhất còn lại.</description></item>
+/// <item><description><b><see cref="SearchDecisionReasons.PilotSelected"/></b> → encode toàn
+/// tệp bằng phép biến đổi DÙNG CHUNG với phép thử, rồi lưới chất lượng cuối (Phase 5A) giữ
+/// bất biến <c>NewSize &lt;= OldSize</c> như mọi đường khác.</description></item>
+/// <item><description><b><see cref="SearchDecisionReasons.OriginalSelected"/></b> → có ứng
+/// viên đạt chất lượng, nhưng không ứng viên nào chứng minh được lợi ích dung lượng đủ ý nghĩa
+/// so với chính nguồn. Giữ bản gốc và <b>bỏ qua</b> một lần encode toàn tệp. Bản gốc là một
+/// ứng viên ngang hàng, được so bằng số đo thật chứ không bằng metadata.</description></item>
+/// <item><description><b><see cref="SearchDecisionReasons.NoFeasibleCandidate"/></b> → đã
+/// thử mà không ứng viên nào đạt chất lượng. Giữ bản gốc, KHÔNG chạy lại bằng đường cũ.
+/// Tệp đã nén hiệu quả là chuyện thường; chạy lại đường cũ ở đây sẽ âm thầm nén một tệp mà
+/// ta vừa kết luận là không nén được.</description></item>
+/// <item><description><b><see cref="SearchDecisionReasons.LegacyFallbackUsed"/></b> → hỏng
+/// hạ tầng (không đo được ứng viên nào) → rơi về đường cũ, và ghi kèm mã lý do gốc. Chỉ
+/// nhánh này được phép rơi, vì đây là lần duy nhất ta thật sự <i>không biết</i> và đường cũ
+/// là cách duy nhất còn lại.</description></item>
 /// </list>
+///
+/// <para>Hai kết cục giữ bản gốc <b>phải phân biệt</b>. Gộp chúng thì báo cáo không trả lời
+/// được câu hỏi duy nhất quan trọng: lần nén này có <i>bỏ được việc mã hoá lại</i> không, và
+/// vì sao.</para>
 ///
 /// <para>Việc chọn giữa đường này và <see cref="VideoPipeline"/> do
 /// <see cref="AppConfig.EnableAdaptiveSearch"/>, mặc định <c>false</c>. Tắt cờ thì hành vi
@@ -40,9 +50,19 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
 {
     public override MediaKind Kind => MediaKind.Video;
 
-    /// <summary>Mã lý do ghi kèm khi phải rơi về đường cũ.</summary>
-    public const string LegacyFallbackMarker = "LEGACY_FALLBACK_USED";
+    /// <summary>
+    /// Mã lý do ghi kèm khi phải rơi về đường cũ.
+    /// </summary>
+    /// <remarks>
+    /// Trỏ về <see cref="SearchDecisionReasons.LegacyFallbackUsed"/> chứ không khai một
+    /// chuỗi thứ hai cùng giá trị. Hai hằng cùng nội dung là hai nguồn sự thật, và sớm muộn
+    /// chúng sẽ lệch nhau — lúc đó thống kê đếm một chỗ mà log ghi chỗ kia.
+    /// </remarks>
+    public const string LegacyFallbackMarker = SearchDecisionReasons.LegacyFallbackUsed;
 
+    /// <param name="context">Ngữ cảnh của job.</param>
+    /// <param name="onProgress">Báo tiến trình 0…100.</param>
+    /// <param name="token">Dừng theo yêu cầu người dùng.</param>
     public override Task<PipelineResult> RunAsync(
         PipelineContext context, Action<int> onProgress, CancellationToken token)
     {
@@ -92,6 +112,14 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
             BitsPerPixelPerFrame = probe.BitsPerPixelPerFrame,
             Content = ContentProfile.Unknown,
             Complexity = probe.Complexity,
+
+            // Bốn trường cuối chỉ để mô tả nguồn cho nhánh "giữ nguyên bản gốc". Không trường
+            // nào trong số đó được phép quyết định — chúng chỉ được đọc khi so bản gốc với
+            // ứng viên encode, tức là SAU khi đã có số đo thật.
+            SizeBytes = context.Item.OldSize > 0 ? context.Item.OldSize : null,
+            CodecName = probe.VideoCodec,
+            HasAudio = probe.HasAudio,
+            AudioBitrateKbps = probe.AudioBitrateKbps,
         };
 
         var plan = CandidatePlanner.Generate(
@@ -157,6 +185,20 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                         Level = context.Level,
                         Model = VmafModels.Default,
                         MaxEvaluations = context.Config.MaxSearchEvaluations,
+
+                        // Ngưỡng TIẾT KIỆM của cấu hình, truyền xuống để so bản gốc với ứng
+                        // viên bằng đúng tiêu chuẩn người dùng đã đặt. Không có ngưỡng thứ hai
+                        // ở đây — lớp tìm kiếm không được tự chế ra tiêu chuẩn riêng.
+                        MinSavingPercent = context.Config.MinSavingPercent,
+
+                        // MPEG-TS: đã đo thấy remux stream-copy sang container này làm mất
+                        // 4,1 điểm VMAF mà không đổi một pixel, và nguyên nhân chưa truy ra
+                        // được. Số đo trên nguồn như vậy có thể lệch vì DẤU THỜI GIAN chứ
+                        // không phải vì nén, nên nó không được làm bằng chứng cho quyết định
+                        // không hoàn tác được — tức không được dùng để kết luận giữ bản gốc.
+                        Confidence = MediaClassifier.IsMpegTs(context.SourcePath)
+                            ? MeasurementConfidence.Uncertain
+                            : MeasurementConfidence.Trusted,
                     },
                     token).ConfigureAwait(false);
             }
@@ -172,17 +214,21 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                     context, onProgress, $"tìm kiếm ném ngoại lệ: {ex.Message}", token).ConfigureAwait(false);
             }
 
-            return result.Status switch
+            // Bảng quyết định là một chỗ duy nhất; `switch` ở đây chỉ làm nhiệm vụ thi hành nó.
+            return DecideFor(result.Status) switch
             {
-                // Quyết định hợp lệ rằng không nén được. KHÔNG rơi về đường cũ.
-                SearchStatus.NoFeasibleCandidate => PipelineResult.NotWorthIt(
-                    SkipReason.NotWorthIt, 0, Describe(result)),
+                SearchDecision.EncodeFull => await EncodeFullAsync(
+                    context, onProgress, result, token).ConfigureAwait(false),
 
-                _ when DecideFor(result.Status) == SearchDecision.FallBackToLegacy => await FallbackAsync(
+                // Cả hai nhánh giữ bản gốc đều hợp lệ và đều không encode. Khác nhau ở chỗ
+                // đã thử được gì, và `Describe` ghi rõ điều đó — kể cả khi hai nhánh này cùng
+                // trả về `NotWorthIt`, người đọc vẫn phân biệt được.
+                SearchDecision.KeepOriginal or SearchDecision.KeepOriginalNoFeasible =>
+                    PipelineResult.NotWorthIt(SkipReason.NotWorthIt, 0, Describe(result)),
+
+                _ => await FallbackAsync(
                     context, onProgress, $"{result.Outcome.Reason}: {result.Outcome.Message}", token)
                     .ConfigureAwait(false),
-
-                _ => await EncodeFullAsync(context, onProgress, result, token).ConfigureAwait(false),
             };
         }
         finally
@@ -196,11 +242,25 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
     /// <summary>Hành động mà mỗi trạng thái tìm kiếm dẫn tới.</summary>
     public enum SearchDecision
     {
-        /// <summary>Có ứng viên đo được và đạt: encode toàn tệp rồi để lưới cuối giữ.</summary>
+        /// <summary>Có ứng viên do được và chứng minh được lợi ích: encode toàn tệp rồi để
+        /// lưới cuối giữ.</summary>
         EncodeFull,
 
-        /// <summary>Không ứng viên nào đạt: giữ bản gốc, không rơi về đường cũ.</summary>
+        /// <summary>
+        /// Có ứng viên đạt chất lượng nhưng không chứng minh được lợi ích dung lượng: giữ bản
+        /// gốc, bỏ qua một lần encode.
+        /// </summary>
         KeepOriginal,
+
+        /// <summary>
+        /// Không ứng viên nào đạt chất lượng: giữ bản gốc.
+        /// </summary>
+        /// <remarks>
+        /// Tách khỏi <see cref="KeepOriginal"/> vì hai tình huống nói khác nhau: một cái là
+        /// "đã tìm, không có gì đáng làm", cái kia là "không tìm được gì đạt". Cùng hành vi
+        /// thi hành, nhưng khác ý nghĩa — và báo cáo phải cho biết cái nào đã xảy ra.
+        /// </remarks>
+        KeepOriginalNoFeasible,
 
         /// <summary>Không đo được gì: rơi về đường cũ, kèm mã lý do gốc.</summary>
         FallBackToLegacy,
@@ -218,8 +278,24 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
     public static SearchDecision DecideFor(SearchStatus status) => status switch
     {
         SearchStatus.SelectedCandidate => SearchDecision.EncodeFull,
-        SearchStatus.NoFeasibleCandidate => SearchDecision.KeepOriginal,
+        SearchStatus.OriginalSelected => SearchDecision.KeepOriginal,
+        SearchStatus.NoFeasibleCandidate => SearchDecision.KeepOriginalNoFeasible,
         _ => SearchDecision.FallBackToLegacy,
+    };
+
+    /// <summary>
+    /// Mã kết cục của đường chạy, để báo cáo và thống kê đếm được.
+    /// </summary>
+    /// <remarks>
+    /// Lấy từ trạng thái chứ không lấy từ câu chữ trong <c>Outcome</c>: câu chữ sẽ được viết
+    /// lại, còn bốn mã này là hợp đồng với người đọc báo cáo và với thống kê.
+    /// </remarks>
+    public static string OutcomeFor(SearchStatus status) => status switch
+    {
+        SearchStatus.SelectedCandidate => SearchDecisionReasons.PilotSelected,
+        SearchStatus.OriginalSelected => SearchDecisionReasons.OriginalSelected,
+        SearchStatus.NoFeasibleCandidate => SearchDecisionReasons.NoFeasibleCandidate,
+        _ => SearchDecisionReasons.LegacyFallbackUsed,
     };
 
     private static async Task<PipelineResult> EncodeFullAsync(
@@ -391,13 +467,23 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
     }
 
     /// <summary>Câu giải thích cho người đọc báo cáo, đủ để trả lời "vì sao chọn cái này".</summary>
+    /// <remarks>
+    /// Câu này luôn <b>bắt đầu bằng mã kết cục</b> (<c>PILOT_SELECTED</c>,
+    /// <c>ORIGINAL_SELECTED</c>, <c>NO_FEASIBLE_CANDIDATE</c> hay
+    /// <c>LEGACY_FALLBACK_USED</c>), vì người đọc cần lọc và đếm theo kết cục trước khi đọc
+    /// tới lý do. Với lần nén giữ nguyên bản gốc, câu này còn ghi thẳng
+    /// <b>số byte toàn tệp đã tiết kiệm</b> — con số duy nhất chứng minh được giai đoạn 5B
+    /// có tác dụng hay không.
+    /// </remarks>
     private static string Describe(SearchResult result)
     {
         var s = result.Statistics;
         var summary =
-            $"tìm kiếm: {s.CandidatesEvaluated}/{s.CandidatesPlanned} ứng viên đã đo, "
+            $"{OutcomeFor(result.Status)} — "
+            + $"tìm kiếm: {s.CandidatesEvaluated}/{s.CandidatesPlanned} ứng viên đã đo, "
             + $"{s.QualityMeasurements} phép đo VMAF, "
             + $"{s.MeasurementsSavedByEarlyReject} phép đo tiết kiệm nhờ loại sớm, "
+            + $"{s.CandidatesPruned} ứng viên bị cắt theo giả định đơn điệu, "
             + $"{s.TotalElapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}s — "
             + result.Outcome.Message;
 
@@ -407,6 +493,23 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                 $"; chọn {selected.Candidate.Id} "
                 + $"(VMAF đoạn tệ nhất {QualityAggregator.RankingQuality(selected.Aggregate).ToString("0.0", CultureInfo.InvariantCulture)}, "
                 + $"ước lượng {(selected.Estimate.TotalBytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)} MB)";
+        }
+
+        if (result.OriginalComparison is { FullEncodeAvoided: true } comparison)
+        {
+            summary +=
+                $"; bỏ qua 1 lần encode toàn tệp, tiết kiệm "
+                + $"{comparison.SourceBytes.ToString("N0", CultureInfo.InvariantCulture)} B "
+                + $"({(comparison.SourceBytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture)} MB) "
+                + $"và toàn bộ thời gian encode";
+        }
+
+        if (s.BranchesNonMonotonic > 0)
+        {
+            summary +=
+                $"; cảnh báo {SearchDecisionReasons.NonMonotonicBranchObserved} ở "
+                + $"{s.BranchesNonMonotonic}/{s.BranchesTotal} nhánh — phép đo không đơn điệu, "
+                + "xem nhật ký chi tiết";
         }
 
         return summary;

@@ -841,6 +841,18 @@ public sealed class AppHost : IAsyncDisposable
 
     internal static void CopyConfig(AppConfig from, AppConfig to)
     {
+        // `EnableAdaptiveSearch` cố ý KHÔNG lấy từ `from`.
+        //
+        // Giao diện không có ô bật cho đường thích ứng, nên `from` không mang trường này và
+        // giá trị của nó luôn là mặc định `false`. Nếu gán thẳng như các trường khác thì mỗi
+        // lần bấm "Lưu cấu hình" sẽ TẮT cờ đang bật — và vì `SaveAsync` ghi lại đúng đối
+        // tượng đó, giá trị tắt còn được lưu xuống đĩa. Người dùng bật cờ thủ công trong
+        // tệp cấu hình rồi lưu một thứ khác trên giao diện là mất cờ, mà không có dấu hiệu
+        // gì cho biết.
+        //
+        // Giữ nguyên thay vì gán: cờ chỉ đổi khi ai đó sửa tệp cấu hình, tức là chủ ý.
+        var adaptive = to.EnableAdaptiveSearch;
+
         to.Level = from.Level;
         to.DryRunDefault = from.DryRunDefault;
         to.MaxConcurrent = from.MaxConcurrent;
@@ -854,6 +866,8 @@ public sealed class AppHost : IAsyncDisposable
         to.ConcurrencyScale = from.ConcurrencyScale;
         to.LogLevel = from.LogLevel;
         to.Theme = from.Theme;
+
+        to.EnableAdaptiveSearch = adaptive;
     }
 
     private static LogLevel ParseLogLevel(string? value) => value?.ToLowerInvariant() switch

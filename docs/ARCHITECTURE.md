@@ -1140,12 +1140,112 @@ bitrate nguồn thô.
 ### Tìm kiếm nhị phân trên thang điểm của nhánh
 
 Thay coarse (luôn 2 điểm) + vét cạn nhánh đạt bằng `BranchSearch`: đo điểm đầu, điểm
-cuối, rồi chia đôi tới cặp biên kề nhau. Đơn điệu chất lượng theo `PointIndex` là giả
-định duy nhất cho mọi lần cắt — bằng chứng ngược (thiếu số đo, mâu thuẫn biên) thì
-chuyển dò tuyến tính, không cắt. Dừng sớm cả nhánh ở Light/Balanced khi điểm đầu vượt
-ngưỡng nhiều (dư ≥ 3 VMAF cả mean lẫn P5, chưa hiệu chỉnh); Strong không dừng sớm vì
-phản lại chính mode. Mọi điểm không đo đều vào báo cáo với mã `PILOT_PRUNED` và lý do
-riêng ("chắc chắn rớt" khác "không thêm biên mới").
+cuối, rồi chia đôi tới cặp biên kề nhau.
+
+**Nhánh là dấu vân tay phép biến đổi, không phải tên.** `TransformFingerprint` gom codec,
+tên encoder, kích thước, FPS, định dạng pixel, preset, tune, họ điều khiển tốc độ và chuỗi
+bộ lọc (dựng thật qua `EncodeTransform.BuildFilter`). Trước đây nhóm theo `BranchId`
+("h264/1280x720") — một thoả thuận miệng, không có gì chặn ai đó thêm ứng viên khác FPS vào
+đúng nhánh đó. Nay khác nhau ở bất kỳ thành phần nào là chắc chắn khác nhánh.
+
+**Mọi lần cắt cần hai chứng cứ.** Bản trước điểm đầu rớt là cắt cả nhánh — dựa vào *một*
+phép đo, mà điểm đầu lại là chỗ dễ rớt nhất. Nay: điểm đầu rớt chỉ đặt biên; phải dò tới
+điểm cuối; hai đầu cùng rớt thì còn phải dò một điểm ở giữa nữa (`HasUnattemptedInterior`).
+Nhánh chỉ hai điểm thì không có chỗ lấy điểm thứ ba nên cắt ngay. Chi phí: một lần encode
+thừa cho mỗi nhánh toàn bộ rớt.
+
+Giới hạn thật của cách này: **ba điểm trải khắp nhánh vẫn không phải chứng minh**. Một
+"đảo ngọc" hẹp giữa nhánh vẫn lọt. Chấp nhận được vì hệ quả tệ nhất là bỏ sót một cơ hội,
+không bao giờ là giao tệp tệ hơn nguồn — `QualityGate` 5A vẫn kiểm tệp đầu ra thật.
+
+**Phi đơn điệu được đánh dấu, không bị nuốt.** Số đo trá chiều thật sự (điểm chỉ số cao đạt
+trong khi điểm chỉ số thấp đã rớt) báo `NON_MONOTONIC_BRANCH_OBSERVED`, nhánh đó chuyển sang
+dò tuyến tính và **không cắt gì nữa**. Biên lùi sai hướng thì không đánh dấu — đó vẫn là giả
+định đúng, chỉ là ta không dòng được nữa; gộp hai thứ làm mã chẩn đoán mất ý nghĩa.
+`SearchStatistics.BranchesNonMonotonic` để đếm được.
+
+**Dừng sớm đã bị gỡ, có chủ đích.** Bản trước đóng cả nhánh khi điểm đầu vượt ngưỡng ≥ 3
+VMAF. Điểm đầu là điểm **chất lượng cao nhất, tệp lớn nhất** của nhánh; mọi điểm chưa đo đều
+nhỏ hơn, và bộ chọn ưu tiên tệp nhỏ — nên "tiết kiệm encode" ở đó đồng nghĩa với "bỏ qua ứng
+viên có thể thắng", tức **có thể chọn ra tệp LỚN hơn**. Không có cách nào thu hẹp điều kiện
+bật/tắt để sửa, vì ứng viên bị bỏ qua luôn là ứng viên nhỏ hơn. Mối lệch: heuristic giả định
+"ưu tiên chất lượng", còn bộ chọn thực thi "ưu tiên dung lượng". `EarlyStopMargin` và
+`PassesWithMargin` được giữ lại (chưa hiệu chỉnh, không có quyền quyết định nào) để làm mốc
+đối chiếu.
+
+### Phase 5B — ORIGINAL là một ứng viên ngang hàng
+
+`OriginalCandidate` được `CandidatePlanner` sinh ra như mọi ứng viên khác, định danh ổn
+định `ORIGINAL`, đứng đầu `CandidatePlan.Candidates`. Nó **không có điểm chất lượng** — không
+so VMAF với chính nó, vì 100 so với 100 là so với bản thân nó. Nó khai đúng những gì mình có:
+byte thật, kích thước, FPS, codec, tính chất âm thanh, tổn thất thế hệ = 0, chi phí encode = 0,
+không rủi ro tương thích mới. Nó không đi qua Pareto.
+
+`OriginalComparison` là ngữ nghĩa so sánh riêng. **Không có điểm số tổng hợp** (không có
+`VMAF × a + tiết kiệm × b`) vì trọng số chưa có số đo nào chứng minh. Thứ tự là ràng buộc:
+khả thi chất lượng → lợi ích dung lượng theo đúng `AppConfig.MinSavingPercent` → Pareto →
+chi phí tính toán.
+
+**Điều kiện để giữ bản gốc là "không chứng minh được", không phải "ước lượng không đẹp".**
+Ứng viên chỉ bị bác khi ngay cả ở **biên dưới** của khoảng quan sát nó vẫn không nhỏ hơn nguồn
+đủ xa — tức để bác phải có lý do mạnh nhất. Hệ quả là thiên lệch một chiều: nghiêng về giữ bản
+gốc khi không chắc, nghiêng về encode khi có dấu hiệu lợi ích. Encode rồi hóa ra không đáng thì
+vẫn an toàn tuyệt đối vì 5A giữ bản gốc; bỏ mất một khoản tiết kiệm thật thì không hoàn tác
+được.
+
+Bốn kết cục, bốn mã, bốn hành vi — và **hai kết cục giữ bản gốc phải phân biệt**:
+
+| mã | nghĩa | hành vi |
+|---|---|---|
+| `PILOT_SELECTED` | ứng viên chứng minh được lợi ích | encode toàn tệp → **5A vẫn chạy** |
+| `ORIGINAL_SELECTED` | có ứng viên đạt, không ứng viên nào chứng minh lợi ích | giữ bản gốc, bỏ encode |
+| `NO_FEASIBLE_CANDIDATE` | đã thử, không ứng viên nào đạt chất lượng | giữ bản gốc, **không** rơi về đường cũ |
+| `LEGACY_FALLBACK_USED` | hỏng hạ tầng | rơi về đường cũ, kèm nguyên nhân gốc |
+
+Câu báo cáo luôn mở đầu bằng mã kết cục, và khi giữ bản gốc thì ghi thẳng **số byte toàn tệp
+đã tiết kiệm** — con số duy nhất chứng minh được 5B có tác dụng hay không.
+
+**Metadata không bao giờ được tự kết luận.** Planner chỉ sinh nhánh ORIGINAL khi biết byte
+nguồn; không có `bpppf < x`, không có `bitrate < y`, không có `codec == AV1` → giữ nguyên.
+
+### Ước lượng: vẫn chỉ để xếp hạng, nay kèm khoảng và nguồn gốc
+
+`SizeEstimator.Calibration` gom số mẫu, độ lan tỉa, trạng thái và tài liệu — **cùng chỗ** với
+chính các hằng số 0,72 / 0,98 / 1208 / 678, vì tách ra chỉ để "cho gọn" là làm mất đúng thứ cần
+giữ. Trạng thái là `provisional-calibrated-on-limited-corpus`, không phải `calibrated`.
+
+`HeuristicEstimateBounds` là **biên heuristics**, không phải khoảng tin cậy 95%: trên 7 tệp
+đã đo, tỉ số nằm trong 0,61…0,89, nên biên là 0,61…0,89. Không có phân phối xác suất thì không
+được gọi là khoảng tin cậy — và gọi vậy là nói dối, hậu quả là ai đó dựa vào độ chắc chắn
+không có thật để ra quyết định không hoàn tác được. `null` nghĩa là "không có ý kiến", không
+phải "hẹp"; thiếu khoảng thì không dùng để bác ứng viên nào.
+
+### Căn khung hình: bó hẹp, và đo tần suất thay vì nới phạm vi
+
+`AlignmentSearchWidth = 3`, ghim bằng test. Thêm ±2, ±3 không phải tăng độ chính xác đăng ký
+mà là biến phép đo thành bộ tìm offset để nâng điểm: ứng viên lệch thật sẽ tìm được cách căn
+"đẹp" và đi qua. `AlignmentTelemetry` đếm tần suất phải lệch khung; trên 50% số đoạn thì lưới
+cảnh báo trong thông báo — vì đó là tín hiệu đúng về đường cắt clip hoặc dấu thời gian, và
+phải điều tra ở tầng đó chứ không nới phạm vi ở đây.
+
+### Nợ kỹ thuật còn lại
+
+- **MPEG-TS.** Đã đo: remux **stream-copy, không đổi một pixel** sang MPEG-TS làm VMAF rơi
+  4,1 điểm, nguyên nhân chưa truy ra được. Ta **không có đường nào remux sang MPEG-TS** (đã
+  grep toàn kho: chỉ có ghi chú, không có mã). Cô lập rủi ro: `MediaClassifier.IsMpegTs` hạ mức
+  tin cậy phép đo, và `OriginalComparison` **không bao giờ** kết luận giữ bản gốc từ số đo đáng
+  ngờ — thay vào đó encode và để 5A quyết định bằng kích thước và số đo thật.
+- **Tệp tạm giữ nguyên phần mở rộng nguồn** (`TempWorkspace.CreatePath`), nên nguồn `.ts` sẽ
+  nhận `-movflags +faststart` với đường dẫn đầu ra `.ts` — thuộc muxer mov/mp4. Chưa có tệp
+  `.ts` nào trong kho kiểm thử để xác nhận hành vi thật. **Chưa sửa**: nằm ngoài phạm vi 5B và
+  đụng mọi pipeline.
+- **`item.DecisionReason` không được gán cho hai nhánh giữ bản gốc**, vì engine thoát sớm khi
+  `!result.Success`. Thông báo vẫn mang đủ thông tin; chỉ mất khả năng gom theo mã trên UI.
+  Sửa sẽ đụng tầng lịch trình của mọi pipeline.
+- **`AppHost.CopyConfig`** không chép `EnableAdaptiveSearch`, nên lưu cấu hình từ giao diện sẽ
+  tắt cờ đang bật. Đã sửa (giữ nguyên giá trị thay vì chép từ DTO). **Chưa có test hồi quy**:
+  dự án kiểm thử không tham chiếu được dự án WinForms mà không phải đổi TFM của toàn bộ dự án
+  kiểm thử.
 
 ### Kiểm chứng E2E trên media thật
 
@@ -1154,5 +1254,62 @@ H264/1280×720/crf18 (VMAF đoạn tệ nhất 90,1); đầu ra 32,4 MB (tiết 
 ACCEPTED với VMAF 90,3 (P5 88,7). Âm thanh giữ nguyên, không nâng bitrate. Temp cleanup: 0
 file, 0 thư mục search còn lại.
 
-549 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
-Không đổi ngưỡng VMAF, không làm giai đoạn 5B.
+### Ma trận kho kiểm thử và khoảng trống còn lại
+
+Chưa được phép tuyên bố "đã hiệu chỉnh tổng quát". Những gì **đã** đo:
+
+| nhóm | tình trạng |
+|---|---|
+| tổng hợp `testsrc2` 720p, crf 14 / 30 / 40, 20 s | có — E2E, đủ đường thích ứng |
+| tổng hợp `testsrc2` 320×240 crf 16 | có — PILOT_SELECTED, tiết kiệm 43% |
+| anime 1080p h264 120 s có tiếng (nguồn nghiệm thu) | có — PILOT_SELECTED, tiết kiệm 17,8% |
+| nhiễu ngẫu nhiên 720p crf 32 (84 MB) | đo một lần, **phát hiện hỏng** — xem dưới |
+
+Những gì **chưa** có, nên mọi tuyên bố về chúng là suông:
+
+- talking head · gameplay · thể thao/chuyển động mạnh · hoạt hình/anime (ngoài một tệp) ·
+  quay màn hình / chữ / UI · tối hoặc nhiễu · thiên nhiên nhiều chi tiết
+- nguồn **HEVC** và **AV1**; nguồn **bitrate thấp đã nén kỹ**; nguồn **bitrate cao**
+- 720p · 1080p (ngoài một tệp) · 1440p · **4K**
+- nguồn có container khác MP4 ở đường chạy thật (xem nợ MPEG-TS)
+
+**Khoảng trống đã tốn công và đo được, không phải suông:** trên nguồn nhiễu ngẫu nhiên 720p
+crf 32 (84,13 MB), estimator ra **87,8 MB** còn tệp thật là **122,3 MB** — lệch **−28%**, ngoài
+toàn bộ khoảng 0,61…0,89 đã hiệu chỉnh. Lỗi nằm ở giả định "đoạn đắc nhất đại diện cho cả
+tệp": nội dung nhiễu không có đoạn nào đắc hơn đoạn nào. Ứng viên vẫn **đạt** chất lượng
+(VMAF 99,7 — tái mã hoá nhiễu thì không mất gì), nên đường thích ứng chọn nó và 5A phải loại vì
+tệp lớn hơn nguồn. Đây đúng là hành vi an toàn, nhưng nó là khoảng trống thật của bộ hiệu
+chỉnh và cần một mẫu nội dung entropy cao trước khi tuyên bố bất kỳ điều gì về nhóm đó.
+
+### Hiệu năng: 5B so với baseline đã nghiệm thu
+
+Cùng một nguồn nghiệm thu (1080p h264, 120,1 s, 37,58 MB, có tiếng 247 kb/s), Balanced:
+
+| | baseline 5A | 5B |
+|---|---|---|
+| ứng viên đã đo | 3/6 | 4/6 |
+| phép đo VMAF | 6 | 8 |
+| thời gian tìm kiếm | 130,9 s | **186,5 s** |
+| ứng viên chọn | 720p crf18 | 720p crf18 (không đổi) |
+| ước lượng | 33,5 MB | 33,5 MB (không đổi) |
+| tệp thật | 32,38 MB | 32,38 MB (không đổi) |
+| tiết kiệm | 17,8% | 17,8% |
+| 5A | ACCEPTED, VMAF 90,3 / P5 88,7 | ACCEPTED, VMAF 90,3 / P5 88,7 |
+
+Tổng thời gian một lần nén: 285,4 s (tìm 186,5 s + encode toàn tệp ~98,9 s); lưới 5A 135,2 s.
+**Tìm kiếm đắt hơn 42%** và đổi lại y hệt kết quả — đúng cái giá của việc gỡ dừng sớm và thêm
+điểm xác nhận thứ ba. Đây là cái giá đã được chọn có chủ đích; nếu sau này tìm ra cách lấy lại
+tốc độ thì phải là cách **không** đổi lựa chọn, không phải bật lại dừng sớm.
+
+**Số encode toàn tệp bị bỏ qua:** đo được trên nguồn `testsrc2` crf 40 (1,35 MB) — 4 ứng
+viên đạt chất lượng, ngay cả biên dưới cũng không nhỏ hơn nguồn đủ xa → `ORIGINAL_SELECTED`,
+tiết kiệm **1,42 MB** (toàn bộ kích thước tệp) và **toàn bộ thời gian encode**; search vẫn
+chạy 105,6 s nên tổng thời gian giảm so với việc encode toàn tệp.
+
+**Lệch khung hình:** 5A ghi nhận **1/2 đoạn phải lệch khung** trên nguồn nghiệm thu → vượt
+ngưỡng cảnh báo 50%. Kết quả chọn vẫn đúng và 5A vẫn ACCEPTED, nhưng đây đúng là tín hiệu đúng
+mà bước 10 yêu cầu phải điều tra (đường cắt clip, dấu thời gian của nguồn 1080p → 720p).
+Không nới phạm vi căn để làm nó im.
+
+612 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
+Không đổi ngưỡng VMAF, không làm giai đoạn 5B tiếp.

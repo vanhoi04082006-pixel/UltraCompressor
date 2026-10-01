@@ -1117,22 +1117,35 @@ một khung ứng viên thì SSIM lên 0,99. Vì vậy sau khi cắt clip còn t
 thế là lỗi khác (rớt khung, sai FPS) và không được hấp thụ lặng lẽ. Cách căn được ghi vào
 thông báo để tái lập được phép đo.
 
-### Hiệu chỉnh ước lượng dung lượng trên encode toàn tệp thật
+### Hiệu chỉnh ước lượng dung lượng trên encode toàn tệp thật (đợt 2)
 
-Nguồn 1920×1080 h264, 120,1 s, 34,0 MB, ba đoạn 3 s, x264 preset medium:
+Đợt 1 chỉ ghi sai số, chưa sửa. Đợt 2 đo tiếp trên 2 nguồn (60,1 s) + 1 điểm 120 s,
+x264 preset medium, pilot 3 đoạn:
 
-| ứng viên | ước lượng | thật | sai lệch |
+| mẫu | video thật / thô | audio thật / ước | overhead |
 |---|---|---|---|
-| crf16 | 78,4 MB | 61,9 MB | thừa 26,7% |
-| crf24 | 34,4 MB | 28,0 MB | thừa 23,0% |
-| crf32 | 14,4 MB | 12,8 MB | thừa 12,4% |
+| nguồn A crf24 | 0,631 | 0,975 | 41.734 B |
+| nguồn A crf32 | 0,607 | 0,975 | 41.734 B |
+| nguồn B crf24 | 0,661 | 0,989 | 42.179 B |
+| nguồn B crf32 | 0,663 | 0,989 | 42.179 B |
+| nguồn A 120 s crf24 | — | — | 82.634 B (≈2× điểm 60 s) |
 
-Sai lệch không phải hệ số cố định nên không hiệu chỉnh bằng hằng số được — nhưng thứ tự
-xếp hạng giữ đúng cả ba, và đó là điều duy nhất ước lượng được phép làm. Giữ hướng THỪA
-(trung bình thì thiếu 21–26%): thiếu nói dối rằng tiết kiệm nhiều hơn sự thật, thừa chỉ bi
-tiết kiệm. Sửa hai lỗi lân cận: bitrate âm thanh bị dùng nhầm bitrate tổng (thêm
-`MediaInfo.AudioBitrateKbps`, đọc riêng luồng audio), và vỏ container bị nhân với số đoạn
-thử nghiệm (tệp đầu ra là một tệp).
+Cộng 3 tỉ số video đợt 1: trung bình 7 mẫu = **0,72** (dao động 0,61…0,89 — hệ số sửa
+độ lệch trung bình, không sửa được phương sai). Audio trung bình = **0,98**. Overhead
+fit tuyến tính theo thời lượng: base 1.208 B + 678 B/s. Byte track đọc từ box `stsz`
+bằng `Mp4TrackSizes` (không ffprobe, không parse stderr); cross-check trên remux khớp
+từng byte. Pipeline truyền bitrate MỤC TIÊU (min với nguồn) vào estimator thay vì
+bitrate nguồn thô.
+
+### Tìm kiếm nhị phân trên thang điểm của nhánh
+
+Thay coarse (luôn 2 điểm) + vét cạn nhánh đạt bằng `BranchSearch`: đo điểm đầu, điểm
+cuối, rồi chia đôi tới cặp biên kề nhau. Đơn điệu chất lượng theo `PointIndex` là giả
+định duy nhất cho mọi lần cắt — bằng chứng ngược (thiếu số đo, mâu thuẫn biên) thì
+chuyển dò tuyến tính, không cắt. Dừng sớm cả nhánh ở Light/Balanced khi điểm đầu vượt
+ngưỡng nhiều (dư ≥ 3 VMAF cả mean lẫn P5, chưa hiệu chỉnh); Strong không dừng sớm vì
+phản lại chính mode. Mọi điểm không đo đều vào báo cáo với mã `PILOT_PRUNED` và lý do
+riêng ("chắc chắn rớt" khác "không thêm biên mới").
 
 ### Kiểm chứng E2E trên media thật
 
@@ -1141,5 +1154,5 @@ H264/1280×720/crf18 (VMAF đoạn tệ nhất 90,1); đầu ra 32,4 MB (tiết 
 ACCEPTED với VMAF 90,3 (P5 88,7). Âm thanh giữ nguyên, không nâng bitrate. Temp cleanup: 0
 file, 0 thư mục search còn lại.
 
-517 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
+549 test, 0 bị bỏ qua, `check.ps1` sạch, Debug `-warnaserror` sạch, 0 suppression mới.
 Không đổi ngưỡng VMAF, không làm giai đoạn 5B.

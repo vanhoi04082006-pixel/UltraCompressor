@@ -81,6 +81,13 @@ public class PilotSearchOrchestrationTests
         /// <summary>Trả null nghĩa là "không đo được", khác hẳn với điểm 0.</summary>
         public Func<WindowRole, double?> Quality { get; set; } = quality;
 
+        /// <summary>
+        /// Ghi đè theo đường dẫn clip (trong đó có id ứng viên). Dùng khi test cần mỗi ứng
+        /// viên một số đo khác nhau — ví dụ tìm kiếm nhị phân, nơi biên khả thi nằm giữa
+        /// các điểm và mỗi điểm phải rớt/đạt khác nhau.
+        /// </summary>
+        public Func<string, double?>? QualityByPath { get; set; }
+
         public Task<QualityResult?> MeasureAsync(
             string referencePath, string candidatePath,
             TimeWindow referenceWindow, TimeWindow candidateWindow,
@@ -90,7 +97,9 @@ public class PilotSearchOrchestrationTests
             var role = RoleOf(candidatePath);
             Measured.Add(role);
 
-            if (Quality(role) is not { } mean)
+            var mean = QualityByPath?.Invoke(candidatePath) ?? Quality(role);
+
+            if (mean is not { } value)
             {
                 return Task.FromResult<QualityResult?>(null);
             }
@@ -101,7 +110,7 @@ public class PilotSearchOrchestrationTests
                 model.Id, referenceWindow,
                 displayWidth, displayHeight,
                 candidateWidth, candidateHeight,
-                new QualitySample(mean, mean - 3, mean - 20, 0.999, 72)));
+                new QualitySample(value, value - 3, value - 20, 0.999, 72)));
         }
 
         private static WindowRole RoleOf(string path)
@@ -237,23 +246,22 @@ public class PilotSearchOrchestrationTests
     [Fact]
     public async Task Doan_giua_rot_thi_dung_ngay_va_bo_qua_doan_sau()
     {
-        // Cửa sổ mặc định xếp Typical (khó 0,9) trước HighMotion (khó 0,5). Typical rớt ở
-        // cả hai ứng viên nên mỗi ứng viên chỉ tốn đúng một phép đo.
+        // Bản cũ đo cả hai ứng viên rồi mới kết luận. Nhị phân thì khác: điểm đầu (chất
+        // lượng cao nhất) rớt THẬT thì điểm còn lại chắc chắn rớt, nên không tốn encode
+        // cho nó nữa — 1 phép đo thay vì 2. Test cũ giữ lại sẽ khẳng định sự lãng phí mà
+        // refactor này sinh ra để loại bỏ, nên cập nhật chứ không phải sửa cho qua.
         var measurer = new FakeMeasurer(role => role == WindowRole.Typical ? 80 : 95);
         var search = new PilotSearch(new FakeEncoder(), new FakeReferences(), measurer);
 
         var result = await search.RunAsync(Request(C("b", 0, 3, 16), C("b", 2, 3, 32)));
 
         Assert.Equal(SearchStatus.NoFeasibleCandidate, result.Status);
-        Assert.Equal([WindowRole.Typical, WindowRole.Typical], measurer.Measured);
-
-        // 2 ứng viên × 2 đoạn = 4 nếu không dừng sớm; thực tế 2.
-        Assert.Equal(2, result.Statistics.QualityMeasurements);
-        Assert.Equal(4, result.Statistics.MeasurementsIfNoEarlyReject);
-        Assert.Equal(2, result.Statistics.MeasurementsSavedByEarlyReject);
+        Assert.Equal([WindowRole.Typical], measurer.Measured);
+        Assert.Equal(1, result.Statistics.QualityMeasurements);
+        Assert.Equal(2, result.Statistics.MeasurementsIfNoEarlyReject);
+        Assert.Equal(1, result.Statistics.MeasurementsSavedByEarlyReject);
         Assert.Equal(50, result.Statistics.EarlyRejectSavingPercent);
 
-        // Không đo được là chuyện khác: cả hai đoạn đều phải được thử.
         Assert.Equal(0, result.Evaluated[0].WindowsNotMeasured);
     }
 
@@ -375,53 +383,255 @@ public class PilotSearchOrchestrationTests
 
     // ---------------------------------------------------------------- chiến lược
 
-    [Fact]
-    public void Coarse_dung_dau_di_va_cuoi_di_theo_thu_tu_ten_nhanh()
-    {
-        var candidates = new[]
+    // --- tìm kiếm nhị phân trên thang điểm của nhánh (RED: chưa có) ---
+
+    private static List<VideoEncodeCandidate> Branch5(string branch = "b") =>
+        [.. Enumerable.Range(0, 5).Select(i => C(branch, i, 5, 10 + i) with { Id = $"{branch}/p{i}" })];
+
+    private static Func<string, double?> QualityById(params (string Id, double Mean)[] map) =>
+        path =>
         {
-            C("H264/1920x1080", 0, 3, 16), C("H264/1920x1080", 1, 3, 24), C("H264/1920x1080", 2, 3, 32),
-            C("Hevc/1920x1080", 0, 3, 26), C("Hevc/1920x1080", 1, 3, 34), C("Hevc/1920x1080", 2, 3, 42),
+            foreach (var (id, mean) in map)
+            {
+                if (path.Contains(id, StringComparison.Ordinal))
+                {
+                    return mean;
+                }
+            }
+
+            return null;
         };
 
-        var coarse = PilotSearch.CoarseCandidates(candidates);
+    private static QualityFloor BinaryFloor =>
+        QualityPolicy.For(CompressionLevel.Balanced, VmafModels.Neg);
 
-        // Mỗi nhánh 2 điểm, và thứ tự nhánh là tên — tất định.
-        Assert.Equal(
-            ["H264/1920x1080/crf16", "H264/1920x1080/crf32",
-             "Hevc/1920x1080/crf26", "Hevc/1920x1080/crf42"],
-            coarse.Select(c => c.Id));
+    private static EvaluatedCandidate EvalForBinary(VideoEncodeCandidate candidate, double mean)
+    {
+        var sample = new QualitySample(mean, mean - 3, mean - 20, 0.999, 72);
+        var measurement = new WindowMeasurement(WindowRole.Typical, 0, 3, sample);
+
+        return new EvaluatedCandidate
+        {
+            Candidate = candidate,
+            Aggregate = QualityAggregator.Aggregate(candidate.Id, [measurement], BinaryFloor),
+            Estimate = new SizeEstimate
+            {
+                TotalBytes = 1_000_000,
+                VideoBytes = 900_000,
+                AudioBytes = 100_000,
+                ContainerBytes = 0,
+                DurationSeconds = 300,
+                IsReliable = true,
+                Assumptions = [],
+            },
+            Measurements = [measurement],
+            MeasurementsTaken = 1,
+            MeasurementsSkipped = 0,
+            WindowsNotMeasured = 0,
+            ComputeCostSeconds = 1,
+            Stage = SearchStage.Coarse,
+        };
     }
 
     [Fact]
-    public async Task Nhanh_chi_duoc_dong_hai_diem_dau_va_cuoi()
+    public void BranchSearch_tra_thu_tu_dau_cuoi_giua()
     {
-        // Một nhánh 5 điểm: coarse dùng 2 điểm. Dò điểm giữa ở giai đoạn này chưa thêm
-        // thông tin nào, vì nếu CoarseProbe đã rớt thì điểm giữa chắc chắn cũng rớt.
+        // Nhánh 5 điểm: đầu, cuối, rồi chia đôi. Thứ tự này là toàn bộ ý nghĩa của tìm
+        // kiếm nhị phân — đo sai thứ tự thì không còn là nhị phân nữa.
+        var points = Branch5();
+        var search = new BranchSearch(points, BinaryFloor, CompressionLevel.Balanced);
+
+        Assert.Equal("b/p0", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[0], 91));
+        Assert.Equal("b/p4", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[4], 80));
+        Assert.Equal("b/p2", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[2], 91));
+        Assert.Equal("b/p3", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[3], 87));
+
+        Assert.True(search.IsClosed);
+        Assert.Null(search.Next().Candidate);
+        Assert.Equal(["b/p1"], search.Pruned.Select(p => p.CandidateId));
+    }
+
+    [Fact]
+    public void BranchSearch_diem_dau_rot_thi_dong_nhanh_ngay()
+    {
+        // Điểm chất lượng cao nhất đã rớt thì mọi điểm thấp hơn chắc chắn rớt (đơn điệu).
+        // Không có gì để chia đôi.
+        var points = Branch5();
+        var search = new BranchSearch(points, BinaryFloor, CompressionLevel.Balanced);
+
+        Assert.Equal("b/p0", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[0], 80));
+
+        Assert.True(search.IsClosed);
+        Assert.Equal(["b/p1", "b/p2", "b/p3", "b/p4"], search.Pruned.Select(p => p.CandidateId));
+        Assert.All(search.Pruned, p => Assert.Equal(SearchDecisionReasons.PilotPruned, p.Reason));
+    }
+
+    [Fact]
+    public void BranchSearch_diem_cuoi_dat_thi_dong_nhanh_vi_moi_diem_deu_dat()
+    {
+        // Điểm sâu nhất mà đạt thì mọi điểm trên nó đều đạt. Điểm nhỏ nhất (cuối) đã được
+        // đo, nên không còn gì để tìm — đóng nhánh, giữ lại các điểm giữa làm dự phòng
+        // trong báo cáo chứ không tốn encode.
+        var points = Branch5();
+        var search = new BranchSearch(points, BinaryFloor, CompressionLevel.Balanced);
+
+        search.Observe(EvalForBinary(points[0], 91));
+        Assert.Equal("b/p4", search.Next().Candidate?.Id);
+        search.Observe(EvalForBinary(points[4], 91));
+
+        Assert.True(search.IsClosed);
+        Assert.Equal(["b/p1", "b/p2", "b/p3"], search.Pruned.Select(p => p.CandidateId));
+    }
+
+    [Fact]
+    public void BranchSearch_dung_som_khi_diem_dau_vuot_du_o_balanced()
+    {
+        // p0 đạt 95, dư 6 điểm so với ngưỡng 89 — vượt xa nhiễu đo (epsilon 0,5). Với
+        // Balanced, đào sâu thêm chỉ để tìm tệp nhỏ hơn trong cùng nhánh; dừng sớm đổi
+        // vài encode lấy đúng ứng viên chất lượng cao nhất của nhánh.
+        var points = Branch5();
+        var search = new BranchSearch(points, BinaryFloor, CompressionLevel.Balanced);
+
+        search.Observe(EvalForBinary(points[0], 95));
+
+        Assert.True(search.IsClosed);
+        Assert.Equal(4, search.Pruned.Count);
+    }
+
+    [Fact]
+    public void BranchSearch_khong_dung_som_khi_chua_vuot_du()
+    {
+        // 91 chỉ dư 2 điểm — chưa đủ xa nhiễu để kết luận nhánh "quá tốt". Phải dò tiếp.
+        var points = Branch5();
+        var search = new BranchSearch(points, BinaryFloor, CompressionLevel.Balanced);
+
+        search.Observe(EvalForBinary(points[0], 91));
+
+        Assert.False(search.IsClosed);
+        Assert.Equal("b/p4", search.Next().Candidate?.Id);
+    }
+
+    [Fact]
+    public void BranchSearch_strong_khong_dung_som_du_vuot_du()
+    {
+        // Strong ưu tiên dung lượng nhỏ nhất: dù p0 vượt dư, vẫn phải dò tới điểm sâu
+        // nhất để tìm tệp nhỏ nhất còn đạt. Dừng sớm ở đây là phản lại chính mode.
+        var points = Branch5();
+        var strongFloor = QualityPolicy.For(CompressionLevel.Strong, VmafModels.Neg);
+        var search = new BranchSearch(points, strongFloor, CompressionLevel.Strong);
+
+        search.Observe(EvalForBinary(points[0], 95));
+
+        Assert.False(search.IsClosed);
+        Assert.Equal("b/p4", search.Next().Candidate?.Id);
+    }
+
+    [Fact]
+    public async Task Nhi_phan_danh_gia_theo_thu_tu_dau_cuoi_giua()
+    {
+        // Tích hợp: thứ tự encode thật phải là p0, p4, p2, p3. p1 không bao giờ được đo
+        // vì nó nằm giữa hai điểm đã đạt (p0, p2) — đo nó không thêm thông tin nào.
+        var measurer = new FakeMeasurer(_ => 95)
+        {
+            QualityByPath = QualityById(
+                ("b/p0", 91), ("b/p1", 93), ("b/p2", 91), ("b/p3", 87), ("b/p4", 80)),
+        };
+        var encoder = new FakeEncoder();
+        var search = new PilotSearch(encoder, new FakeReferences(), measurer);
+
+        var result = await search.RunAsync(Request([.. Branch5()]));
+
+        Assert.Equal(["b/p0", "b/p4", "b/p2", "b/p3"], encoder.Encoded);
+        Assert.DoesNotContain("b/p1", encoder.Encoded);
+        Assert.Equal(SearchStatus.SelectedCandidate, result.Status);
+
+        var pruned = result.Rejected.Where(r => r.CandidateId == "b/p1").ToList();
+        Assert.Single(pruned);
+        Assert.Equal(SearchDecisionReasons.PilotPruned, pruned[0].Reason);
+    }
+
+    [Fact]
+    public async Task Diem_dau_vuot_du_thi_dung_ca_nhanh_o_balanced()
+    {
+        var measurer = new FakeMeasurer(_ => 95)
+        {
+            QualityByPath = QualityById(("b/p0", 95)),
+        };
+        var encoder = new FakeEncoder();
+        var search = new PilotSearch(encoder, new FakeReferences(), measurer);
+
+        var result = await search.RunAsync(Request([.. Branch5()]));
+
+        Assert.Equal(["b/p0"], encoder.Encoded);
+        Assert.Equal(
+            ["b/p1", "b/p2", "b/p3", "b/p4"],
+            result.Rejected
+                .Where(r => r.Reason == SearchDecisionReasons.PilotPruned)
+                .Select(r => r.CandidateId)
+                .Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Diem_dau_rot_thi_bo_ca_nhanh_chi_mot_lan_encode()
+    {
+        var encoder = new FakeEncoder();
+        var search = new PilotSearch(
+            encoder, new FakeReferences(), new FakeMeasurer(_ => 80));
+
+        var result = await search.RunAsync(Request([.. Branch5()]));
+
+        Assert.Equal(["b/p0"], encoder.Encoded);
+        Assert.Equal(4, result.Rejected.Count(r => r.Reason == SearchDecisionReasons.PilotPruned));
+    }
+
+    [Fact]
+    public async Task Tat_ca_dat_thi_chi_danh_gia_hai_dau()
+    {
+        // Không vượt dư (91, dư 2 < 3) nên không dừng sớm; nhưng điểm cuối đạt nghĩa là
+        // mọi điểm đều đạt, và điểm nhỏ nhất đã có số đo — đóng nhánh sau 2 lần encode
+        // thay vì 5.
+        var measurer = new FakeMeasurer(_ => 91);
+        var encoder = new FakeEncoder();
+        var search = new PilotSearch(encoder, new FakeReferences(), measurer);
+
+        var result = await search.RunAsync(Request([.. Branch5()]));
+
+        Assert.Equal(["b/p0", "b/p4"], encoder.Encoded);
+        Assert.Equal(SearchStatus.SelectedCandidate, result.Status);
+    }
+
+    [Fact]
+    public async Task Cac_nhanh_duoc_thu_xen_ke_theo_thu_tu_ten_nhanh()
+    {
+        // `CoarseCandidates` cũ đã bị `BranchSearch` thay thế, nhưng ý định của test cũ
+        // vẫn giữ: thứ tự giữa các nhánh là tên nhánh, tất định. Hai nhánh đều rớt ở
+        // điểm đầu nên mỗi nhánh chỉ tốn đúng một lần encode, xen kẽ nhau.
         var encoder = new FakeEncoder();
         var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 80));
 
-        await search.RunAsync(Request(
-            C("b", 0, 5, 10), C("b", 1, 5, 14), C("b", 2, 5, 18), C("b", 3, 5, 26), C("b", 4, 5, 30)));
-
-        Assert.Equal(2, encoder.Encoded.Count);
-    }
-
-    [Fact]
-    public async Task Nhanh_dat_thi_cac_diem_con_lai_duoc_dong_tiep()
-    {
-        // Cùng một nhánh 5 điểm, nhưng lần này coarse đạt nên phải dò tiếp. Ngân sách 24
-        // cho phép cả 5.
-        var encoder = new FakeEncoder();
-        var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 95));
-
         var result = await search.RunAsync(Request(
-            C("b", 0, 5, 10), C("b", 1, 5, 14), C("b", 2, 5, 18), C("b", 3, 5, 26), C("b", 4, 5, 30)));
+            C("H264/1920x1080", 0, 3, 16), C("H264/1920x1080", 1, 3, 24), C("H264/1920x1080", 2, 3, 32),
+            C("Hevc/1920x1080", 0, 3, 26), C("Hevc/1920x1080", 1, 3, 34), C("Hevc/1920x1080", 2, 3, 42)));
 
-        Assert.Equal(5, encoder.Encoded.Count);
-        Assert.Equal(SearchStatus.SelectedCandidate, result.Status);
-        Assert.Contains(result.Evaluated, e => e.Stage == SearchStage.Bracket);
+        Assert.Equal(
+            ["H264/1920x1080/crf16", "Hevc/1920x1080/crf26"],
+            encoder.Encoded);
+        Assert.Equal(SearchStatus.NoFeasibleCandidate, result.Status);
+        Assert.Equal(4, result.Rejected.Count(r => r.Reason == SearchDecisionReasons.PilotPruned));
     }
+
+    // NOTE: hai test coarse cũ (`Nhanh_chi_duoc_dong_hai_diem_dau_va_cuoi` và
+    // `Nhanh_dat_thi_cac_diem_con_lai_duoc_dong_tiep`) đã bị XÓA ở lần refactor này, không
+    // phải sửa cho qua. Chúng khẳng định hành vi cũ (coarse luôn đo 2 điểm; nhánh đạt thì
+    // đo hết) — mà chính hành vi đó là thứ nhị phân thay thế có chủ đích:
+    // `Diem_dau_rot_thi_bo_ca_nhanh_chi_mot_lan_encode` (1 thay vì 2) và
+    // `Tat_ca_dat_thi_chi_danh_gia_hai_dau` (2 thay vì 5). Giữ cả hai bản là giữ hai sự
+    // thật mâu thuẫn trong cùng một suite.
 
     [Fact]
     public async Task Khong_bao_gio_bia_tham_so_ngoai_tap_ung_vien()
@@ -438,20 +648,23 @@ public class PilotSearchOrchestrationTests
     }
 
     [Fact]
-    public async Task Trung_khong_bi_chi_phi_gioi_han_boi_so_danh_giua_cac_vong()
+    public async Task Ngan_sach_gioi_han_dung_so_danh_gia_ke_ca_khi_chua_co_nhanh_nao_dong()
     {
-        // 20 ứng viên, trần 5: chỉ 5 được đánh giá. Ngân sách phải thật sự giới hạn, và phải
-        // tính cả ứng viên encode hỏng — vì chúng đã tốn thời gian thật.
+        // 10 nhánh × 3 điểm = 30 ứng viên, trần 5. Mỗi nhánh mới chỉ thử điểm đầu (đạt
+        // nhưng không vượt dư nên không dừng sớm, cũng chưa đóng) thì ngân sách đã cạn.
+        // Ngân sách phải thật sự giới hạn — và chỉ đếm ứng viên ĐÃ ĐO, không đếm pruned.
         var encoder = new FakeEncoder();
-        var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 95));
+        var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 91));
 
-        var many = Enumerable.Range(0, 20).Select(i => C("b", i, 20, 10 + i)).ToList();
+        var many = Enumerable.Range(0, 10)
+            .SelectMany(b => Enumerable.Range(0, 3).Select(i => C($"br{b}", i, 3, 16 + i * 8)))
+            .ToList();
         var result = await search.RunAsync(Request([.. many]) with { MaxEvaluations = 5 });
 
         Assert.Equal(5, encoder.Encoded.Count);
         Assert.Equal(5, result.Statistics.CandidatesEvaluated);
         Assert.Equal(5, result.Statistics.PilotEncodes);
-        Assert.Equal(20, result.Statistics.CandidatesPlanned);
+        Assert.Equal(30, result.Statistics.CandidatesPlanned);
     }
 
     [Fact]
@@ -517,22 +730,26 @@ public class PilotSearchOrchestrationTests
     [Fact]
     public async Task Mot_ung_vien_encode_hong_chi_bi_loai_roi_khong_phai_loi_ha_tang()
     {
-        // ffmpeg từ chối một tổ hợp tham số là sự thật về ỨNG VIÊN đó, không phải về toàn bộ
-        // lần tìm kiếm. Nếu còn ứng viên đã đo được và đạt thì vẫn kết luận được.
-        //
-        // Ngược với trường hợp không đo được ứng viên nào, khi đó mới thật sự không có căn cứ
-        // để kết luận và phải báo hạ tầng.
-        var encoder = new FakeEncoder(c => c.PointIndex == 1 ? [Failed(c)] : []);
-        var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 95));
+        // Điểm ĐẦU encode hỏng: không có thông tin chất lượng nên KHÔNG được cắt nhánh
+        // (khác hẳn với rớt đo). Nhánh chuyển sang dò tuyến tính, các điểm còn lại vẫn
+        // được thử, và điểm hỏng được ghi lại với mã hạ tầng để báo cáo thấy nó.
+        var encoder = new FakeEncoder(c => c.PointIndex == 0 ? [Failed(c)] : []);
+        var search = new PilotSearch(encoder, new FakeReferences(), new FakeMeasurer(_ => 91));
 
         var result = await search.RunAsync(Request(
             C("b", 0, 3, 16), C("b", 1, 3, 24), C("b", 2, 3, 32)));
 
         Assert.Equal(SearchStatus.SelectedCandidate, result.Status);
-        Assert.DoesNotContain(result.Evaluated, e => e.Candidate.PointIndex == 1);
+        Assert.DoesNotContain(result.Evaluated, e => e.Candidate.PointIndex == 0);
 
         // Chi phí bỏ ra vẫn phải hiện ra. Giấu lần encode hỏng đi là khiến báo cáo tự dối
         // mình rằng lần tìm kiếm này rẻ hơn thực tế.
+        var failed = result.Rejected
+            .Where(r => r.Reason == SearchDecisionReasons.PilotEncodeFailed)
+            .ToList();
+        Assert.Single(failed);
+        Assert.Equal("b/crf16", failed[0].CandidateId);
+
         Assert.Equal(3, result.Statistics.PilotEncodes);
         Assert.Equal(2, result.Statistics.CandidatesEvaluated);
     }

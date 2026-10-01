@@ -33,9 +33,289 @@ public enum SearchStage
 
     /// <summary>Dò quanh ranh giới giữa ứng viên đạt và ứng viên rớt.</summary>
     Bracket,
+}
 
-    /// <summary>Mịn quanh biên đã tìm được, với số lượng cố định.</summary>
-    Refine,
+/// <summary>
+/// Máy trạng thái tìm kiếm nhị phân cho MỘT nhánh (cùng codec × kích thước).
+///
+/// <para>Các điểm trong nhánh xếp từ chất lượng cao xuống thấp theo
+/// <c>PointIndex</c>, và chất lượng đo được GIẢ ĐỊNH đơn điệu theo thứ tự đó: điểm cao
+/// rớt thì điểm thấp hơn chắc chắn rớt, điểm thấp đạt thì điểm cao hơn chắc chắn đạt.
+/// Mọi lần cắt (prune) trong class này đều dựa trên giả định đó — nếu nhiễu đo phá vỡ
+/// tính đơn điệu ở một nguồn nào đó, cắt sẽ sai. Giả định được ghi ở đây để khi có bằng
+/// chứng ngược thì biết phải sửa chỗ nào, thay vì đi tìm trong cả vòng lặp.</para>
+///
+/// <para>Thứ tự đo: điểm đầu (chất lượng cao nhất), rồi điểm cuối (sâu nhất), rồi chia
+/// đôi khoảng còn lại cho tới khi tìm được cặp biên (đạt / rớt kề nhau). Mỗi lần đo đều
+/// thu hẹp khoảng — không bao giờ đo điểm mà kết quả của nó không loại được khả năng
+/// nào.</para>
+/// </summary>
+internal sealed class BranchSearch
+{
+    private readonly List<VideoEncodeCandidate> _points;
+    private readonly QualityFloor _floor;
+    private readonly CompressionLevel _level;
+    private readonly HashSet<int> _evaluated = [];
+    private readonly HashSet<int> _failed = [];
+    private readonly List<RejectedCandidate> _pruned = [];
+
+    private int? _loFeasible;
+    private int? _hiInfeasible;
+    private bool _topFeasible;
+    private bool _linearMode;
+    private bool _closed;
+
+    public BranchSearch(
+        IReadOnlyList<VideoEncodeCandidate> points, QualityFloor floor, CompressionLevel level)
+    {
+        // Sắp phòng thủ: người gọi đã xếp, nhưng thứ tự sai ở đây là sai toàn bộ chiến
+        // lược mà không báo lỗi nào. Rẻ hơn là xếp lại chắc chắn.
+        _points = [.. points.OrderBy(c => c.PointIndex)];
+        _floor = floor;
+        _level = level;
+        _closed = _points.Count == 0;
+    }
+
+    public string BranchId => _points.Count > 0 ? _points[0].BranchId : string.Empty;
+
+    public bool IsClosed => _closed;
+
+    public IReadOnlyList<RejectedCandidate> Pruned => _pruned;
+
+    /// <summary>
+    /// Điểm cần đo kế tiếp, hoặc null khi nhánh đã đóng. Trả null cũng đồng nghĩa đóng —
+    /// không có "mở mà hết việc", vì trạng thái đó chỉ tạo vòng lặp vô hạn cho người gọi.
+    /// </summary>
+    public (VideoEncodeCandidate? Candidate, SearchStage Stage) Next()
+    {
+        if (_closed)
+        {
+            return (null, SearchStage.Coarse);
+        }
+
+        var last = _points.Count - 1;
+
+        if (!Attempted(0))
+        {
+            return (_points[0], SearchStage.Coarse);
+        }
+
+        if (!Attempted(last))
+        {
+            return (_points[last], SearchStage.Bracket);
+        }
+
+        if (!_linearMode && _loFeasible is { } lo && _hiInfeasible is { } hi)
+        {
+            if (hi - lo <= 1)
+            {
+                Close(
+                    "ngoài biên khả thi: chắc chắn rớt",
+                    "trong vùng đã đạt: không thêm biên mới");
+                return (null, SearchStage.Coarse);
+            }
+
+            // Điểm giữa trước: đó mới là nhị phân. Lấy điểm nhỏ nhất còn lại thì suy biến
+            // thành tuyến tính trong trường hợp xấu (biên nằm ở cuối khoảng), và toàn bộ
+            // ý nghĩa của việc chia đôi mất hết.
+            //
+            // Điểm giữa hỏng hạ tầng thì lấy gần nó nhất — mọi điểm trong khoảng đều thu
+            // hẹp được biên, nên lệch khỏi giữa một chút không sai, chỉ kém tối ưu một
+            // chút. Hòa thì ưu tiên chỉ số lớn hơn (tệp nhỏ hơn) vì đó là hướng mục tiêu.
+            var mid = (lo + hi) / 2;
+            for (var d = 0; d < hi - lo; d++)
+            {
+                if (mid + d < hi && !Attempted(mid + d))
+                {
+                    return (_points[mid + d], SearchStage.Bracket);
+                }
+
+                if (d > 0 && mid - d > lo && !Attempted(mid - d))
+                {
+                    return (_points[mid - d], SearchStage.Bracket);
+                }
+            }
+
+            Close(
+                "ngoài biên khả thi: chắc chắn rớt",
+                "trong vùng đã đạt: không thêm biên mới");
+            return (null, SearchStage.Coarse);
+        }
+
+        // Không có neo đo được (điểm đầu hỏng hạ tầng hoặc thiếu số đo), hoặc bằng chứng
+        // mâu thuẫn tính đơn điệu: không có gì để chia đôi, dò tuyến tính từ trên xuống.
+        // Chậm hơn nhưng trung thực — không cắt khi chưa có bằng chứng.
+        for (var i = 0; i <= last; i++)
+        {
+            if (!Attempted(i))
+            {
+                return (_points[i], SearchStage.Bracket);
+            }
+        }
+
+        Close("mọi điểm đều đã thử hoặc hỏng hạ tầng", "mọi điểm đều đã thử hoặc hỏng hạ tầng");
+        return (null, SearchStage.Coarse);
+    }
+
+    /// <summary>Ghi nhận kết quả đo của một điểm. Chỉ kết quả ĐO ĐƯỢC mới dịch chuyển biên.</summary>
+    public void Observe(EvaluatedCandidate result)
+    {
+        var index = IndexOf(result.Candidate.Id);
+        if (index < 0 || _closed)
+        {
+            return;
+        }
+
+        _evaluated.Add(index);
+
+        // Chế độ tuyến tính: chỉ ghi nhận, không cắt gì thêm. Đã mất neo đơn điệu thì mọi
+        // lần cắt đều là đoán — mà đoán thì không được ghi là "chắc chắn".
+        if (_linearMode)
+        {
+            return;
+        }
+
+        // "Không đo được" khác "rớt": thiếu số đo thì không có thông tin chất lượng, nên
+        // không được dịch chuyển biên và càng không được cắt nhánh. Đánh giá các điểm còn
+        // lại tuyến tính — đúng yêu cầu "đo không được thì thử ứng viên khác".
+        if (!result.IsFeasible && result.Aggregate.FailingWindow is null)
+        {
+            _linearMode = true;
+            return;
+        }
+
+        if (!result.IsFeasible)
+        {
+            if (index == 0)
+            {
+                // Điểm cao nhất đã RỚT THẬT (có mẫu đo dưới ngưỡng) thì mọi điểm thấp hơn
+                // chắc chắn rớt.
+                _hiInfeasible = 0;
+                Close("điểm chất lượng cao nhất đã rớt — các điểm thấp hơn chắc chắn rớt",
+                    "điểm chất lượng cao nhất đã rớt — các điểm thấp hơn chắc chắn rớt");
+                return;
+            }
+
+            // Điểm này rớt thật. Nếu nó phá vỡ thứ tự đơn điệu với neo đã có (nằm ngoài
+            // khoảng hoặc đảo đầu), bằng chứng đã mâu thuẫn — chuyển tuyến tính.
+            if ((_loFeasible is { } lo && index <= lo)
+                || (_hiInfeasible is { } hi && index >= hi))
+            {
+                _linearMode = true;
+                return;
+            }
+
+            _hiInfeasible = index;
+            if (_loFeasible is { } loBound && index - loBound <= 1)
+            {
+                Close(
+                    "ngoài biên khả thi: chắc chắn rớt",
+                    "trong vùng đã đạt: không thêm biên mới");
+            }
+
+            return;
+        }
+
+        if (index == 0)
+        {
+            _topFeasible = true;
+            _loFeasible = 0;
+
+            // DỪNG SỚM. Điểm đầu vượt ngưỡng nhiều thì nhánh này "quá tốt": đào sâu thêm
+            // chỉ để tìm tệp nhỏ hơn trong cùng nhánh. Với Light/Balanced thì dừng để tiết
+            // kiệm encode; với Strong thì KHÔNG — Strong ưu tiên dung lượng nhỏ nhất nên
+            // dừng ở đây là phản lại chính mode.
+            if (_level != CompressionLevel.Strong
+                && PilotSearch.PassesWithMargin(result.Aggregate, _floor))
+            {
+                Close(
+                    "ngoài biên khả thi: chắc chắn rớt",
+                    $"điểm đầu vượt ngưỡng nhiều ở mode {_level} — dừng nhánh để tiết kiệm encode");
+            }
+
+            return;
+        }
+
+        // Điểm này đạt thật. Nếu nó phá vỡ thứ tự với neo đã có, chuyển tuyến tính.
+        if ((_loFeasible is { } existingLo && index <= existingLo)
+            || (_hiInfeasible is { } existingHi && index >= existingHi))
+        {
+            _linearMode = true;
+            return;
+        }
+
+        _loFeasible = index;
+
+        if (_hiInfeasible is { } hiBound)
+        {
+            if (hiBound - index <= 1)
+            {
+                Close(
+                    "ngoài biên khả thi: chắc chắn rớt",
+                    "trong vùng đã đạt: không thêm biên mới");
+            }
+
+            return;
+        }
+
+        if (index == _points.Count - 1 && _topFeasible)
+        {
+            // Điểm sâu nhất đã đạt mà điểm đầu cũng đạt: mọi điểm đều đạt, và điểm nhỏ
+            // nhất (cuối) đã có số đo — không còn gì để tìm.
+            Close(
+                "ngoài biên khả thi: chắc chắn rớt",
+                "điểm sâu nhất đã đạt — mọi điểm đều đạt, điểm nhỏ nhất đã có số đo");
+        }
+    }
+
+    /// <summary>
+    /// Ghi nhận điểm encode hỏng. Không dịch chuyển biên (không có thông tin chất lượng),
+    /// chỉ để không thử lại lệnh y hệt — ffmpeg là xác định, hỏng lần một thì lần hai
+    /// cũng hỏng.
+    /// </summary>
+    public void NoteFailed(VideoEncodeCandidate candidate)
+    {
+        var index = IndexOf(candidate.Id);
+        if (index >= 0)
+        {
+            _failed.Add(index);
+        }
+    }
+
+    private bool Attempted(int index) => _evaluated.Contains(index) || _failed.Contains(index);
+
+    private int IndexOf(string id)
+    {
+        for (var i = 0; i < _points.Count; i++)
+        {
+            if (string.Equals(_points[i].Id, id, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Cắt mọi điểm chưa thử. Điểm ngoài biên rớt (chỉ số lớn hơn biên rớt) thì "chắc chắn
+    /// rớt"; điểm còn lại là "không thêm biên mới". Hai lý do khác nhau vì một cái là kết
+    /// luận chất lượng, một cái chỉ là tiết kiệm encode — gộp chung là nói dối một trong hai.
+    /// </summary>
+    private void Close(string worseReason, string redundantReason)
+    {
+        for (var i = 0; i < _points.Count; i++)
+        {
+            if (!Attempted(i))
+            {
+                var reason = _hiInfeasible is { } hi && i > hi ? worseReason : redundantReason;
+                _pruned.Add(new RejectedCandidate(
+                    _points[i].Id, SearchDecisionReasons.PilotPruned, reason));
+            }
+        }
+
+        _closed = true;
+    }
 }
 
 /// <summary>Một ứng viên đã được đánh giá, kèm mọi thứ cần để quyết định.</summary>
@@ -73,6 +353,9 @@ public sealed record SearchStatistics
     public required int CandidatesPlanned { get; init; }
 
     public required int CandidatesEvaluated { get; init; }
+
+    /// <summary>Số ứng viên bị chiến lược cắt mà chưa tốn một lần encode nào.</summary>
+    public required int CandidatesPruned { get; init; }
 
     public required int PilotEncodes { get; init; }
 
@@ -183,16 +466,29 @@ public sealed class PilotSearch(
     IQualityMeasure measurer)
 {
     /// <summary>
-    /// Số ứng viên dò thêm ở giai đoạn refine. Hằng số <b>giới hạn chi phí</b>, không phải
-    /// tham số chất lượng.
+    /// Biên "vượt nhiều" cho dừng sớm: điểm đầu phải qua ngưỡng mean lẫn P5 với dư ít
+    /// nhất bấy nhiêu điểm VMAF.
+    ///
+    /// <para>Con số này <b>chưa hiệu chỉnh</b> — nó là giới hạn chi phí (bao nhiêu dư thì
+    /// đáng để bỏ qua phần còn lại của nhánh), không phải ngưỡng chất lượng. Đặt gấp nhiều
+    /// lần epsilon nhiễu đo (0,5) để "vượt nhiều" không thể là nhiễu.</para>
     /// </summary>
-    public const int RefineSamples = 2;
+    public const double EarlyStopMargin = 3.0;
 
     /// <summary>
-    /// Ngưỡng tiết kiệm để chấp nhận dừng sớm. Lấy cùng ngưỡng với lưới chất lượng cuối, để
-    /// giai đoạn tìm không chấp nhận thứ mà giai đoạn cuối sẽ loại.
+    /// Điểm đầu có vượt ngưỡng "nhiều" không: ngay cả đoạn tệ nhất cũng qua cả hai ngưỡng
+    /// với dư ít nhất <see cref="EarlyStopMargin"/>.
     /// </summary>
-    public const double MinSavingForEarlyStopPercent = 1.0;
+    internal static bool PassesWithMargin(QualityAggregate aggregate, QualityFloor floor)
+    {
+        ArgumentNullException.ThrowIfNull(aggregate);
+        ArgumentNullException.ThrowIfNull(floor);
+
+        return aggregate.IsFeasible
+            && aggregate.WorstWindow?.Sample is { } worst
+            && worst.Mean >= floor.VmafMean + EarlyStopMargin
+            && worst.P5 >= floor.VmafP5 + EarlyStopMargin;
+    }
 
     public async Task<SearchResult> RunAsync(SearchRequest request, CancellationToken token = default)
     {
@@ -246,13 +542,21 @@ public sealed class PilotSearch(
         // một lần tìm kiếm mà mọi ứng viên đều hỏng sẽ trông giống hệt một lần tìm kiếm mà
         // mọi ứng viên đều rớt chất lượng — và chỉ vế thứ nhất mới được phép rơi về legacy.
         var infrastructure = new List<string>();
+        var failed = new List<RejectedCandidate>();
+        var pruned = new List<RejectedCandidate>();
         var encodeAttempts = 0;
+
+        var branches = request.Candidates
+            .GroupBy(c => c.BranchId, StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new BranchSearch([.. g], floor, request.Level))
+            .ToList();
 
         try
         {
-            // Giai đoạn 1: coarse trên mọi nhánh. Nhánh rớt ngay ở điểm chất lượng cao nhất thì
-            // bỏ: nhịp chất lượng đi xuống, không quay lại được.
-            foreach (var candidate in CoarseCandidates(request.Candidates))
+            // Round-robin giữa các nhánh: mỗi vòng mỗi nhánh còn mở được thử một điểm.
+            // Nhị phân trong nhánh quyết định điểm kế tiếp; nhánh nào xong thì thôi.
+            while (branches.Any(b => !b.IsClosed))
             {
                 // Hủy không phải là một kết quả. `OperationCanceledException` là câu trả lời
                 // chuẩn của .NET và giữ cho người gọi không nhầm hủy với "không có ứng viên
@@ -265,39 +569,8 @@ public sealed class PilotSearch(
                     break;
                 }
 
-                if (!done.Add(candidate.Id))
-                {
-                    continue;
-                }
-
-                encodeAttempts++;
-                var (result, failure) = await EvaluateAsync(
-                    request, candidate, SearchStage.Coarse, ordered, referenceByRole, floor,
-                    encodeWatch, measureWatch, token).ConfigureAwait(false);
-
-                if (result is not null)
-                {
-                    evaluated.Add(result);
-                }
-                else if (failure is not null)
-                {
-                    infrastructure.Add(failure);
-                }
-            }
-
-            // Giai đoạn 2 và 3: dò thêm các điểm còn lại trong nhánh đã từng đạt, quanh biên.
-            for (var round = 0; round < 2; round++)
-            {
-                token.ThrowIfCancellationRequested();
-
-                var stage = round == 0 ? SearchStage.Bracket : SearchStage.Refine;
-                var next = NextCandidates(request, evaluated, done, stage);
-                if (next.Count == 0)
-                {
-                    break;
-                }
-
-                foreach (var candidate in next)
+                var progressed = false;
+                foreach (var branch in branches)
                 {
                     token.ThrowIfCancellationRequested();
 
@@ -306,7 +579,11 @@ public sealed class PilotSearch(
                         break;
                     }
 
-                    done.Add(candidate.Id);
+                    var (candidate, stage) = branch.Next();
+                    if (candidate is null || !done.Add(candidate.Id))
+                    {
+                        continue;
+                    }
 
                     encodeAttempts++;
                     var (result, failure) = await EvaluateAsync(
@@ -316,12 +593,32 @@ public sealed class PilotSearch(
                     if (result is not null)
                     {
                         evaluated.Add(result);
+                        branch.Observe(result);
+                        progressed = true;
                     }
-                    else if (failure is not null)
+                    else
                     {
-                        infrastructure.Add(failure);
+                        branch.NoteFailed(candidate);
+                        if (failure is not null)
+                        {
+                            infrastructure.Add(failure);
+                            failed.Add(new RejectedCandidate(
+                                candidate.Id, SearchDecisionReasons.PilotEncodeFailed, failure));
+                        }
+
+                        progressed = true;
                     }
                 }
+
+                if (!progressed)
+                {
+                    break;
+                }
+            }
+
+            foreach (var branch in branches)
+            {
+                pruned.AddRange(branch.Pruned);
             }
         }
         finally
@@ -342,6 +639,7 @@ public sealed class PilotSearch(
                 : $"ngân sách đánh giá bằng 0 (MaxEvaluations = {request.MaxEvaluations})";
 
             return Build(request, watch, encodeWatch, measureWatch, evaluated, EmptyPareto, encodeAttempts,
+                pruned, failed,
                 SearchStatus.SearchInfrastructureFailure,
                 new SearchOutcome(SearchDecisionReasons.PilotEncodeFailed,
                     $"không đánh giá được ứng viên nào: {detail}"));
@@ -354,6 +652,7 @@ public sealed class PilotSearch(
         {
             var feasibleCount = evaluated.Count(e => e.IsFeasible);
             return Build(request, watch, encodeWatch, measureWatch, evaluated, pareto, encodeAttempts,
+                pruned, failed,
                 SearchStatus.NoFeasibleCandidate,
                 new SearchOutcome(
                     SearchDecisionReasons.PilotAllCandidatesRejected,
@@ -363,6 +662,7 @@ public sealed class PilotSearch(
         }
 
         return Build(request, watch, encodeWatch, measureWatch, evaluated, pareto, encodeAttempts,
+            pruned, failed,
             SearchStatus.SelectedCandidate,
             new SearchOutcome(SearchDecisionReasons.PilotSelected,
                 $"chọn {selected.CandidateId}: chất lượng {selected.Quality.ToString("0.0", CultureInfo.InvariantCulture)}, "
@@ -372,67 +672,11 @@ public sealed class PilotSearch(
         };
     }
 
-    // ---------------------------------------------------------------- chiến lược: coarse
-
-    /// <summary>
-    /// Ứng viên dò thô: mỗi nhánh lấy điểm chất lượng cao nhất và điểm sâu nhất.
-    /// </summary>
-    /// <remarks>
-    /// <para>Hai đầu đủ để biết nhánh nào còn dư chất lượng và nhánh nào đã hết ngay. Dò
-    /// một điểm giữa thì tốn thêm một lần encode + VMAF mà chưa chắc thêm thông tin: nếu
-    /// <c>CoarseProbe</c> đã rớt thì điểm giữa chắc chắn cũng rớt.</para>
-    /// </remarks>
-    internal static IReadOnlyList<VideoEncodeCandidate> CoarseCandidates(
-        IReadOnlyList<VideoEncodeCandidate> candidates) =>
-    [
-        .. candidates
-            .GroupBy(c => c.BranchId, StringComparer.Ordinal)
-            .OrderBy(g => g.Key, StringComparer.Ordinal)
-            .SelectMany(g =>
-            {
-                var points = g.OrderBy(c => c.PointIndex).ToList();
-                return points.Count <= 1 ? points : [points[0], points[^1]];
-            })
-    ];
-
-    /// <summary>
-    /// Ứng viên cho vòng kế tiếp: các điểm còn lại trong nhánh đã từng vượt ngưỡng, lấy từ
-    /// chất lượng cao xuống thấp để tìm biên khả thi.
-    /// </summary>
-    /// <remarks>
-    /// <para>Chỉ nhánh <b>đã từng đạt</b> mới được dò tiếp. Nhánh rớt ở <c>CoarseProbe</c> thì
-    /// mọi điểm thấp hơn cũng rớt, nên bỏ hẳn — đây là loại cắt bảo thủ: nó chỉ bỏ ứng viên
-    /// mà đã có bằng chứng không thể đạt.</para>
-    /// </remarks>
-    internal static IReadOnlyList<VideoEncodeCandidate> NextCandidates(
-        SearchRequest request,
-        IReadOnlyList<EvaluatedCandidate> evaluated,
-        HashSet<string> done,
-        SearchStage stage)
-    {
-        var passingBranches = evaluated
-            .Where(e => e.IsFeasible)
-            .Select(e => e.Candidate.BranchId)
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (passingBranches.Count == 0)
-        {
-            return [];
-        }
-
-        // Vòng 0 dò mọi điểm còn lại của nhánh đạt; vòng 1 chỉ dò thêm có giới hạn.
-        var limit = stage == SearchStage.Bracket ? int.MaxValue : RefineSamples;
-
-        return
-        [
-            .. request.Candidates
-                .Where(c => passingBranches.Contains(c.BranchId)
-                            && !done.Contains(c.Id))
-                .OrderBy(c => c.BranchId, StringComparer.Ordinal)
-                .ThenBy(c => c.PointIndex)
-                .Take(limit)
-        ];
-    }
+    // ---------------------------------------------------------------- chiến lược tìm kiếm
+    //
+    // Thứ tự đánh giá do `BranchSearch` lái theo từng nhánh (nhị phân trên thang điểm).
+    // Round-robin ở vòng lặp chính giữ cho mọi nhánh đều có cơ hội trước khi ngân sách
+    // cạn — xong nhánh nào thì thôi nhánh đó, thay vì dồn hết ngân sách vào nhánh đầu.
 
     // ---------------------------------------------------------------- đánh giá một ứng viên
 
@@ -671,6 +915,8 @@ public sealed class PilotSearch(
         IReadOnlyList<EvaluatedCandidate> evaluated,
         ParetoResult pareto,
         int encodeAttempts,
+        List<RejectedCandidate> pruned,
+        List<RejectedCandidate> failed,
         SearchStatus status,
         SearchOutcome outcome)
     {
@@ -683,7 +929,11 @@ public sealed class PilotSearch(
             Outcome = outcome,
             Evaluated = evaluated,
             Frontier = pareto.Frontier,
-            Rejected = [.. pareto.Rejected, .. pareto.Infeasible],
+
+            // Mọi ứng viên không đi tiếp đều phải có mặt với mã lý do: bị Pareto loại, đo
+            // rớt, bị chiến lược cắt, hay encode hỏng. Thiếu một nhóm là báo cáo tự dối
+            // mình rằng nhóm đó không tồn tại.
+            Rejected = [.. pareto.Rejected, .. pareto.Infeasible, .. pruned, .. failed],
             Statistics = new SearchStatistics
             {
                 CandidatesPlanned = request.Candidates.Count,
@@ -691,6 +941,7 @@ public sealed class PilotSearch(
                 // Đếm cả ứng viên encode hỏng: chúng đã tốn thời gian thật, và giấu đi số
                 // đó là khiến báo cáo chi phí tự dối mình rằng tìm kiếm rẻ.
                 CandidatesEvaluated = evaluated.Count,
+                CandidatesPruned = pruned.Count,
                 PilotEncodes = encodeAttempts,
                 QualityMeasurements = measured,
                 MeasurementsIfNoEarlyReject = evaluated.Count * windowCount,
@@ -717,6 +968,6 @@ public sealed class PilotSearch(
 
         return Build(
             request, watch, encodeWatch, measureWatch, evaluated,
-            ParetoSelector.Select(ToScored(evaluated)), evaluated.Count, status, outcome);
+            ParetoSelector.Select(ToScored(evaluated)), evaluated.Count, [], [], status, outcome);
     }
 }

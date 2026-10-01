@@ -261,6 +261,29 @@ public class PilotEncoderTests
         {
             Assert.Equal(PilotValue(flag), FullValue(flag));
         }
+
+        // Trường hợp thu nhỏ — đúng chỗ hay sai nhất: scale chỉ có ở nhánh nhỏ hơn, và
+        // chính ở đó mà một bộ lọc lệch sẽ âm thầm đổi nội dung được đo.
+        var small = Candidate(1280, 720);
+        var smallTarget = new EncodeTarget(1280, 720);
+        var smallFilter = EncodeTransform.BuildFilter(smallTarget, 1920, 1080);
+        var smallPilot = EncodeTransform.BuildSegmentArguments(
+            small.ToEncoderConfiguration(), smallFilter, "s.mp4", "pilot.mp4", new TimeWindow(10, 3));
+        var smallFull = EncodeTransform.BuildFullArguments(
+            small.ToEncoderConfiguration(), smallFilter, "s.mp4", "full.mp4", 128);
+
+        string SmallPilotValue(string flag) =>
+            string.Join(' ', smallPilot.SkipWhile(a => a != flag).Skip(1)).Split(' ')[0];
+
+        string SmallFullValue(string flag) =>
+            string.Join(' ', smallFull.SkipWhile(a => a != flag).Skip(1)).Split(' ')[0];
+
+        Assert.Equal(SmallPilotValue("-vf"), SmallFullValue("-vf"));
+        Assert.Contains("scale=", SmallFullValue("-vf"), StringComparison.Ordinal);
+        foreach (var flag in new[] { "-c:v", "-crf", "-preset", "-pix_fmt" })
+        {
+            Assert.Equal(SmallPilotValue(flag), SmallFullValue(flag));
+        }
     }
 
     [Fact]

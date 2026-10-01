@@ -25,15 +25,18 @@ public class SizeEstimatorTests
                 ok ? SearchDecisionReasons.PilotSelected : SearchDecisionReasons.PilotEncodeFailed, ""));
 
     [Fact]
-    public void Video_duoc_tinh_theo_ti_le_thoi_luong()
+    public void Video_duoc_tinh_theo_ti_le_thoi_luong_roi_nhan_he_so()
     {
-        // 300.000 B trong 3 giây = 100.000 B/s. Nguồn 100 giây -> 10.000.000 B video.
+        // 300.000 B trong 3 giây = 100.000 B/s. Nguồn 100 giây -> 10.000.000 B thô, rồi
+        // nhân hệ số hiệu chỉnh đã đo (0,72). Test cũ khẳng định 10.000.000 — đúng với
+        // hàm CHƯA hiệu chỉnh; từ khi có hệ số thì 10.000.000 là con số thô trung gian,
+        // không phải đáp án.
         var result = SizeEstimator.Estimate(
             [Artifact(300_000, 3.0)], fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
 
-        Assert.Equal(10_000_000, result.VideoBytes);
+        Assert.Equal(7_200_000, result.VideoBytes);
         Assert.Equal(0, result.AudioBytes);
-        Assert.Equal(10_000_000 + result.ContainerBytes, result.TotalBytes);
+        Assert.Equal(7_200_000 + result.ContainerBytes, result.TotalBytes);
     }
 
     [Fact]
@@ -48,21 +51,22 @@ public class SizeEstimatorTests
             ],
             fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
 
-        // 600.000 / 3 = 200.000 B/s, không phải (600.000 + 30.000) / 6 = 105.000 B/s.
-        Assert.Equal(20_000_000, result.VideoBytes);
+        // 600.000 / 3 = 200.000 B/s, không phải (600.000 + 30.000) / 6 = 105.000 B/s —
+        // rồi nhân hệ số hiệu chỉnh 0,72.
+        Assert.Equal(14_400_000, result.VideoBytes);
     }
 
     [Fact]
     public void Phan_am_thanh_duoc_tinh_rieng()
     {
-        // 128 kb/s = 16.000 B/s. 100 giây -> 1.600.000 B.
+        // 128 kb/s = 16.000 B/s. 100 giây -> 1.600.000 B thô, nhân hệ số audio 0,98.
         var result = SizeEstimator.Estimate(
             [Artifact(300_000, 3.0)],
             fullDurationSeconds: 100, sourceAudioBitrateKbps: 128, hasAudio: true);
 
-        Assert.Equal(1_600_000, result.AudioBytes);
-        Assert.Equal(10_000_000, result.VideoBytes);
-        Assert.Equal(10_000_000 + 1_600_000 + result.ContainerBytes, result.TotalBytes);
+        Assert.Equal(1_568_000, result.AudioBytes);
+        Assert.Equal(7_200_000, result.VideoBytes);
+        Assert.Equal(7_200_000 + 1_568_000 + result.ContainerBytes, result.TotalBytes);
         Assert.Contains(result.Assumptions, a => a.Contains("audio", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -103,7 +107,7 @@ public class SizeEstimatorTests
             ],
             fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
 
-        Assert.Equal(10_000_000, result.VideoBytes);
+        Assert.Equal(7_200_000, result.VideoBytes);
         Assert.Contains("1 đoạn", string.Join(' ', result.Assumptions), StringComparison.Ordinal);
     }
 
@@ -187,7 +191,7 @@ public class SizeEstimatorTests
             fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
 
         Assert.True(result.ContainerBytes > 0);
-        Assert.Contains(result.Assumptions, a => a.Contains("GIÁ ĐỊNH SƠ BỘ", StringComparison.Ordinal));
+        Assert.Contains(result.Assumptions, a => a.Contains("Mp4TrackSizes", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -203,7 +207,9 @@ public class SizeEstimatorTests
             100, null, false);
 
         Assert.Equal(one.ContainerBytes, many.ContainerBytes);
-        Assert.Equal(SizeEstimator.ContainerBytesAssumed, one.ContainerBytes);
+        Assert.Equal(
+            SizeEstimator.ContainerBaseBytes + SizeEstimator.ContainerBytesPerSecond * 100,
+            one.ContainerBytes);
     }
 
     [Fact]
@@ -213,9 +219,63 @@ public class SizeEstimatorTests
             [Artifact(600_000, 3.0)],
             fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
 
-        // 20 MB video so với nguồn 10 MB -> tăng 100%.
+        // 20 MB thô × 0,72 = 14,4 MB ước lượng so với nguồn 10 MB -> tăng 44%.
         Assert.True(result.SavingPercent(10_000_000) < 0);
         Assert.Equal(0, result.SavingPercent(0));
+    }
+
+    [Fact]
+    public void He_so_hieu_chinh_video_duoc_ap_dung()
+    {
+        // 300.000 B / 3s = 100.000 B/s × 100s = 10.000.000 thô. Con số thô thừa có hệ
+        // thống trên encode thật, nên phải nhân hệ số hiệu chỉnh đã đo — không phải để
+        // "đẹp số", mà để báo cáo gần sự thật hơn khi so với dung lượng thật.
+        var result = SizeEstimator.Estimate(
+            [Artifact(300_000, 3.0)], fullDurationSeconds: 100, sourceAudioBitrateKbps: null, hasAudio: false);
+
+        var expected = (long)Math.Round(
+            10_000_000 * SizeEstimator.VideoBytesCalibrationFactor, MidpointRounding.AwayFromZero);
+
+        Assert.Equal(expected, result.VideoBytes);
+        Assert.True(
+            SizeEstimator.VideoBytesCalibrationFactor > 0 && SizeEstimator.VideoBytesCalibrationFactor <= 1,
+            "hệ số hiệu chỉnh chỉ được thu nhỏ ước lượng thừa, không được phóng to hay đảo dấu");
+    }
+
+    [Fact]
+    public void He_so_hieu_chinh_khong_doi_thu_tu_xep_hang()
+    {
+        // Hệ số là một phép nhân đơn điệu: ứng viên nào lớn hơn trước thì vẫn lớn hơn sau.
+        // Nếu thứ tự đổi thì hệ số đang bóp méo chứ không phải hiệu chỉnh.
+        var small = SizeEstimator.Estimate([Artifact(300_000, 3.0)], 100, null, false);
+        var big = SizeEstimator.Estimate([Artifact(600_000, 3.0)], 100, null, false);
+
+        Assert.True(small.VideoBytes < big.VideoBytes);
+        Assert.True(small.TotalBytes < big.TotalBytes);
+    }
+
+    [Fact]
+    public void He_so_am_thanh_la_gia_tri_do_duoc_khong_phai_mot()
+    {
+        // Ban đầu giữ bằng 1 với lập luận "đã dùng mục tiêu nên không cần hiệu chỉnh".
+        // Đo 4 mẫu cho thấy encoder undershoot có hệ thống ~2% (0,975…0,989) — nhỏ nhưng
+        // thật và khoảng hẹp, nên hiệu chỉnh được. Giữ 1 lúc này mới là bỏ qua số đo.
+        Assert.Equal(0.98, SizeEstimator.AudioBytesCalibrationFactor);
+    }
+
+    [Fact]
+    public void Bitrate_am_thanh_khong_hop_le_thi_khong_tao_so_am()
+    {
+        foreach (var kbps in new double?[] { null, 0, -5 })
+        {
+            var result = SizeEstimator.Estimate(
+                [Artifact(300_000, 3.0)],
+                fullDurationSeconds: 100, sourceAudioBitrateKbps: kbps, hasAudio: true);
+
+            Assert.True(result.AudioBytes >= 0);
+            Assert.True(result.TotalBytes >= 0);
+            Assert.False(result.IsReliable);
+        }
     }
 
     [Fact]

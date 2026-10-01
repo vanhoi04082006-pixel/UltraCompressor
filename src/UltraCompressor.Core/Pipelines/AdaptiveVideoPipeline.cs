@@ -147,7 +147,10 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
                         SourceWidth = sourceWidth,
                         SourceHeight = sourceHeight,
                         SourceDurationSeconds = probe.Duration?.TotalSeconds ?? 0,
-                        SourceAudioBitrateKbps = probe.AudioBitrateKbps,
+                        SourceAudioBitrateKbps = context.Item.HasAudio is false
+                        ? null
+                        : EffectiveAudioKbpsForEstimate(
+                            probe.AudioBitrateKbps, AudioTargetFor(context)),
                         HasAudio = probe.HasAudio,
                         Windows = windows,
                         Candidates = candidates,
@@ -342,6 +345,31 @@ public sealed class AdaptiveVideoPipeline(IMediaPipeline legacy) : FFmpegPipelin
         }
 
         return target;
+    }
+
+    /// <summary>
+    /// Bitrate âm thanh để ƯỚC LƯỢNG dùng — phải là con số mà bản full encode sẽ dùng.
+    ///
+    /// <para>Trước đây truyền thẳng bitrate nguồn vào estimator, sai đúng một trường hợp:
+    /// nguồn lớn hơn mục tiêu (nguồn 250k, mục tiêu 192k) thì phần audio ước thừa 58k ×
+    /// thời lượng — trên tệp 300s là thừa ~2 MB, đủ làm lệch xếp hạng hai ứng viên gần
+    /// nhau. Dùng min ở đây thì ước lượng khớp với lệnh encode thật.</para>
+    /// </summary>
+    internal static double? EffectiveAudioKbpsForEstimate(double? probeAudioKbps, int? encodeTargetKbps)
+    {
+        if (encodeTargetKbps is not { } target || target <= 0)
+        {
+            // Không encode âm thanh (hoặc không biết mục tiêu): để estimator đi đường
+            // "không rõ" của nó thay vì bịa 0.
+            return probeAudioKbps is > 0 ? probeAudioKbps : null;
+        }
+
+        if (probeAudioKbps is not > 0)
+        {
+            return target;
+        }
+
+        return Math.Min(probeAudioKbps.Value, target);
     }
 
     private static async Task<IReadOnlyList<RepresentativeWindow>> ChooseWindowsAsync(

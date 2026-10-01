@@ -301,6 +301,24 @@ public class AdaptiveVideoPipelineDecisionTests
     }
 
     [Fact]
+    public void Uoc_luong_dung_bitrate_muc_tieu_thay_vi_bitrate_nguon_tho()
+    {
+        // Estimator phải dùng con số mà bản full encode SẼ DÙNG. Nguồn 250k với mục tiêu
+        // 192k mà ước bằng 250k thì phần audio thừa 58k × thời lượng — sai đúng bằng phần
+        // chênh, và sai theo hướng làm ứng viên trông tệ hơn thật.
+        Assert.Equal(192, AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(250, 192));
+        Assert.Equal(96, AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(96, 192));
+        Assert.Equal(192, AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(192, 192));
+
+        // Không biết nguồn thì dùng mục tiêu (đó là thứ encoder sẽ giữ); không có mục tiêu
+        // thì trả nguồn để estimator đi đường "không rõ" của nó.
+        Assert.Equal(192, AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(null, 192));
+        Assert.Equal(128, AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(128, null));
+        Assert.Null(AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(null, null));
+        Assert.Null(AdaptiveVideoPipeline.EffectiveAudioKbpsForEstimate(0, 0));
+    }
+
+    [Fact]
     public void Trang_thai_la_o_trong_bang()
     {
         // Trạng thái thêm về sau không được lọt vào hành vi mặc định "encode bừa".

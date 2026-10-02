@@ -73,9 +73,11 @@ phổ quát. `ORIGINAL` chỉ được chọn khi bộ ước lượng được 
 ### Chưa làm (ghi rõ thay vì giấu)
 
 - **Tương ứng khung hình VMAF: CHƯA chứng minh** cho đường *clip thử nghiệm đối chiếu bản mã
-  hoá toàn tệp*. Đường cùng-cắt-clip đã đo được và khớp: hai clip cùng **72 khung**, cùng
-  **PTS 0**, VMAF tại offset 0 = **94,64**, không cần lệch khung. Biên tìm offset **không
-  được mở rộng** — mở rộng là biến phép đo thành bộ dò offset để nâng điểm.
+  hoá toàn tệp*. Đo được hai trường hợp và cả hai đều khớp ở offset 0: hai clip cùng GOP
+  (72 khung, PTS 0, VMAF **94,64**) và hai clip **khác** GOP (VMAF **94,59**). Giả thuyết "lệch
+  lưới keyframe" đã bị loại trừ bằng chính phép đo đó. Biên tìm offset **không được mở rộng**,
+  và có lý do: bỏ một khung làm điểm rơi từ 94,6 xuống 32,0 — đó là vác, nên khi lưới cuối chọn
+  "lệch 1 khung" thì nó đang bám cách giải thích sai. Xem `docs/TESTING.md`.
 - **Encoder phần cứng không dùng.** Đã kiểm chứng trên máy này: `hevc_nvenc` và `hevc_qsv`
   chạy được và ra HEVC hợp lệ, `hevc_amf` hỏng vì thiếu `amfrt64.dll`. Không dùng vì CQ của
   chúng là thang riêng chưa đo, còn `SizeEstimator` chỉ hiệu chỉnh trên encoder phần mềm.

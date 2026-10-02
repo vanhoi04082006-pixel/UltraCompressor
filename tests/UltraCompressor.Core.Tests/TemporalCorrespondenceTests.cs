@@ -163,6 +163,105 @@ public class TemporalCorrespondenceTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// Chứng minh điều mà <c>align=1/2</c> trong lưới cuối đang bù: hai tệp có **lưới keyframe
+    /// khác nhau** thì lệnh <c>-ss</c> trước <c>-i</c> dừng ở hai nội dung khác nhau.
+    /// </summary>
+    /// <remarks>
+    /// <para>Test <see cref="Thu_1080_xuong_720p_hai_clip_tuong_ung_theo_khung"/> cho cả hai tệp
+    /// cùng <c>-g 250</c>, nên lưới keyframe trùng nhau và offset 0 khớp tuyệt đối. Nhưng tệp
+    /// nguồn thật có GOP tuỳ ý, còn bản encode toàn tệp dùng GOP mặc định của x264 — hai lưới
+    /// đó hiếm khi trùng. Đây là lý do lưới cuối phải thử lệch ±1 khung.</para>
+    ///
+    /// <para>Test này dựng đúng tình huống đó và đo lại, thay vì chỉ suy đoán.</para>
+    /// </remarks>
+    [RequiresFFmpeg]
+    public async Task Hai_tep_khac_luoi_keyframe_se_llech_khung_dau()
+    {
+        var ffmpeg = TestFFmpeg.Require();
+        var work = Directory.CreateTempSubdirectory("uc-gop-").FullName;
+
+        try
+        {
+            // Nguồn có GOP rất ngắn — kiểu của video quay màn hình.
+            var source = Path.Combine(work, "src.mp4");
+            await RunAsync(ffmpeg,
+                "-v", "error", "-f", "lavfi",
+                "-i", "testsrc2=size=1920x1080:rate=24:duration=8",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", "12",
+                "-pix_fmt", "yuv420p", "-y", source);
+
+            // Ứng viên: thu 720p rồi mã hoá lại, KHÔNG ép GOP — đúng như đường chạy thật.
+            var candidate = Path.Combine(work, "cand.mp4");
+            await RunAsync(ffmpeg,
+                "-v", "error", "-i", source,
+                "-vf", "scale=1280:720:flags=lanczos",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", candidate);
+
+            const double start = 3.0, length = 3.0;
+            var window = new RepresentativeWindow(
+                start, length, WindowRole.Typical, 0.5, 0.5, 0.5, 0.5, 0.5, 0, "gop");
+
+            var extractor = new ReferenceWindowExtractor(ffmpeg, work);
+            var sourceClips = await extractor.ExtractAsync(source, [window]);
+            var candidateClips = await extractor.ExtractAsync(candidate, [window]);
+
+            var sourceClip = sourceClips[0].Path;
+            var candidateClip = candidateClips[0].Path;
+
+            var sourceFacts = await TemporalProbe.ProbeAsync(ffmpeg, sourceClip);
+            var candidateFacts = await TemporalProbe.ProbeAsync(ffmpeg, candidateClip);
+
+            Assert.NotNull(sourceFacts);
+            Assert.NotNull(candidateFacts);
+            Assert.True(sourceFacts!.IsUsable, sourceFacts.ToString());
+            Assert.True(candidateFacts!.IsUsable, candidateFacts.ToString());
+
+            _output.WriteLine($"nguon (g=12)  clip: {sourceFacts}");
+            _output.WriteLine($"ung vien (mac dinh) clip: {candidateFacts}");
+
+            var probe = new QualityProbe(ffmpeg, work);
+            var zero = await probe.MeasureAsync(
+                sourceClip, candidateClip,
+                new TimeWindow(0, length), new TimeWindow(0, length),
+                1280, 720, 1280, 720, VmafModels.Default);
+            var shifted = await probe.MeasureAsync(
+                sourceClip, candidateClip,
+                new TimeWindow(0, length), new TimeWindow(0, length),
+                1280, 720, 1280, 720, VmafModels.Default,
+                candidateStartFrame: 1);
+
+            Assert.NotNull(zero);
+            Assert.NotNull(shifted);
+            _output.WriteLine($"VMAF offset 0 = {zero!.Sample.Mean:0.00} | bỏ 1 khung = {shifted!.Sample.Mean:0.00}");
+
+            // Kết quả đo được, và nó phủ nhận giả thuyết đẹp nhất: lệch lưới keyframe KHÔNG
+            // phải lý do lưới cuối phải thử ±1 khung. Hai clip vẫn khớp tuyệt đối ở offset 0.
+            //
+            // Điều này còn quan trọng hơn: bỏ một khung làm điểm rơi từ ~94 xuống ~32 — đó là
+            // VÁC chứ không phải cải thiện nhẹ. Nghĩa là khi lưới cuối chọn "lệch 1 khung",
+            // nó đang bám một cách giải thích sai, và điểm nó trả về có thể đang đo tệp nén
+            // dở chứ không phải lệch khung. Biên căn chỉ 3 giá trị là cố ý — mở rộng nó là biến
+            // phép đo thành bộ dò offset để nâng điểm.
+            Assert.True(
+                zero.Sample.Mean > 90,
+                $"offset 0 phải khớp dù lưới keyframe khác nhau; {zero.Sample.Mean:0.00} là dấu hiệu lệch khung");
+
+            Assert.True(
+                shifted!.Sample.Mean < zero.Sample.Mean - 30,
+                $"bỏ 1 khung phải làm điểm tụt mạnh (vác, không phải cải thiện nhẹ); "
+                + $"thực tế {shifted.Sample.Mean:0.00} so với {zero.Sample.Mean:0.00}");
+
+            ReferenceWindowExtractor.Release(sourceClips);
+            ReferenceWindowExtractor.Release(candidateClips);
+        }
+        finally
+        {
+            TryDelete(work);
+        }
+    }
+
     private static async Task RunAsync(string tool, params string[] args)
     {
         var result = await ProcessRunner.RunAsync(

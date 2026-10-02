@@ -153,6 +153,35 @@ mốc đó vốn có lý do đặt ra.
 > `.csproj`, nếu không tệp nằm trong thư mục dự án mà runner không đọc tới — đặt xong tưởng
 > đã cấu hình, thực ra không có tác dụng gì.
 
+## `align=1/2` ở lưới cuối: chưa giải thích được, và những gì đã loại trừ
+
+Một lần chạy E2E báo **1/2 đoạn phải lệch khung** mới khớp. Lưới cuối (`QualityGate`) vì vậy
+thử 3 cách: giữ nguyên, bỏ 1 khung ứng viên, bỏ 1 khung tham chiếu.
+
+**Chưa tìm ra nguyên nhân.** Đo lại bằng `TemporalProbe`:
+
+| | GOP nguồn | clip tham chiếu | clip ứng viên | VMAF offset 0 | bỏ 1 khung |
+|---|---|---|---|---:|---:|
+| Hai tệp cùng `-g 250` | 250 | 72 khung, PTS 0 | 72 khung, PTS 0 | **94,64** | — |
+| Hai tệp **khác** GOP | 12 vs mặc định | 72 khung, PTS 0 | 72 khung, PTS 0 | **94,59** | **31,95** |
+
+**Giả thuyết đẹp nhất đã bị loại trừ:** lệch lưới keyframe. Hai tệp có GOP khác hẳn vẫn khớp
+tuyệt đối ở offset 0.
+
+Điều đáng ghi lại nhất nằm ở cột cuối: **bỏ một khung làm điểm rơi từ 94,6 xuống 32,0** — đó
+là vác, không phải cải thiện nhẹ. Nghĩa là khi lưới cuối chọn "lệch 1 khung", nó đang bám một
+cách giải thích sai, và con số nó trả về có thể đang đo **tệp nén dở** chứ không phải lệch khung.
+
+Hai hệ quả, cả hai đều làm đúng hơn là chạy tiếp cho có:
+
+1. **Biên 3 giá trị là cố ý và phải giữ nguyên.** Mở rộng sang ±2, ±3 là biến phép đo thành
+   bộ dò offset để nâng điểm — tức đánh dấu đúng cái loại tệp mà lưới sinh ra để chặn.
+2. **Nếu thấy cờ "đang lệch khung" trong báo cáo, hãy coi đó là cảnh báo về đường đo**, không
+   phải về tệp. Nó đáng sửa ở đường cắt clip hoặc dấu thời gian, không phải bằng cách nới
+   phép căn.
+
+Nguồn của việc này nằm ở `TemporalCorrespondenceTests`.
+
 ## Kéo-thả: đã bỏ, và đừng thử lại
 
 Tính năng này **không còn**. Ghi lại vì nó rất dễ bị thử lại, và mỗi lần thử lại đều tốn

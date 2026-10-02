@@ -697,12 +697,30 @@ public sealed class CompressionEngine : IAsyncDisposable
                 item.IsApplied = false;
                 item.IsPredicted = true;
                 item.IsComplete = true;
+
+                // Nếu container contract đòi đổi đuôi thì bản duyệt sẽ ghi ra tệp mới cạnh
+                // bên, không phải đè lên bản gốc. Ghi đích đó ra đây để lúc duyệt không phải
+                // tính lại, và để người dùng thấy được sẽ nhận tệp nào.
+                var stagedTarget = OutputContainer.ApplyContract(item.FilePath, item.FilePath, item.Kind);
+                if (!string.Equals(stagedTarget, item.FilePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.OutputPath = stagedTarget;
+                }
+
                 return;
             }
 
             item.IsPredicted = false;
 
-            if (string.IsNullOrEmpty(job.OutputFolder))
+            // Khi container contract ĐÒI đổi đuôi (nguồn `.ts` nhưng lệnh encode ra MP4) thì
+            // KHÔNG thể ghi đè lên tệp gốc: tệp đích có tên khác, mà ghi vào tên của nguồn là
+            // tạo ra một tệp mà tên nói dối nội dung. Ghi cạnh bên và giữ nguyên bản gốc —
+            // đúng như chế độ xuất ra thư mục khác, chỉ khác là thư mục đích nằm ngay cạnh
+            // nguồn.
+            var inPlace = OutputContainer.ApplyContract(item.FilePath, item.FilePath, item.Kind);
+            var sameAsSource = string.Equals(inPlace, item.FilePath, StringComparison.OrdinalIgnoreCase);
+
+            if (string.IsNullOrEmpty(job.OutputFolder) && sameAsSource)
             {
                 // Ghi thẳng lên tệp gốc.
                 var error = FileTransaction.Commit(item.FilePath, temp);
@@ -721,7 +739,7 @@ public sealed class CompressionEngine : IAsyncDisposable
             else
             {
                 // Xuất ra thư mục khác: tệp gốc giữ nguyên, giữ bố cục tương đối bên trong.
-                var destination = context.OutputPath!;
+                var destination = context.OutputPath ?? inPlace;
                 var exportError = FileTransaction.Export(temp, destination);
                 item.OutputPath = exportError is null ? destination : null;
                 item.IsApplied = false;
@@ -790,7 +808,12 @@ public sealed class CompressionEngine : IAsyncDisposable
         if (string.IsNullOrEmpty(job.OutputFolder)) return null;
 
         var relative = Path.GetRelativePath(job.FolderPath, item.FilePath);
-        return Path.Combine(job.OutputFolder, relative);
+        var destination = Path.Combine(job.OutputFolder, relative);
+
+        // Tên đích phải khớp container thật. Nguồn `.ts` mà lệnh encode ra MP4 thì đặt tên là
+        // `.ts` sẽ tạo ra một tệp mà tên nói dối nội dung. `OutputContainer` là nơi duy nhất
+        // được quyết định việc này.
+        return OutputContainer.ApplyContract(destination, item.FilePath, item.Kind);
     }
 
     // ---------------------------------------------------------------- lưới an toàn
@@ -1004,6 +1027,28 @@ public sealed class CompressionEngine : IAsyncDisposable
                     // được duyệt.
                     errors.Add($"{item.FileName}: không còn tệp nén đã so sánh, cần nén lại.");
                     stale++;
+                    continue;
+                }
+
+                // Container contract có thể ĐÒI đổi đuôi (nguồn `.ts`, lệnh encode ra MP4). Khi đó
+                // bản duyệt phải ghi ra tệp MỚI cạnh bên, không đè lên bản gốc — tên đích
+                // khác tên nguồn, mà ghi vào tên nguồn là tạo tệp mà tên nói dối nội dung.
+                if (item.OutputPath is { Length: > 0 } approved)
+                {
+                    var exportError = FileTransaction.Export(staged, approved);
+                    if (exportError is not null)
+                    {
+                        errors.Add($"{item.FileName}: {exportError}");
+                        continue;
+                    }
+
+                    applied++;
+
+                    // Bản gốc CÒN NGUYÊN, nên đây không phải "đã thay thế" — nói đúng sự
+                    // thật để lối quay lui và thông báo cuối không hứa hão.
+                    item.IsApplied = false;
+                    item.IsPredicted = false;
+                    item.OutputPath = approved;
                     continue;
                 }
 

@@ -137,4 +137,61 @@ public class OutputContainerTests
         // Và hậu tố nằm TRƯỚC đuôi, để gifsicle/ffmpeg vẫn đoán được định dạng.
         Assert.EndsWith(".stage1.mp4", path, StringComparison.Ordinal);
     }
+
+    [Theory]
+    // Đuôi đã khớp thì không đụng tới — tuyệt đối đa số.
+    [InlineData("clip.mp4", "clip.mp4", MediaKind.Video, "clip.mp4")]
+    [InlineData("clip.MP4", "clip.MP4", MediaKind.Video, "clip.MP4")]
+    // Đuôi nguồn khác container thì phải đổi, kể cả khi người dùng đã đặt tên đích khác.
+    [InlineData("clip.ts", "clip.ts", MediaKind.Video, "clip.mp4")]
+    [InlineData("clip.mkv", "clip.mkv", MediaKind.Video, "clip.mp4")]
+    [InlineData("clip.webm", "clip.webm", MediaKind.Video, "clip.mp4")]
+    [InlineData("clip.ts", "renamed.mov", MediaKind.Video, "renamed.mp4")]
+    // Không có đuôi thì phải ra tên CÓ đuôi, không phải chuỗi rỗng.
+    [InlineData("clip", "clip", MediaKind.Video, "clip.mp4")]
+    // Loại khác video bám theo nguồn, nên tên đích không bị đổi.
+    [InlineData("song.mp3", "song.mp3", MediaKind.Audio, "song.mp3")]
+    [InlineData("song.wav", "out.wav", MediaKind.Audio, "out.wav")]
+    public void Duong_dan_dich_phai_khop_container_that(
+        string source, string destination, MediaKind kind, string expected) =>
+        Assert.Equal(
+            expected,
+            Path.GetFileName(OutputContainer.ApplyContract(destination, source, kind, _ => false)));
+
+    [Fact]
+    public void Khong_duoc_de_gi_lai_ten_da_co()
+    {
+        // Thư mục có sẵn cả `clip.ts` và `clip.mp4`. Ghi vào `clip.mp4` sẽ xoá mất tệp của
+        // người dùng, nên phải dồn sang tên có số thứ tự.
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "clip.mp4", "clip (2).mp4" };
+
+        var result = OutputContainer.ApplyContract("clip.ts", "clip.ts", MediaKind.Video, taken.Contains);
+
+        Assert.Equal("clip (3).mp4", Path.GetFileName(result));
+    }
+
+    [Fact]
+    public void Khong_ghi_de_nguon_khi_phai_doi_duoi()
+    {
+        var work = Directory.CreateTempSubdirectory("uc-contract-").FullName;
+
+        try
+        {
+            var source = Path.Combine(work, "clip.ts");
+            File.WriteAllText(source, "ban goc");
+
+            var result = OutputContainer.ApplyContract(source, source, MediaKind.Video);
+
+            // Đuôi đích khác đuôi nguồn nên không thể là chính tệp nguồn — nếu bằng nhau thì
+            // lệnh encode sẽ ghi đè mất bản gốc.
+            Assert.NotEqual(source, result);
+            Assert.Equal(".mp4", Path.GetExtension(result));
+            Assert.False(File.Exists(result));
+            Assert.Equal("ban goc", File.ReadAllText(source));
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
 }

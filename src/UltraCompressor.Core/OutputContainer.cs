@@ -74,4 +74,66 @@ public static class OutputContainer
         var ext = Path.GetExtension(sourcePath);
         return string.IsNullOrEmpty(ext) ? string.Empty : ext.ToLowerInvariant();
     }
+
+    /// <summary>
+    /// Áp dụng container contract lên một <b>đường dẫn đích</b>: đuôi phải khớp container
+    /// mà lệnh encode thực sự tạo ra, và không bao giờ ghi đè một tệp đã có.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Vì sao cần.</b> `OutputContainer` quyết container cho video, nhưng đường dẫn
+    /// đích lại được dựng ở nơi khác — theo đường dẫn tệp <b>nguồn</b>. Hai thứ đó lệch nhau
+    /// thì ra một tệp mà tên nói dối: <c>clip.ts</c> chứa byte MP4 (<c>ftyp isom</c>). Người
+    /// dùng và mọi công cụ đọc file sau này đều bị đánh lừa, và lỗi chỉ lộ ra khi ai đó thử
+    /// phát nó.</para>
+    ///
+    /// <para><b>Đây là nơi duy nhất</b> được phép đổi đuôi tệp đích. Không có chuỗi
+    /// `if sourceExtension == ".ts"` ở đâu khác: một bảng tra riêng cho đuôi nguồn sẽ lệch với
+    /// contract container ngay lần sửa kế tiếp.</para>
+    ///
+    /// <para><b>Không ghi đè tệp nào.</b> Khi phải đổi đuôi mà tệp đích đã tồn tại — ví dụ
+    /// thư mục có cả <c>clip.ts</c> và <c>clip.mp4</c> — ta thêm số thứ tự thay vì đè lên tệp
+    /// người dùng. Bỏ bản gốc vào thư mục tạm là việc của lớp giao dịch tệp, không phải ở đây.</para>
+    /// </remarks>
+    /// <param name="destinationPath">Đường dẫn đích đã dựng (giữ nguyên bố cục thư mục).</param>
+    /// <param name="sourcePath">Tệp nguồn, để biết container contract là gì.</param>
+    /// <param name="kind">Loại media.</param>
+    /// <param name="exists">
+    /// Hàm kiểm tra tệp đã tồn tại. Cho phép truyền vào để kiểm thử không cần chạm đĩa.
+    /// </param>
+    public static string ApplyContract(
+        string destinationPath, string sourcePath, MediaKind kind, Func<string, bool>? exists = null)
+    {
+        ArgumentNullException.ThrowIfNull(destinationPath);
+        ArgumentNullException.ThrowIfNull(sourcePath);
+
+        exists ??= File.Exists;
+
+        var canonical = ExtensionFor(kind, sourcePath);
+        var dir = Path.GetDirectoryName(destinationPath) ?? string.Empty;
+        var stem = Path.GetFileNameWithoutExtension(destinationPath);
+
+        // Đuôi đã khớp contract thì không đụng tới: đây là trường hợp tuyệt đối đa số (nguồn
+        // `.mp4`), và việc "sửa cho có" ở đây chỉ sinh rủi ro.
+        if (string.Equals(SourceExtension(destinationPath), canonical, StringComparison.OrdinalIgnoreCase))
+        {
+            return destinationPath;
+        }
+
+        var candidate = Path.Combine(dir, stem + canonical);
+        if (!exists(candidate))
+        {
+            return candidate;
+        }
+
+        for (var i = 2; i < 10_000; i++)
+        {
+            var numbered = Path.Combine(dir, $"{stem} ({i}){canonical}");
+            if (!exists(numbered))
+            {
+                return numbered;
+            }
+        }
+
+        throw new IOException($"Không tìm được tên còn trống cho '{stem}{canonical}' trong '{dir}'.");
+    }
 }

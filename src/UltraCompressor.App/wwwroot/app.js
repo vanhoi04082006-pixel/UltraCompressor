@@ -1195,6 +1195,7 @@ function openSettings() {
   $('cfgSubfolders').checked = c.includeSubfolders;
   $('cfgFreeSpace').checked = c.checkFreeSpace;
   $('cfgMeasureQuality').checked = c.measureQuality;
+  $('cfgAdaptiveSearch').checked = !!c.enableAdaptiveSearch;
   $('cfgConcurrency').value = c.maxConcurrent;
   $('cfgExclude').value = (c.excludePatterns || []).join(', ');
   $('cfgLogLevel').value = c.logLevel;
@@ -1257,6 +1258,7 @@ async function saveConfig() {
   c.includeSubfolders = $('cfgSubfolders').checked;
   c.checkFreeSpace = $('cfgFreeSpace').checked;
   c.measureQuality = $('cfgMeasureQuality').checked;
+  c.enableAdaptiveSearch = $('cfgAdaptiveSearch').checked;
   c.maxConcurrent = Number($('cfgConcurrency').value) || 0;
   c.excludePatterns = $('cfgExclude').value.split(',').map((s) => s.trim()).filter(Boolean);
   c.logLevel = $('cfgLogLevel').value;

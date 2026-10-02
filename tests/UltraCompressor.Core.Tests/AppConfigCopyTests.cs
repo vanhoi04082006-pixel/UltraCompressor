@@ -11,6 +11,11 @@ namespace UltraCompressor.Core.Tests;
 /// dùng bật cờ bằng tay trong tệp cấu hình rồi bấm "Lưu" sẽ thấy cờ bị tắt, và vì thao tác lưu
 /// ghi lại chính đối tượng đó, giá trị tắt còn nằm trong tệp. Không có dấu hiệu gì cho biết.</para>
 ///
+/// <para><b>Đã đóng nửa còn lại của lỗi đó.</b> Nay Cài đặt đã có ô bật cho cờ này, nên nó là
+/// trường giao diện thường và phải chép theo. Nếu giữ nó ở nhánh "giữ nguyên", ô bật trở thành
+/// nút mù: người dùng bật, bấm Lưu, và cờ tắt lại — đúng lỗi cũ, chỉ lần này người dùng có
+/// lý do tin rằng mình đang chọn.</para>
+///
 /// <para>Hàm chép nằm ở <see cref="AppConfig"/> trong Core chứ không ở tầng WinForms, nên nó
 /// kiểm thử được mà không cần đổi TFM của cả bộ kiểm thử — điều mà bản sửa trước đó không làm
 /// được và phải ghi nợ.</para>
@@ -18,27 +23,40 @@ namespace UltraCompressor.Core.Tests;
 public class AppConfigCopyTests
 {
     [Fact]
-    public void Luu_cau_hinh_khong_duoc_tat_co_thu_nghiem_dang_bat()
+    public void Co_that_bat_thi_vao_cau_hinh_thi_van_giu_nguyen()
     {
-        var running = new AppConfig { EnableAdaptiveSearch = true };
+        // Cờ KHÔNG có ô bật ở giao diện thì lưu cấu hình không được đụng tới: bản giao diện
+        // gửi lên không có trường đó, nên giá trị của nó luôn là mặc định (tắt).
+        var running = new AppConfig { EnableAv1Search = true };
 
-        // Bản giao diện gửi lên không có trường này, nên giá trị của nó là mặc định (tắt).
-        var fromUi = new AppConfig { Level = CompressionLevel.Strong };
+        running.CopyRuntimeSettingsFrom(new AppConfig { Level = CompressionLevel.Strong });
 
-        running.CopyRuntimeSettingsFrom(fromUi);
-
-        Assert.True(running.EnableAdaptiveSearch);
+        Assert.True(running.EnableAv1Search);
         Assert.Equal(CompressionLevel.Strong, running.Level);
     }
 
     [Fact]
-    public void Co_that_bat_thi_vao_cau_hinh_thi_van_giu_nguyen()
+    public void Co_that_tat_roi_luu_thu_khac_thi_van_tat()
     {
         // Cùng lập luận: người dùng tắt cờ rồi lưu một thứ khác, cờ phải vẫn tắt.
+        var running = new AppConfig { EnableAv1Search = false };
+
+        running.CopyRuntimeSettingsFrom(new AppConfig { EnableAv1Search = false });
+
+        Assert.False(running.EnableAv1Search);
+    }
+
+    [Fact]
+    public void O_bat_trong_giao_dien_phai_an()
+    {
+        // Đây là hợp đồng của ô bật trong Cài đặt: bật thì phải tới đích, tắt thì phải tới đích.
+        // Trước đây cờ này được giữ nguyên có chủ ý, và ô bật (nếu có) sẽ là nút mù.
         var running = new AppConfig { EnableAdaptiveSearch = false };
 
-        running.CopyRuntimeSettingsFrom(new AppConfig { EnableAdaptiveSearch = false });
+        running.CopyRuntimeSettingsFrom(new AppConfig { EnableAdaptiveSearch = true });
+        Assert.True(running.EnableAdaptiveSearch);
 
+        running.CopyRuntimeSettingsFrom(new AppConfig { EnableAdaptiveSearch = false });
         Assert.False(running.EnableAdaptiveSearch);
     }
 
@@ -62,6 +80,7 @@ public class AppConfigCopyTests
             ConcurrencyScale = 3,
             LogLevel = "Debug",
             Theme = "dark",
+            EnableAdaptiveSearch = true,
         };
 
         var to = new AppConfig();
@@ -79,16 +98,15 @@ public class AppConfigCopyTests
         Assert.Equal(3, to.ConcurrencyScale);
         Assert.Equal("Debug", to.LogLevel);
         Assert.Equal("dark", to.Theme);
+        Assert.True(to.EnableAdaptiveSearch);
     }
 
     [Fact]
     public void Cac_truong_khong_thuoc_giao_dien_thi_giu_nguyen_gia_tri_dang_chay()
     {
-        // Cờ thử nghiệm và các trường tinh vi khác không đi qua giao diện, nên lưu cấu hình
-        // không được đụng tới.
+        // Cờ và ngưỡng tinh vi không đi qua giao diện, nên lưu cấu hình không được đụng tới.
         var running = new AppConfig
         {
-            EnableAdaptiveSearch = true,
             EnableAv1Search = true,
             MaxSearchEvaluations = 31,
             MaxInitialCandidates = 7,
@@ -97,23 +115,10 @@ public class AppConfigCopyTests
 
         running.CopyRuntimeSettingsFrom(new AppConfig());
 
-        Assert.True(running.EnableAdaptiveSearch);
         Assert.True(running.EnableAv1Search);
         Assert.Equal(31, running.MaxSearchEvaluations);
         Assert.Equal(7, running.MaxInitialCandidates);
         Assert.Equal("av1", running.VideoCodec);
-    }
-
-    [Fact]
-    public void Co_the_tat_co_thu_nghiem_bang_cach_rang_no()
-    {
-        // Đường tắt tường minh: một ai đó muốn buộc cờ xuống thì gọi với
-        // `preserveExperimentalFlags: false`. Phải tồn tại để lựa chọn này không bị cấm ngầm.
-        var running = new AppConfig { EnableAdaptiveSearch = true };
-
-        running.CopyRuntimeSettingsFrom(new AppConfig(), preserveExperimentalFlags: false);
-
-        Assert.False(running.EnableAdaptiveSearch);
     }
 
     [Fact]
@@ -122,7 +127,6 @@ public class AppConfigCopyTests
         // Danh sách phải liệt kê tường minh để thêm một cờ mới bắt buộc phải quyết định có đi
         // qua giao diện hay không — thay vì âm thầm trở thành cờ "bị reset mỗi lần lưu".
         Assert.NotEmpty(AppConfig.ExperimentalFlags);
-        Assert.Contains(nameof(AppConfig.EnableAdaptiveSearch), AppConfig.ExperimentalFlags);
 
         // Mỗi tên trong danh sách phải là một thành viên thật của AppConfig.
         foreach (var name in AppConfig.ExperimentalFlags)
@@ -132,11 +136,20 @@ public class AppConfigCopyTests
     }
 
     [Fact]
+    public void Co_roi_bat_trong_giao_dien_thi_khong_duoc_liet_ke_la_co_that()
+    {
+        // Ngược lại cũng phải đúng: một trường ĐÃ có ô bật ở Cài đặt mà lại nằm trong danh sách
+        // cờ thử nghiệm thì ô bật ấy không ăn. Cờ thích ứng từng ở trong danh sách này và
+        // chính vì thế nó bị giữ nguyên khi lưu — im lặng, không báo lỗi.
+        Assert.DoesNotContain(nameof(AppConfig.EnableAdaptiveSearch), AppConfig.ExperimentalFlags);
+    }
+
+    [Fact]
     public void Khong_chep_vao_chinh_no()
     {
-        // Không phải lỗi thường gặp, nhưng rẻ mà đắt: `CopyRuntimeSettingsFrom(this)` sẽ khóa
+        // Không phải lỗi thường gặp, nhưng rẻ mà đắt: `CopyRuntimeSettingsFrom(this)` sẽ khoá
         // object vô ích và làm mất giá trị cờ thử nghiệm.
-        var config = new AppConfig { EnableAdaptiveSearch = true, MinSavingPercent = 9.5 };
+        var config = new AppConfig { EnableAv1Search = true, MinSavingPercent = 9.5 };
 
         Assert.Throws<ArgumentNullException>(() => config.CopyRuntimeSettingsFrom(null!));
     }

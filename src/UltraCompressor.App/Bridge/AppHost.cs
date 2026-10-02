@@ -847,7 +847,8 @@ public sealed class AppHost : IAsyncDisposable
         //
         // Lỗi đã mắc phải: `EnableAdaptiveSearch` không có trong danh sách trường được chép,
         // nên mỗi lần bấm "Lưu cấu hình" đã tắt cờ đang bật — và vì thao tác lưu ghi lại đúng
-        // đối tượng này, giá trị tắt còn được ghi xuống đĩa.
+        // đối tượng này, giá trị tắt còn được ghi xuống đĩa. Nay Cài đặt đã có ô bật cho nó,
+        // nên nó được chép như mọi trường giao diện khác.
         to.CopyRuntimeSettingsFrom(from);
     }
 

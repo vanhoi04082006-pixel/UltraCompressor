@@ -233,16 +233,30 @@ public sealed class AppConfig
     /// tay trong tệp cấu hình rồi bấm "Lưu" ở giao diện sẽ thấy cờ bị tắt — và vì thao tác lưu
     /// ghi lại chính đối tượng đó, giá trị tắt còn nằm trong tệp. Không có dấu hiệu gì cho biết.</para>
     /// </remarks>
+    /// <summary>
+    /// Chép các trường do giao diện quản lý, từ bản giao diện gửi lên sang cấu hình đang chạy.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Danh sách trường là một danh sách cho phép, không phải danh sách loại trừ.</b>
+    /// Trường không có trong đây thì giữ nguyên giá trị đang chạy — tức cờ nào không có ô bật
+    /// trên giao diện thì không bao giờ bị một lần lưu cấu hình ghi đè.</para>
+    ///
+    /// <para><b>Lỗi đã mắc phải và vì sao quy tắc này tồn tại:</b> trước đây hàm chép cấu
+    /// hình nằm ở tầng giao diện liệt kê tường minh các trường, và trường
+    /// <see cref="EnableAdaptiveSearch"/> không có trong danh sách đó. Người dùng bật cờ bằng
+    /// tay trong tệp cấu hình rồi bấm "Lưu" ở giao diện sẽ thấy cờ bị tắt — và vì thao tác lưu
+    /// ghi lại chính đối tượng đó, giá trị tắt còn nằm trong tệp. Không có dấu hiệu gì cho biết.</para>
+    ///
+    /// <para><b>Đã đổi:</b> <see cref="EnableAdaptiveSearch"/> nay <b>có</b> ô bật trong Cài đặt,
+    /// nên nó chuyển từ "cờ thử nghiệm" thành trường giao diện thường và được chép như mọi
+    /// trường khác. Giữ nguyên thứ tự như cũ sẽ khiến ô bật trên giao diện không ăn: cờ tắt
+    /// mãi dù người dùng đã bật — đúng cái lỗi ở trên, chỉ lần này im lặng hơn nữa vì giờ
+    /// người dùng tưởng mình đang có quyền chọn.</para>
+    /// </remarks>
     /// <param name="from">Bản cấu hình do giao diện gửi lên.</param>
-    /// <param name="preserveExperimentalFlags">
-    /// Giữ nguyên các cờ thử nghiệm đang bật. Mặc định đúng: cờ thử nghiệm không đến từ giao
-    /// diện, nên lấy từ <paramref name="from"/> sẽ luôn cho giá trị mặc định (tắt).
-    /// </param>
-    public void CopyRuntimeSettingsFrom(AppConfig from, bool preserveExperimentalFlags = true)
+    public void CopyRuntimeSettingsFrom(AppConfig from)
     {
         ArgumentNullException.ThrowIfNull(from);
-
-        var adaptive = EnableAdaptiveSearch;
 
         Level = from.Level;
         DryRunDefault = from.DryRunDefault;
@@ -258,21 +272,22 @@ public sealed class AppConfig
         LogLevel = from.LogLevel;
         Theme = from.Theme;
 
-        if (!preserveExperimentalFlags)
-        {
-            EnableAdaptiveSearch = from.EnableAdaptiveSearch;
-            return;
-        }
-
-        // Cờ thử nghiệm chỉ đổi khi ai đó sửa tệp cấu hình, tức là chủ ý.
-        EnableAdaptiveSearch = adaptive;
+        // Có ô bật ở Cài đặt nên lựa chọn của người dùng phải tới đích. Trường này không
+        // nằm trong danh sách cho phép trước đây chỉ vì lúc đó giao diện chưa có ô bật.
+        EnableAdaptiveSearch = from.EnableAdaptiveSearch;
     }
 
-    /// <summary>Các cờ thử nghiệm: không đi qua giao diện, nên không bị lưu cấu hình ghi đè.</summary>
+    /// <summary>
+    /// Các cờ <b>không</b> có ô bật trên giao diện, nên không bị lưu cấu hình ghi đè.
+    /// </summary>
     /// <remarks>
-    /// Liệt kê tường minh để thêm một cờ mới bắt buộc phải quyết định có nên đi qua giao diện
-    /// hay không. Mặc định của mọi cờ ở đây là <b>không</b>: giữ nguyên giá trị đang chạy.
+    /// <para>Liệt kê tường minh để thêm một cờ mới bắt buộc phải quyết định có đưa lên giao diện
+    /// hay không. Mặc định của mọi cờ là <b>không</b>: giữ nguyên giá trị đang chạy.</para>
+    ///
+    /// <para><see cref="EnableAdaptiveSearch"/> <b>không</b> còn ở đây: nó đã có ô bật trong
+    /// Cài đặt, nên nó là trường giao diện thường. Liệt kê một trường đã lên giao diện vào
+    /// danh sách này thì ô bật của nó trở thành nút mù.</para>
     /// </remarks>
     public static IReadOnlyList<string> ExperimentalFlags { get; } =
-        [nameof(EnableAdaptiveSearch)];
+        [nameof(EnableAv1Search)];
 }

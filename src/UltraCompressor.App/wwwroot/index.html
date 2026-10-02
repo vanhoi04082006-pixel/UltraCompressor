@@ -261,6 +261,24 @@
         <label class="row checkbox"><input type="checkbox" id="cfgSubfolders"><span>Quét cả thư mục con</span></label>
         <label class="row checkbox"><input type="checkbox" id="cfgFreeSpace"><span>Cảnh báo khi ổ đĩa không đủ chỗ</span></label>
         <label class="row checkbox"><input type="checkbox" id="cfgMeasureQuality"><span>Đo chất lượng bằng VMAF (chậm hơn một chút)</span></label>
+
+        <label class="row checkbox"><input type="checkbox" id="cfgAdaptiveSearch"><span>Tìm kiếm thích ứng theo nội dung (chậm hơn nhiều)</span></label>
+        <p class="hint">
+          <b>Tắt là mặc định.</b> Ở chế độ này mỗi tệp dùng chung một bộ tham số theo mức bạn
+          chọn — nhanh, và cho ra đúng những gì bản cũ cho.
+        </p>
+        <p class="hint">
+          Bật lên thì ứng dụng <b>đo thật</b> để tìm ra tham số riêng cho từng tệp: cắt vài đoạn
+          đại diện, mã hoá thử ở nhiều mức, đo VMAF từng mức rồi mới chọn. Kết quả sát với
+          từng tệp hơn nhiều, nhưng <b>mỗi tệp tốn thêm nhiều lần encode</b> — một tập phim 20
+          phút có thể mất gấp nhiều lần thời gian thường lệ. Hãy bật để thử trên thư mục nhỏ
+          trước.
+        </p>
+        <p class="hint">
+          Chỉ áp dụng cho <b>video</b>. Ảnh, âm thanh, GIF và PDF vẫn dùng quy tắc kích thước
+          như trước. Nếu tìm kiếm lỗi thì tệp đó tự dùng lại đường cũ và ghi rõ trong nhật
+          ký.
+        </p>
       </section>
 
       <section class="fieldset">

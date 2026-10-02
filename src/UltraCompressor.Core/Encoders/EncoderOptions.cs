@@ -151,7 +151,7 @@ public abstract record QualityOption
     /// </summary>
     public static QualityOption SvtAv1Qp(int value) => new SvtAv1QpOption(value);
 
-    /// <summary>CQ của encoder phần cứng (NVENC/QSV/AMF). Chưa đo trong kho.</summary>
+    /// <summary>CQ của encoder phần cứng (NVENC/QSV/AMF). Miền chưa được hiệu chỉnh — xem ghi chú.</summary>
     public static QualityOption HardwareConstantQuality(int value) => new HardwareCqOption(value);
 
     private sealed record X26xCrfOption(double Value) : QualityOption
@@ -330,8 +330,33 @@ public static class EncoderRanges
     /// <summary>Preset của SVT-AV1 (0–13). <b>Khác</b> miền libaom và khác tập tên của x26x. Chưa đo.</summary>
     public static ValueRange PresetSvtAv1 { get; } = new(0, 13, "tài liệu SVT-AV1 — CHƯA đo trên bản đóng gói");
 
-    /// <summary>CQ của encoder phần cứng. Chưa đo: kho chưa có tệp nào chạy NVENC/QSV/AMF.</summary>
-    public static ValueRange CqHardware { get; } = new(0, 51, "CHƯA đo — chưa có encoder phần cứng trong kho");
+    /// <summary>
+    /// CQ của encoder phần cứng (NVENC/QSV/AMF). Miền 0–51 là miền <b>tiêu chuẩn của
+    /// cả ba họ</b>, chưa phải miền đo của ứng dụng.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Đã kiểm chứng trên máy này, và kết quả là "chưa dùng".</b> Chạy encode thật
+    /// với bản ffmpeg đóng gói 8.0.1:</para>
+    /// <list type="bullet">
+    /// <item><c>hevc_nvenc</c> — chạy được, ra HEVC Main hợp lệ.</item>
+    /// <item><c>hevc_qsv</c> — chạy được, ra HEVC Main hợp lệ.</item>
+    /// <item><c>hevc_amf</c> — hỏng: <c>amfrt64.dll failed to open</c> (máy không có phần
+    /// cứng AMD / driver).</item>
+    /// </list>
+    /// <para>Cả hai encoder chạy được đều nhận <c>-cq</c>, nên công tắc không sai. Cái chưa có
+    /// là <b>quan hệ giữa CQ và chất lượng</b>: đó là thang riêng của từng họ, không cùng
+    /// nghĩa với CRF của x26x, và kho chưa có đường cong nào đo được. Không đo thì không
+    /// dùng.</para>
+    ///
+    /// <para><b>Vì sao vẫn giữ mã này.</b> `KindOf` nhận ra tên encoder phần cứng, và nếu một
+    /// kế hoạch trong tương lai chọn phải loại đó thì phải có chỗ để viết đúng công tắc.
+    /// Xoá thì khi ấy kế hoạch sẽ rơi về nhánh mặc định và sinh <c>-crf</c> cho encoder không
+    /// có tuỳ chọn đó — lỗi nghiêm trọng hơn nhiều so với việc có một miền chưa hiệu chỉnh.</para>
+    ///
+    /// <para><b>Đường tìm kiếm không đưa encoder phần cứng vào danh sách</b> — xem
+    /// <c>CandidatePlanner.DomainsToTry</c>.</para>
+    /// </remarks>
+    public static ValueRange CqHardware { get; } = new(0, 51, "tiêu chuẩn 0-51 của NVENC/QSV/AMF — CHƯA đo CQ↔chất lượng");
 
     /// <summary>Tập tên preset của x264 và x265 — giống nhau, khác mọi encoder khác.</summary>
     public static NamedValueSet Preset26x { get; } = new(

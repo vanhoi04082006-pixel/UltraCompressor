@@ -366,6 +366,17 @@ public static class CandidatePlanner
         List<string> skipped,
         List<string> notes)
     {
+        // Chỉ ba domain phần mềm. Không đưa NVENC/QSV/AMF vào đây, và đây là chỗ dễ bị "thêm
+        // cho vào" nhất nên ghi rõ lý do:
+        //
+        // - ĐÃ kiểm chứng trên máy này: hevc_nvenc và hevc_qsv chạy được và ra HEVC hợp lệ;
+        //   hevc_amf hỏng vì thiếu amfrt64.dll. Nên "không chạy được" không phải lý do.
+        // - Lý do thật là CQ của chúng là thang RIÊNG của từng họ, không cùng nghĩa với CRF
+        //   của x26x, và `SizeEstimator` chỉ được hiệu chỉnh trên encoder phần mềm. Thêm vào
+        //   đây lúc chưa đo là tạo ứng viên mà bộ ước lượng kích thước đoán sai — sai tệ hơn
+        //   là không có ứng viên nào, vì nó vẫn ra một tệp và vẫn trông hợp lý.
+        // - Muốn thêm thì phải đo đường cong CQ↔VMAF cho từng họ trước, rồi mới hiệu chỉnh
+        //   được bộ ước lượng kích thước. Việc đó chưa nằm trong phạm vi.
         var domains = new List<IEncoderSearchDomain>();
         var all = new IEncoderSearchDomain[]
         {

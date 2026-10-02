@@ -4,12 +4,35 @@
 >
 > 36 điểm đo trên **2 tệp cùng một thể loại** (anime 1080p). Chưa có số liệu cho: talking
 > head, gameplay, thể thao/chuyển động mạnh, quay/chụp màn hình và chữ, video tối, nhiễu hạt,
-> thiên nhi nhiều chi tiết, nguồn bitrate thấp, nguồn bitrate cao, nguồn H.264/HEVC/AV1, và
+> thiên nhiên nhiều chi tiết, nguồn bitrate thấp, nguồn bitrate cao, nguồn H.264/HEVC/AV1, và
 > 720p/1080p/1440p/4K.
 >
 > Hệ thống được thiết kế để bổ sung loại nội dung mới **tune policy mà không sửa thuật toán
 > lõi**: ngưỡng nằm trong bảng tra của `QualityPolicy`, cách đo nằm sau `QualityProbe`.
 > **Không được đổi ngưỡng ở đây nếu chưa có số đo chứng minh.**
+
+## Encoder phần cứng: đã kiểm chứng được chạy, nhưng không dùng
+
+Đo trên chính máy này, bản ffmpeg 8.0.1-essentials đóng gói, clip thử 1280×720 2 giây:
+
+| Encoder | Kết quả |
+|---|---|
+| `hevc_nvenc` | chạy được — ra HEVC Main hợp lệ, 2,00s, yuv420p |
+| `hevc_qsv` | chạy được — ra HEVC Main hợp lệ, 2,00s, yuv420p |
+| `hevc_amf` | **hỏng** — `amfrt64.dll failed to open` (không có phần cứng AMD/driver) |
+
+Cả hai encoder chạy được đều nhận `-cq`, nên **công tắc không sai**.
+
+Vẫn **không dùng**, vì lý do không phải "không chạy được":
+
+1. **CQ là thang riêng của từng họ**, không cùng nghĩa với CRF của x264/x265. Bảng ở trên rút
+   ngưỡng từ CRF — dùng nó cho CQ là so hai thứ không cùng đơn vị.
+2. **`SizeEstimator` chỉ hiệu chỉnh trên encoder phần mềm.** Thêm ứng viên phần cứng vào tìm
+   kiếm là bộ ước lượng đoán sai kích thước, sai kiểu mà vẫn ra một tệp trông hợp lý.
+3. **Chưa có đường cong CQ↔chất lượng** để hiệu chỉnh lại bộ ước lượng đó.
+
+Muốn đưa vào thì phải đo trước: một đường cong CQ→VMAF cho từng họ, trên cùng bộ tệp đã
+dùng ở đây. Đó là việc đo thật, chưa nằm trong phạm vi hiện tại.
 
 Ngưỡng VMAF trong `QualityPolicy` **không** lấy từ tài liệu sản phẩm. Chúng rút từ lần
 đo thật trên thư viện của người dùng, và bài viết này ghi lại lần đo đó để con số có

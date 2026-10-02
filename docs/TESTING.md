@@ -6,30 +6,45 @@
 dotnet test tests\UltraCompressor.Core.Tests -c Release
 ```
 
-123 test, chạy khoảng 100 ms — không cần công cụ ngoài, không chạm tệp thật.
+**680 test.** Phần lớn chạy nhanh và không cần công cụ ngoài; **nhóm E2E thì cần ffmpeg thật**
+và mất vài phút.
 
-Test chia theo tệp:
+Test chia theo vùng:
 
-| Tệp | Phủ |
+| Vùng | Phủ |
 |---|---|
-| `CoreTests.cs` | phân loại media, dò đường dẫn công cụ, kiểm tra chạy được, hoàn tác, JSON |
-| `SchedulingTests.cs` | cổng tạm dừng, ước lượng ETA, tính số luồng nén |
-| `StorageTests.cs` | giao dịch tệp, quét thư mục, bộ lọc mẫu tên |
-| `CompressionProfileTests.cs` | tham số của từng mức nén |
-| `FFmpegOutputParserTests.cs` | đọc dòng log của ffmpeg: thời lượng, thời điểm, bitrate |
-| `FormatTests.cs` | hiển thị kích thước và phần trăm |
+| `StorageTests`, `CoreTests` | phân loại media, dò công cụ, giao dịch tệp, phiên, hoàn tác |
+| `SchedulingTests` | cổng tạm dừng, ước lượng ETA, tính số luồng |
+| `CompressionProfileTests`, `EncoderCommandTests`, `SideBySideCommandTests` | lệnh ffmpeg thực thi ra sao |
+| `FFmpegOutputParserTests`, `ByteRangeParserTests`, `Mp4TrackSizesTests` | đọc log và box của ffmpeg |
+| `Planning/*`, `CandidatePlannerTests`, `CompressionPlannerTests` | sinh ứng viên, miền tìm kiếm |
+| `Search/*`, `PilotSearchOrchestrationTests`, `ParetoSelectorTests` | tìm kiếm, chọn theo bằng chứng |
+| `Media/*`, `QualityGateTests`, `QualityAggregatorTests` | đo VMAF, cổng chất lượng |
+| `OutputContainerTests`, `OutputContainerE2ETests`, `TemporalCorrespondenceTests` | container đầu ra, tương ứng khung hình |
+| `*E2ETests`, `*Tests` có `[RequiresFFmpeg]` | **chạy ffmpeg thật**, sinh media bằng `testsrc2` |
 
-## Ba lớp kiểm thử
+## Bốn lớp kiểm thử
 
-**Lớp 1 — test đơn vị.** 123 test trên. Bắt được logic thuần: phân loại đuôi tệp, tính
-ngưỡng, đọc output của ffmpeg, giao dịch tệp.
+**Lớp 1 — test đơn vị.** Bắt được logic thuần: phân loại đuôi tệp, tính ngưỡng, đọc output
+của ffmpeg, giao dịch tệp, chép cấu hình.
 
-**Lớp 2 — kiểm thử tay trên tệp thật.** Không tự động hoá vì tốn 5 phút mỗi tập video 20
+**Lớp 2 — E2E với ffmpeg thật.** Test tự sinh media bằng `testsrc2`, chạy encode/đo thật rồi
+kiểm **byte đầu tệp** chứ không kiểm chuỗi lệnh. Đây là lớp bắt được những lỗi mà lớp 1
+không thấy — container sai, encoder không nhận tuỳ chọn, clip lệch khung. Đánh dấu bằng
+`[RequiresFFmpeg]`, tự bỏ qua nếu máy không có ffmpeg.
+
+**Lớp 3 — kiểm thử tay trên tệp thật.** Không tự động hoá vì tốn 5 phút mỗi tập video 20
 phút. Dùng thư mục thật, xem nhật ký, đo kích thước trước/sau.
 
-**Lớp 3 — ảnh chụp giao diện.** Dùng `UC_CAPTURE` + `UC_EVAL_JS` (xem
+**Lớp 4 — ảnh chụp giao diện.** Dùng `UC_CAPTURE` + `UC_EVAL_JS` (xem
 [`ARCHITECTURE.md`](ARCHITECTURE.md)). Chụp được màn hình đang chạy ở đúng tỉ lệ DPI thật,
 không bị ảo hoá.
+
+> **Cả ba biến môi trường nằm sau cùng một cổng.** `UC_EVAL_JS` và `UC_EVAL_SETTLE` chỉ chạy
+> khi `UC_CAPTURE` được đặt — `MainForm.CaptureIfRequestedAsync` trả về ngay ở dòng đầu nếu
+> không có nó. Đặt `UC_CAPTURE` rỗng cũng không được, vì hàm kiểm tra
+> `IsNullOrWhiteSpace`. Ngoài ra `ExecuteScriptAsync` **không đợi promise**, nên script kiểu
+> `async` vẫn đang chạy lúc ảnh đã chụp — phải kèm `UC_EVAL_SETTLE`.
 
 ## Quy trình đo thật
 

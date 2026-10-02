@@ -3,6 +3,86 @@
 Các mốc theo ngày. Mục **Đã sửa** liệt kê lỗi của bản gốc v12; mục **Lỗi tìm khi kiểm
 thử** liệt kê lỗi do chính bản viết lại này tạo ra.
 
+## Chưa đánh số — tìm kiếm thích ứng theo nội dung
+
+### Thêm
+
+Nén video bằng một bộ tham số cố định cho mọi tệp là sai ở một chỗ: **mỗi tệp có độ khó
+khác nhau**, nên tham số tốt cho tệp này lại tệ cho tệp kia. Nay có đường thích ứng: sinh
+ứng viên theo đặc tính nội dung, **đo thật** trên các đoạn đại diện, rồi mới encode toàn
+tệp ứng viên được chọn.
+
+- **Lưới an toàn sau khi nén** — `QualityGate` đo VMAF từng đoạn đại diện sau khi nén và giữ
+  bản gốc nếu ứng viên rớt ngưỡng. Đây là bước quyết định, không phải bước trang trí.
+- **`RepresentativeWindowSelector`** chọn đoạn đại diện theo nội dung, không theo vị trí.
+- **`CandidatePlanner`** sinh nhiều ứng viên có cấu trúc thay vì một CRF.
+- **`PilotSearch`** đo thật: coarse → khoanh biên → loại sớm.
+- **Đường chạy nhị phân trên thang điểm từng nhanh**, dừng sớm có điều kiện.
+- **Chọn codec theo nội dung** — thang CRF của HEVC lệch 5 chứ không phải 2 so với H.264.
+- **Công cụ ngoài mang ngữ nghĩa**: `EncoderOptions` là nơi duy nhất được biết tên công tắc
+  ffmpeg, nên `-crf` của x26x không bao giờ lẫn với `-qp` của SVT-AV1 hay `-cpu-used` của
+  libaom.
+- **Nhánh giữ bản gốc** — `ORIGINAL` trở thành một ứng viên ngang hàng, được chọn **bằng
+  bằng chứng** chứ không phải vì không tìm được gì. Với thư viện đã nén sẵn tốt, kết quả
+  đúng là **không nén gì cả**.
+- **`SizeEstimator`** hiệu chỉnh trên encode toàn tệp thật, đọc overhead từ box MP4.
+- **`OutputContainer`** là nguồn sự thật duy nhất cho container đầu ra.
+- **`TemporalProbe`** đọc trục thời gian thật: mốc bắt đầu, timebase, tần số khung, PTS
+  khung đầu, tổng số khung.
+
+### Sửa
+
+- **Tệp mang tên sai nội dung.** `clip.ts` chứa byte MP4 (`ftyp isom`): muxer do phần mở rộng
+  tệp đích quyết định, mà đường dẫn đích lại dựng theo tệp nguồn. Nay `OutputContainer.ApplyContract`
+  là nơi duy nhất được quyết định tên đích, và **không bao giờ ghi đè tệp đã có**.
+- **`-movflags +faststart` bị nuốt lặng lẽ** với Matroska và MPEG-TS; nguồn `.webm` có tiếng
+  **hỏng hẳn** vì lệnh dùng `-c:a aac` mà WebM không nhận.
+- **`log_path` của libvmaf không nhận đường dẫn tuyệt đối kiểu Windows** — dấu `:` trong `C:`
+  phá cú pháp filtergraph, và bốn kiểu escape đều bị ffmpeg bỏ qua lặng lẽ: exit 0, không
+  tệp log. Cần `log_fmt=json` vì phải tự tính P5 theo khung.
+- **Đo phải cắt tham chiếu thành clip, không seek thẳng vào nguồn.** Đo trên nguồn nguyên vẹn
+  cho VMAF 41,3 thay vì 93,5 trên nội dung chuyển động — sai một cách rất tinh vi, vì hai bên
+  lệch nửa khung hình.
+- **`settb`/`setpts` không sửa được lệch timestamp.** Ghi lại vì rất dễ hiểu nhầm là chúng sửa
+  được: chúng giữ tầng phòng ngừa, còn nguyên nhân nằm ở nơi nội dung khung hình lệch sau khi
+  giải mã.
+- **`SizeEstimator` đọc nhầm bitrate âm thanh**, làm cho kế hoạch nén không bao giờ thích ứng.
+- **Lưu cấu hình tắt mất cờ đang bật.** `EnableAdaptiveSearch` không có trong danh sách trường
+  được chép, nên mỗi lần bấm "Lưu cấu hình" đã tắt cờ — và vì thao tác lưu ghi lại chính đối
+  tượng đó, giá trị tắt còn nằm trong tệp.
+
+### Người dùng
+
+- **Cờ "Tìm kiếm thích ứng theo nội dung"** trong Cài đặt, **mặc định tắt**, kèm giải thích
+  chi phí encode. Trước đó tính năng này tồn tại trong kho nhưng không ai bật được — chỉ sửa
+  tay trong `config.json`.
+- Cờ đó được chép như mọi trường giao diện khác. Trước đây nó nằm ở nhánh "giữ nguyên", nên ô
+  bật mới sẽ là **nút mù**: bật, bấm Lưu, và cờ tắt lại.
+
+### Đo thật
+
+| Mức | Tập video 1080p | Ảnh JPEG |
+|---|---|---|
+| Cân bằng | −5,5% | giữ nguyên |
+| Mạnh | −36,6% | giữ nguyên |
+
+**Chỉ là kết quả của đường cũ.** Thang VMAF hiệu chỉnh trên 2 tệp anime 1080p; xem
+[`docs/QUALITY-CALIBRATION.md`](docs/QUALITY-CALIBRATION.md) — bộ đó là **provisional**, chưa
+phổ quát. `ORIGINAL` chỉ được chọn khi bộ ước lượng được chứng nhận, và hiện nó **không**.
+
+### Chưa làm (ghi rõ thay vì giấu)
+
+- **Tương ứng khung hình VMAF: CHƯA chứng minh** cho đường *clip thử nghiệm đối chiếu bản mã
+  hoá toàn tệp*. Đường cùng-cắt-clip đã đo được và khớp: hai clip cùng **72 khung**, cùng
+  **PTS 0**, VMAF tại offset 0 = **94,64**, không cần lệch khung. Biên tìm offset **không
+  được mở rộng** — mở rộng là biến phép đo thành bộ dò offset để nâng điểm.
+- **Encoder phần cứng không dùng.** Đã kiểm chứng trên máy này: `hevc_nvenc` và `hevc_qsv`
+  chạy được và ra HEVC hợp lệ, `hevc_amf` hỏng vì thiếu `amfrt64.dll`. Không dùng vì CQ của
+  chúng là thang riêng chưa đo, còn `SizeEstimator` chỉ hiệu chỉnh trên encoder phần mềm.
+- **Ảnh, âm thanh, GIF, PDF vẫn chỉ quyết định bằng kích thước** — không có metric cảm nhận.
+- **Chưa chạy encode thật nào trong kho hiệu chỉnh CQ phần cứng**, nên chưa có đường cong
+  CQ↔chất lượng cho chúng.
+
 ## Chưa đánh số — tham số nén theo loại, xử lý tuần tự, hiện mức của job
 
 ### Đã sửa

@@ -129,6 +129,24 @@ code đã decompile.
 Bản gốc gộp nhầm hai thứ này: ngưỡng tăng dần theo mức, nên mức “Mạnh” lại khó đạt
 nhất (file phải nhỏ hơn 98% mới được nhận) — ngược với ý đồ.
 
+### Tìm kiếm thích ứng theo nội dung
+
+Ở trên là đường **mặc định**: mỗi tệp dùng chung một bộ tham số theo mức bạn chọn.
+
+Trong **Cài đặt** có thêm một cờ tắt sẵn: **Tìm kiếm thích ứng theo nội dung**. Bật lên thì
+ứng dụng không dùng tham số cố định nữa mà **đo thật để tìm**: cắt vài đoạn đại diện, mã hoá
+thử ở nhiều mức, đo VMAF từng mức, rồi mới encode toàn tệp ứng viên được chọn.
+
+- **Đắt hơn.** Mỗi tệp tốn nhiều lần encode. Một tập phim 20 phút có thể chậm hơn nhiều lần
+  bình thường. Nên thử trên thư mục nhỏ trước.
+- **Chỉ áp dụng cho video.** Ảnh, âm thanh, GIF và PDF vẫn dùng quy tắc kích thước.
+- **Có lưới an toàn.** Sau khi nén còn đo lại từng đoạn; ứng viên rớt ngưỡng thì giữ bản gốc.
+- **Có thể kết luận là không nén.** Tệp đã nén sẵn tốt thì nén lại chỉ làm to ra — khi đó giữ
+  nguyên là kết quả đúng, không phải lỗi.
+
+Thang ngưỡng hiệu chỉnh trên **2 tệp anime 1080p**, nên là bộ **provisional**, chưa phổ quát
+cho mọi loại nội dung. Xem [`docs/QUALITY-CALIBRATION.md`](docs/QUALITY-CALIBRATION.md).
+
 ---
 
 ## An toàn dữ liệu
@@ -164,7 +182,7 @@ Xem ngay trong ứng dụng: nút **Nhật ký**.
 ```powershell
 dotnet build                                   # build cả solution
 dotnet format                                  # chuẩn hoá định dạng
-dotnet test tests\UltraCompressor.Core.Tests   # 123 test
+dotnet test tests\UltraCompressor.Core.Tests   # 680 test
 dotnet run --project src\UltraCompressor.App   # chạy thử, không cần publish
 ```
 
@@ -175,19 +193,23 @@ GitHub Actions chạy đúng ba lệnh đầu trên mỗi lần đẩy.
 ```
 src/UltraCompressor.Core/     Lõi, không phụ thuộc giao diện
   Models/                     Job, JobItem, AppConfig, các enum
+  Planning/                   Sinh ứng viên nén, miền tìm kiếm của từng encoder
+  Search/                     Tìm kiếm thích ứng: đo thật, chọn theo bằng chứng
+  Encoders/                   Ngữ nghĩa tuỳ chọn ffmpeg — nơi duy nhất biết tên công tắc
+  Media/                      Phân tích output ffmpeg, đo VMAF, quét dòng thời gian
+  Compare/                    Chuẩn bị hai bên cho màn hình so sánh
   Pipelines/                  Một pipeline cho mỗi loại media
   Processes/                  Chạy tiến trình ngoài, đọc output theo dòng
   Scheduling/                 Engine, bộ quét thư mục, cổng tạm dừng, ước lượng ETA
   Storage/                    Giao dịch tệp, hoàn tác, phiên, kiểm tra dung lượng
   Toolchain/                  Tìm và kiểm tra khả năng chạy của công cụ ngoài
-  Media/                      Phân tích output của ffmpeg
   Diagnostics/                Nhật ký theo ngày
 
 src/UltraCompressor.App/      Khung chủ + giao diện web
   Bridge/                     Cầu postMessage hai chiều, DTO, AppHost
   wwwroot/                    index.html, styles.css, app.js
 
-tests/UltraCompressor.Core.Tests/   120 test cho lõi
+tests/UltraCompressor.Core.Tests/   680 test cho lõi
 
 docs/PHASE0-REFERENCE.md     Bảng tham số trích từ bản gốc + 23 lỗi đã tìm ra
 reference/original-csharp/   Mã nguồn bản gốc đã decompile bằng ilspycmd, chỉ để đối chiếu
@@ -259,6 +281,9 @@ Các con số dưới đây đo trên một thư mục thật: 2 tập video 108
 |---|---|---|---|
 | Cân bằng (CRF 23) | −5,5% | giữ nguyên | chỉ được âm thanh 249k→128k |
 | Mạnh (CRF 28) | −36,6% | giữ nguyên | đo trên 2 phút đầu |
+
+**Đo trên đường cũ, không bật tìm kiếm thích ứng.** Bảng này có trước khi có tìm kiếm thích
+ứng, nên nó là mốc so sánh cho đường mặc định — không phải kết quả của đường thích ứng.
 
 **Vì sao mức Cân bằng gần như không được gì.** Tập gốc đã nén sẵn ở bitrate thấp
 (~1374 kb/s video), nên mã hoá lại ở CRF 23 cho ra thành phẩm lớn hơn bản gốc. Ứng dụng

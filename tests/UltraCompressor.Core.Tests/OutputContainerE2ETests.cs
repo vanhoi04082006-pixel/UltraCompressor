@@ -192,4 +192,201 @@ public class OutputContainerE2ETests(ITestOutputHelper output)
             try { Directory.Delete(work, recursive: true); } catch { }
         }
     }
+
+    /// <summary>
+    /// Chuỗi cuối cùng phải đúng: contract chọn tên, giao dịch tệp ghi ra, và **tệp cuối
+    /// phải đúng container thật** — không chỉ tệp tạm.
+    /// </summary>
+    /// <remarks>
+    /// <para>Các test trên dừng ở <b>tệp tạm</b>, nên chúng không bắt được lỗi ở đường ghi
+    /// tệp cuối. Đó chính là chỗ đã sai: muxer do phần mở rộng tệp <i>đích</i> quyết định, mà
+    /// đường dẫn đích lại dựng theo tệp nguồn. Người dùng nhận về <c>clip.ts</c> chứa byte
+    /// MP4 và không có tệp nào báo lỗi.</para>
+    ///
+    /// <para>Test này dựng lại đúng hai lời gọi mà engine thực hiện
+    /// (<c>OutputContainer.ApplyContract</c> rồi <c>FileTransaction.Export</c>), nên nó hỏng
+    /// nếu một trong hai bị đổi khỏi container contract.</para>
+    /// </remarks>
+    [RequiresFFmpeg]
+    public async Task Ten_tep_cuoi_phai_khop_container_that()
+    {
+        var ffmpeg = Ffmpeg();
+        var work = Directory.CreateTempSubdirectory("uc-container-final-").FullName;
+
+        try
+        {
+            foreach (var sourceExtension in new[] { ".ts", ".mov", ".mkv", ".mp4" })
+            {
+                var source = Path.Combine(work, $"clip{sourceExtension}");
+                var muxer = sourceExtension switch
+                {
+                    ".ts" => "mpegts",
+                    ".mov" => "mov",
+                    ".mkv" => "matroska",
+                    _ => "mp4",
+                };
+
+                await UltraCompressor.Core.Processes.ProcessRunner.RunAsync(
+                    ffmpeg,
+                    [
+                        "-hide_banner", "-loglevel", "error", "-nostdin",
+                        "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                        "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2",
+                        "-map", "0:a", "-map", "1:v", "-b:a", "128k",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                        "-pix_fmt", "yuv420p", "-f", muxer, "-y", source,
+                    ],
+                    TimeSpan.FromMinutes(5),
+                    CancellationToken.None);
+
+                var sourceBytes = File.ReadAllBytes(source);
+
+                using var workspace = new TempWorkspace(work);
+                var temp = workspace.CreatePath(OutputContainer.ExtensionFor(MediaKind.Video, source));
+
+                var args = EncodeTransform.BuildFullArguments(
+                    new EncoderConfiguration
+                    {
+                        EncoderName = "libx264",
+                        Quality = QualityOption.X26xCrf(28),
+                        Speed = SpeedOption.X26xPreset("veryfast"),
+                        PixelFormat = "yuv420p",
+                    },
+                    string.Empty,
+                    source,
+                    temp,
+                    audioBitrateKbps: 128);
+
+                var encoded = await UltraCompressor.Core.Processes.ProcessRunner.RunAsync(
+                    ffmpeg, [.. args], TimeSpan.FromMinutes(5), CancellationToken.None);
+
+                Assert.True(encoded.Succeeded, encoded.StandardErrorText);
+
+                // Đúng hai lời gọi của engine, theo đúng thứ tự — và đúng CẢ HAI NHÁNH.
+                // Khi nguồn đã là `.mp4` thì contract trả về chính nó, và engine ghi đè
+                // bằng `Commit` (có sao lưu `.bak`) chứ không phải `Export`. Dùng `Export`
+                // ở nhánh đó là tự tạo ra một lỗi ghi đè mà test rồi sẽ khẳng định là đúng.
+                var finalPath = OutputContainer.ApplyContract(source, source, MediaKind.Video);
+                var sameAsSource = string.Equals(finalPath, source, StringComparison.OrdinalIgnoreCase);
+
+                if (sameAsSource)
+                {
+                    Assert.Null(FileTransaction.Commit(source, temp));
+
+                    // Ghi đè có kiểm soát: bản gốc nằm trong `.bak` và phải khớp byte-for-byte.
+                    var backup = source + ".bak";
+                    Assert.True(File.Exists(backup), "ghi de phai tao .bak");
+                    Assert.Equal(sourceBytes, File.ReadAllBytes(backup));
+                }
+                else
+                {
+                    Assert.Null(FileTransaction.Export(temp, finalPath));
+
+                    // Đổi đuôi tệp đích KHÔNG được đụng bản gốc.
+                    Assert.True(File.Exists(source), "nguon bi xoa");
+                    Assert.Equal(sourceBytes, File.ReadAllBytes(source));
+                    Assert.Equal(sourceExtension, Path.GetExtension(source));
+                }
+
+                Assert.True(File.Exists(finalPath), $"khong tao duoc tep cuoi: {finalPath}");
+
+                _output.WriteLine(
+                    $"nguon {sourceExtension} -> tep cuoi {Path.GetFileName(finalPath)} "
+                    + $"({(sameAsSource ? "ghi de co .bak" : "giao canh ben")}): {Signature(finalPath)}");
+
+                // Tên phải khớp container THẬT của file, không chỉ khớp quy tắc.
+                Assert.Equal(OutputContainer.Mp4, Path.GetExtension(finalPath));
+                Assert.True(IsMp4Family(finalPath), $"tep cuoi khong phai MP4: {Signature(finalPath)}");
+                Assert.False(IsMpegTs(finalPath), "tep cuoi dang la MPEG-TS");
+
+                // Và nội dung phải còn đủ cả hai phần.
+                var probe = await new MediaProbe(ffmpeg).ProbeAsync(finalPath);
+                Assert.True(probe.HasVideo, "tep cuoi mat video");
+                Assert.True(probe.HasAudio, "tep cuoi mat am thanh");
+
+                workspace.Release(temp);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(work, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Khi thư mục đã có <c>clip.mp4</c>, tệp cuối phải dồn tên chứ không đè lên tệp người dùng.
+    /// </summary>
+    [RequiresFFmpeg]
+    public async Task Khong_duoc_de_gi_lai_ten_da_co_khi_ghi_tiep()
+    {
+        var ffmpeg = Ffmpeg();
+        var work = Directory.CreateTempSubdirectory("uc-container-dup-").FullName;
+
+        try
+        {
+            var source = Path.Combine(work, "clip.ts");
+            var existing = Path.Combine(work, "clip.mp4");
+
+            await UltraCompressor.Core.Processes.ProcessRunner.RunAsync(
+                ffmpeg,
+                [
+                    "-hide_banner", "-loglevel", "error", "-nostdin",
+                    "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                    "-pix_fmt", "yuv420p", "-f", "mpegts", "-y", source,
+                ],
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+
+            // Tệp của người dùng đã nằm sẵn ở đường dẫn mà bản nén muốn ghi.
+            await UltraCompressor.Core.Processes.ProcessRunner.RunAsync(
+                ffmpeg,
+                [
+                    "-hide_banner", "-loglevel", "error", "-nostdin",
+                    "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "40",
+                    "-pix_fmt", "yuv420p", "-f", "mp4", "-y", existing,
+                ],
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+
+            var existingBytes = File.ReadAllBytes(existing);
+
+            using var workspace = new TempWorkspace(work);
+            var temp = workspace.CreatePath(OutputContainer.Mp4);
+
+            var args = EncodeTransform.BuildFullArguments(
+                new EncoderConfiguration
+                {
+                    EncoderName = "libx264",
+                    Quality = QualityOption.X26xCrf(28),
+                    Speed = SpeedOption.X26xPreset("veryfast"),
+                    PixelFormat = "yuv420p",
+                },
+                string.Empty,
+                source,
+                temp,
+                audioBitrateKbps: null);
+
+            var encoded = await UltraCompressor.Core.Processes.ProcessRunner.RunAsync(
+                ffmpeg, [.. args], TimeSpan.FromMinutes(5), CancellationToken.None);
+
+            Assert.True(encoded.Succeeded, encoded.StandardErrorText);
+
+            var finalPath = OutputContainer.ApplyContract(source, source, MediaKind.Video);
+            Assert.Equal("clip (2).mp4", Path.GetFileName(finalPath));
+
+            Assert.Null(FileTransaction.Export(temp, finalPath));
+
+            // Tệp đã có phải y nguyên, byte-for-byte. Đè lên là mất tệp của người dùng.
+            Assert.Equal(existingBytes, File.ReadAllBytes(existing));
+            Assert.True(IsMp4Family(finalPath), $"tep moi khong phai MP4: {Signature(finalPath)}");
+
+            workspace.Release(temp);
+        }
+        finally
+        {
+            try { Directory.Delete(work, recursive: true); } catch { }
+        }
+    }
 }

@@ -21,6 +21,22 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 
+  <!--
+    Bắt buộc mới có tác dụng: không có mục này thì tệp json chỉ nằm trong thư mục dự án và
+    runner không bao giờ đọc tới.
+
+    Vì sao tắt song song: các test `[RequiresFFmpeg]` chạy encode thật ở 720p/1080p, mà xUnit
+    mặc định cho MỖI LỚP test chạy song song — tức nhiều encode cùng tranh toàn bộ CPU. Trong khi
+    đó `QualityProbe.PerWindowTimeout` (240s) và `ReferenceWindowExtractor.PerWindowTimeout`
+    (180s) đều là thời gian thực. Khi máy tranh chấp, thời hạn bị vượt, và đường đo trả null
+    vì "không đo được" — test đỏ với lý do là tốc độ, không phải lỗi sản phẩm.
+  -->
+  <ItemGroup>
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

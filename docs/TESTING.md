@@ -125,6 +125,34 @@ Lỗi `OpenJobId` và lỗi `direction: rtl` đều chỉ lộ ra khi **nhìn �
 ứng dụng đang chạy, không phải lúc test. Chạy job rồi chụp lại là bắt buộc, không phải
 tuỳ chọn.
 
+## Một lần test đỏ không tái hiện được — và nguyên nhân đã tìm
+
+Một lần chạy toàn bộ có **664 xanh / 1 đỏ**. Rerun thì xanh, và từ đó **4 vòng liên tiếp** của
+toàn bộ nhóm ffmpeg (48 test, ~11 phút mỗi vòng) đều xanh.
+
+Vòng đỏ đó **không tái hiện được, và tên test đã mất** — log của lần chạy đó không được lưu lại
+nên không truy được là test nào. Ghi lại thẳng thay vì bỏ qua, vì lần sau nó có thể quay lại.
+
+**Nguyên nhân khả dĩ, đã sửa.** xUnit mặc định cho **mỗi lớp test chạy song song**, nên các
+test `[RequiresFFmpeg]` chạy encode 720p/1080p cùng lúc và tranh toàn bộ CPU. Trong khi đó:
+
+- `QualityProbe.PerWindowTimeout` = 240 giây
+- `ReferenceWindowExtractor.PerWindowTimeout` = 180 giây
+
+đều là **thời gian thực**. Khi máy tranh chấp thì thời hạn bị vượt, và đường đo coi đó là
+"không đo được" rồi trả `null` — test đỏ với lý do là **tốc độ**, không phải lỗi sản phẩm.
+
+Cách sửa: `xunit.runner.json` với `parallelizeTestCollections: false`.
+
+**Cái giá, đo được:** bộ test **Debug** chậy từ ~9–11 phút lên ~14 phút. Bản **Release** — thứ
+CI thực sự chạy — còn ~10,5 phút. Đổi bằng tính quyết định; con số đó vẫn chấp nhận được cho
+CI. Không nới `PerWindowTimeout` để "cho xanh" — nới mốc thời gian để né lỗi là giấu lỗi, và
+mốc đó vốn có lý do đặt ra.
+
+> Thêm `xunit.runner.json` phải khai báo `<None Update=... CopyToOutputDirectory>` trong
+> `.csproj`, nếu không tệp nằm trong thư mục dự án mà runner không đọc tới — đặt xong tưởng
+> đã cấu hình, thực ra không có tác dụng gì.
+
 ## Kéo-thả: đã bỏ, và đừng thử lại
 
 Tính năng này **không còn**. Ghi lại vì nó rất dễ bị thử lại, và mỗi lần thử lại đều tốn
